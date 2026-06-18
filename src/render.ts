@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT } from './sim';
 import { makeSoldierTexture, makeArrowTexture, SpriteKind } from './sprites';
+import { stoneTexture, roofTexture, grassTexture, plasterTexture } from './textures';
 
 const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
 const SPRITE_W = [2.0, 1.8, 1.8, 3.0];
@@ -43,6 +44,11 @@ export class Renderer {
   private time = 0;
   private sscale: Float32Array;
   private rubbleMat = new THREE.MeshLambertMaterial({ color: '#a3987f' });
+  // shared procedural textures (one GPU upload each; materials clone but keep the map)
+  private texStone = stoneTexture();
+  private texRoof = roofTexture();
+  private texGrass = grassTexture();
+  private texPlaster = plasterTexture();
 
   camTarget = new THREE.Vector3(0, 0, 34);
   camDist = 165; camYaw = 0; camPitch = 0.92;
@@ -75,6 +81,7 @@ export class Renderer {
     this.buildGround();
     this.buildCastle();
     this.buildProps();
+    this.buildTrees();
     this.buildSoldiers();
     this.buildShadows();
     this.buildProjectiles();
@@ -123,28 +130,44 @@ export class Renderer {
 
   private buildGround() {
     const g = new THREE.PlaneGeometry(760, 760, 80, 80); g.rotateX(-Math.PI / 2);
-    const base = new THREE.Color('#90b257'); const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
-    for (let i = 0; i < pos.count; i++) { const n = 0.84 + ((Math.sin(pos.getX(i) * 0.3) * Math.cos(pos.getZ(i) * 0.27) + 1) / 2) * 0.32; c.copy(base).multiplyScalar(n); colors.push(c.r, c.g, c.b); }
+    // gentle vertex tint variation on top of the grass texture for large-scale richness
+    const base = new THREE.Color('#9bbb5c'); const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) { const n = 0.9 + ((Math.sin(pos.getX(i) * 0.07) * Math.cos(pos.getZ(i) * 0.06) + 1) / 2) * 0.2; c.copy(base).multiplyScalar(n); colors.push(c.r, c.g, c.b); }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true })); ground.position.y = -0.02; this.scene.add(ground);
-    const rad = Math.hypot(LAYOUT.W, LAYOUT.D);
-    const moat = new THREE.Mesh(new THREE.RingGeometry(rad + 6, rad + 16, 72).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#5d7b8c' }));
-    moat.position.y = 0.004; this.scene.add(moat);
-    const path = new THREE.Mesh(new THREE.PlaneGeometry(22, 130).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#cba877' }));
-    path.position.set(LAYOUT.gate.x, 0.01, LAYOUT.D + 60); this.scene.add(path);
+    const grass = this.texGrass.clone(); grass.wrapS = grass.wrapT = THREE.RepeatWrapping; grass.repeat.set(60, 60); grass.needsUpdate = true;
+    const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: grass, vertexColors: true }));
+    ground.position.y = -0.02; this.scene.add(ground);
+
+    // a worn dirt approach road from the attacker camp up to the gate (textured-feel
+    // via a darker tinted strip; no moat — the field is fully traversable).
+    const dirt = new THREE.MeshLambertMaterial({ color: '#b59468' });
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(20, 150).rotateX(-Math.PI / 2), dirt);
+    road.position.set(LAYOUT.gate.x, 0.01, LAYOUT.D + 70); this.scene.add(road);
+    // a packed-earth apron hugging the castle base so walls don't grow straight from grass
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry((LAYOUT.W + 10) * 2, (LAYOUT.D + 10) * 2).rotateX(-Math.PI / 2),
+      new THREE.MeshLambertMaterial({ color: '#a89071' }));
+    apron.position.set(0, 0.005, 0); this.scene.add(apron);
   }
 
   // shared stone materials (slight tone variation for richness)
   private stone(hex: string, v = 0) { const c = new THREE.Color(hex); if (v) c.offsetHSL(0, 0, v); return new THREE.MeshLambertMaterial({ color: c }); }
 
   private buildCastle() {
-    const wallMat = this.stone('#e6d6af');
-    const towerMat = this.stone('#dfcca2');
-    const keepMat = this.stone('#d6c499');
-    const crenMat = this.stone('#ecdcb6');
-    const roofMat = this.stone('#c8643f');
+    const wallMat = this.stone('#e6d6af'); wallMat.map = this.texStone;
+    const towerMat = this.stone('#dfcca2'); towerMat.map = this.texStone;
+    const keepMat = this.stone('#d6c499'); keepMat.map = this.texStone;
+    const crenMat = this.stone('#ecdcb6'); crenMat.map = this.texStone;
+    const roofMat = this.stone('#d06a40');
+    const coneRoofTex = this.texRoof.clone(); coneRoofTex.wrapS = coneRoofTex.wrapT = THREE.RepeatWrapping; coneRoofTex.repeat.set(5, 3); coneRoofTex.needsUpdate = true;
+    roofMat.map = coneRoofTex;
     const timber = this.stone('#7a4f2c');
-    const walkMat = this.stone('#c9b887');
+    const walkMat = this.stone('#c9b887'); walkMat.map = this.texStone;
+    // a small arrow-loop window (recessed dark slit) added to a wall/tower face
+    const loopMat = new THREE.MeshLambertMaterial({ color: '#2a2118' });
+    const addLoop = (x: number, y: number, z: number, fz: boolean) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(fz ? 0.6 : 0.5, 1.7, fz ? 0.5 : 0.6), loopMat);
+      m.position.set(x, y, z); this.scene.add(m); return m;
+    };
 
     for (let s = 0; s < CASTLE.length; s++) {
       const b = CASTLE[s];
@@ -175,6 +198,14 @@ export class Renderer {
           const rail = new THREE.Mesh(new THREE.BoxGeometry(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d), crenMat);
           rail.position.set(horiz ? cx : cx - outer * (w / 2 - 0.25), b.h + 0.35, horiz ? cz - outer * (d / 2 - 0.25) : cz);
           this.scene.add(rail); extras.push(rail);
+          // an arrow-loop on the outer face of the segment
+          if (len > 5) {
+            const ly = b.h * 0.52;
+            const loop = horiz
+              ? addLoop(cx, ly, cz + outer * (d / 2 + 0.05), true)
+              : addLoop(cx + outer * (w / 2 + 0.05), ly, cz, false);
+            extras.push(loop);
+          }
         } else {
           // gate: two timber doors + stone arch
           for (const sx of [-1, 1]) {
@@ -192,8 +223,12 @@ export class Renderer {
         for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const) {
           const m = new THREE.Mesh(new THREE.BoxGeometry(ew, 1.3, ed), crenMat); m.position.set(cx + ex, b.h + 0.6, cz + ez); this.scene.add(m); extras.push(m);
         }
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.82, 5.5, 4), roofMat);
-        roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.4, cz); this.scene.add(roof); extras.push(roof);
+        // small windows on each face
+        const wy = b.h * 0.5;
+        for (const [lx, lz, fz] of [[0, d / 2 + 0.05, true], [0, -d / 2 - 0.05, true], [w / 2 + 0.05, 0, false], [-w / 2 - 0.05, 0, false]] as const)
+          extras.push(addLoop(cx + lx, wy, cz + lz, fz));
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.82, 6.5, 12), roofMat);
+        roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.7, cz); this.scene.add(roof); extras.push(roof);
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole); extras.push(pole);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide }));
         flag.position.set(cx + 1.2, b.h + 8, cz); this.scene.add(flag); extras.push(flag);
@@ -203,42 +238,84 @@ export class Renderer {
         const upper = new THREE.Mesh(new THREE.BoxGeometry(w - 5, 5, d - 5), keepMat); upper.position.set(cx, b.h + 2.5, cz); this.scene.add(upper);
         // battlements on the base
         for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.4, 1), crenMat); m.position.set(cx + Math.sin(a) * (d / 2), b.h + 0.7, cz + Math.cos(a) * (d / 2)); m.rotation.y = a; this.scene.add(m); }
-        const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.75, 8, 4), roofMat); roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 9, cz); this.scene.add(roof);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.8, 9, 14), roofMat); roof.position.set(cx, b.h + 9.5, cz); this.scene.add(roof);
         const door = new THREE.Mesh(new THREE.BoxGeometry(2.6, 4, 0.4), timber); door.position.set(cx, 2, b.z1); this.scene.add(door);
         for (const [wx, wy] of [[-3, 8], [3, 8], [-3, 13], [3, 13]] as const) { const win = new THREE.Mesh(new THREE.BoxGeometry(1, 1.6, 0.3), timber); win.position.set(cx + wx, wy, b.z1); this.scene.add(win); }
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6), timber); pole.position.set(cx, b.h + 15, cz); this.scene.add(pole);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(4, 2.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide })); flag.position.set(cx + 2, b.h + 16, cz); this.scene.add(flag);
       } else if (b.kind === 'building') {
-        // a town house: plastered walls, timber framing, pitched thatch/tile roof
-        const tone = 0.78 + jit(s, 7) * 0.34;
-        const wm = this.stone('#cbb083'); wm.color.multiplyScalar(tone);
-        const rm = jit(s, 9) > 0.5 ? this.stone('#9a6b3f') : this.stone('#7d5a37'); rm.color.multiplyScalar(tone); rm.side = THREE.DoubleSide;
+        // a town house: half-timbered plaster walls + a tiled gabled roof
+        const tone = 0.84 + jit(s, 7) * 0.26;
+        const wm = new THREE.MeshLambertMaterial({ map: this.texPlaster, color: new THREE.Color('#d8c39a').multiplyScalar(tone) });
+        const rm = new THREE.MeshLambertMaterial({ map: this.texRoof, side: THREE.DoubleSide, color: (jit(s, 9) > 0.5 ? new THREE.Color('#c06a3a') : new THREE.Color('#a98a52')).multiplyScalar(tone) });
         const body = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), wm); body.position.set(cx, b.h / 2, cz); this.scene.add(body);
+        // a little door on the side facing the gate (south, +z)
+        const door = new THREE.Mesh(new THREE.BoxGeometry(1.4, Math.min(2.6, b.h - 1), 0.2), timber);
+        door.position.set(cx, Math.min(2.6, b.h - 1) / 2, b.z1 + 0.06); this.scene.add(door);
         const long = w >= d;
-        // proper gabled roof: a triangular prism whose ridge runs along the
-        // building's LONG axis, with flat eaves overhanging the walls a touch.
+        // gabled roof: a triangular prism whose ridge runs along the LONG axis,
+        // with flat eaves overhanging the walls a touch. UVs so the tile texture
+        // runs along the slope.
         const span = long ? d : w, runL = long ? w : d;
-        const rh = span * 0.42 + 0.6;                  // ridge height above the eaves
-        const half = span / 2 + 0.5;                   // half-span incl. small eave
+        const rh = span * 0.42 + 0.6, half = span / 2 + 0.5;
         const x0 = -runL / 2 - 0.4, x1 = runL / 2 + 0.4, ey = b.h - 0.2, ry = b.h + rh;
-        const apex0 = [x0, ry, 0], apex1 = [x1, ry, 0];
-        const e0L = [x0, ey, -half], e0R = [x0, ey, half];
-        const e1L = [x1, ey, -half], e1R = [x1, ey, half];
-        const v: number[] = [];
-        const tri = (...p: number[][]) => p.forEach(q => v.push(q[0], q[1], q[2]));
-        tri(e0L, e1L, apex1, e0L, apex1, apex0);       // back slope
-        tri(e1R, e0R, apex0, e1R, apex0, apex1);       // front slope
-        tri(e0R, e0L, apex0);                          // gable end
-        tri(e1L, e1R, apex1);                          // gable end
+        const ur = runL / 4;                          // tile repeats along the ridge
+        const vr = Math.hypot(half, rh) / 2.6;        // tile repeats up the slope
+        // each named point carries a uv (u = along ridge, v = eave->ridge)
+        const P: Record<string, [number[], number[]]> = {
+          a0: [[x0, ry, 0], [0, vr]], a1: [[x1, ry, 0], [ur, vr]],
+          e0L: [[x0, ey, -half], [0, 0]], e0R: [[x0, ey, half], [0, 0]],
+          e1L: [[x1, ey, -half], [ur, 0]], e1R: [[x1, ey, half], [ur, 0]],
+        };
+        const v: number[] = [], uv: number[] = [];
+        const tri = (...names: string[]) => names.forEach(n => { const [p, u] = P[n]; v.push(p[0], p[1], p[2]); uv.push(u[0], u[1]); });
+        tri('e0L', 'e1L', 'a1', 'e0L', 'a1', 'a0');     // back slope
+        tri('e1R', 'e0R', 'a0', 'e1R', 'a0', 'a1');     // front slope
+        tri('e0R', 'e0L', 'a0');                        // gable end
+        tri('e1L', 'e1R', 'a1');                        // gable end
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
         geo.computeVertexNormals();
         const roof = new THREE.Mesh(geo, rm);
         roof.position.set(cx, 0, cz);
-        if (!long) roof.rotation.y = Math.PI / 2;       // ridge along the depth axis
+        if (!long) roof.rotation.y = Math.PI / 2;
         this.scene.add(roof);
       }
     }
+  }
+
+  private buildTrees() {
+    const W = LAYOUT.W, D = LAYOUT.D, gx = LAYOUT.gate.x;
+    // rejection-sample positions: outside the castle, clear of the south army lane
+    const pts: [number, number, number][] = [];
+    let guard = 0;
+    while (pts.length < 64 && guard++ < 2000) {
+      const x = WORLD.minX + 8 + Math.random() * (WORLD.maxX - WORLD.minX - 16);
+      const z = WORLD.minZ + 8 + Math.random() * (WORLD.maxZ - WORLD.minZ - 16);
+      if (Math.abs(x) < W + 16 && Math.abs(z) < D + 16) continue;          // not on the castle
+      if (z > D + 8 && z < D + 100 && Math.abs(x - gx) < 78) continue;     // keep the assault field clear
+      pts.push([x, z, 0.8 + Math.random() * 0.7]);
+    }
+    const n = pts.length;
+    const trunkGeo = new THREE.CylinderGeometry(0.45, 0.7, 4, 6);
+    const trunk = new THREE.InstancedMesh(trunkGeo, this.stone('#6b4a2c'), n);
+    const canopyGeo = new THREE.IcosahedronGeometry(3.2, 0);
+    const canopy = new THREE.InstancedMesh(canopyGeo, new THREE.MeshLambertMaterial({ flatShading: true, color: '#ffffff' }), n);
+    trunk.frustumCulled = false; canopy.frustumCulled = false;
+    const col = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      const [x, z, sc] = pts[i];
+      this.dummy.position.set(x, 2 * sc, z); this.dummy.rotation.set(0, Math.random() * 6, 0); this.dummy.scale.set(sc, sc, sc);
+      this.dummy.updateMatrix(); trunk.setMatrixAt(i, this.dummy.matrix);
+      this.dummy.position.set(x, (4.2 + Math.random() * 0.8) * sc, z);
+      this.dummy.scale.set(sc * (0.9 + Math.random() * 0.4), sc * (1.0 + Math.random() * 0.5), sc * (0.9 + Math.random() * 0.4));
+      this.dummy.updateMatrix(); canopy.setMatrixAt(i, this.dummy.matrix);
+      const g = 0.8 + Math.random() * 0.4; col.setRGB(0.32 * g, 0.55 * g, 0.22 * g); canopy.setColorAt(i, col);
+    }
+    this.dummy.scale.set(1, 1, 1); this.dummy.rotation.set(0, 0, 0);
+    if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
+    this.scene.add(trunk); this.scene.add(canopy);
   }
 
   private buildProps() {
