@@ -22,6 +22,7 @@ const MELEE = [9, 7, 5, 15, 0];
 const ATKCD = [0.8, 0.55, 1.3, 0.75, 4.5];
 const RANGE = [1.8, 1.7, 40, 2.0, 88];   // siege = bombardment range
 const SENSE = [16, 16, 46, 20, 90];
+const SRAD = SENSE.map((s) => Math.max(1, Math.ceil(s / 6))); // hash search radius in buckets (hCell=6)
 const RADIUS = [0.7, 0.6, 0.6, 0.95, 2.0];
 const ARCHER_PROJ_DMG = 12;
 const ARCHER_PROJ_SPEED = 55;
@@ -399,23 +400,27 @@ export class Sim {
       this.cd[i] -= dt;
 
       // ---- find nearest enemy via hash ----
-      // Vertical separation is weighted heavily (VK) so ground troops don't get
-      // "stuck" trying to engage archers standing up on the walls — they ignore
-      // them and keep pouring through the gate. Ranged units (big sense) can
-      // still reach up for counter-battery fire.
-      const VK = 3.2;
-      let nearest = -1, nd2 = sense(i) * sense(i);
+      // Search radius covers the unit's full sense, so archers actually find
+      // targets out to their (long) range instead of only the adjacent buckets.
+      // True 2D distance; melee ignore enemies up on the walls (elevation gap)
+      // so they don't stall trying to reach unreachable wall archers.
       const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((this.px[i] - WORLD.minX) / this.hCell)));
       const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((this.pz[i] - WORLD.minZ) / this.hCell)));
-      for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
-        if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-        const b = this.buckets[rr * this.hCols + cc];
-        for (let bi = 0; bi < b.length; bi++) {
-          const j = b[bi];
-          if (this.fac[j] === this.fac[i]) continue;
-          const ex = this.px[j] - this.px[i], ez = this.pz[j] - this.pz[i], ey = (this.py[j] - this.py[i]) * VK;
-          const d2 = ex * ex + ez * ez + ey * ey;
-          if (d2 < nd2) { nd2 = d2; nearest = j; }
+      let nearest = -1, nd2 = SENSE[t] * SENSE[t];
+      if (t !== UType.Siege) {
+        const sr = SRAD[t]; const isMelee = t === UType.Heavy || t === UType.Light || t === UType.Cavalry;
+        const my = this.py[i];
+        for (let rr = hr - sr; rr <= hr + sr; rr++) for (let cc = hc - sr; cc <= hc + sr; cc++) {
+          if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
+          const b = this.buckets[rr * this.hCols + cc];
+          for (let bi = 0; bi < b.length; bi++) {
+            const j = b[bi];
+            if (this.fac[j] === this.fac[i]) continue;
+            if (isMelee && Math.abs(this.py[j] - my) > 2.5) continue; // can't reach wall-top troops
+            const ex = this.px[j] - this.px[i], ez = this.pz[j] - this.pz[i];
+            const d2 = ex * ex + ez * ez;
+            if (d2 < nd2) { nd2 = d2; nearest = j; }
+          }
         }
       }
 
@@ -458,23 +463,28 @@ export class Sim {
         for (let bi = 0; bi < b.length; bi++) {
           const j = b[bi]; if (j === i || this.fac[j] !== this.fac[i]) continue;
           const ex = this.px[i] - this.px[j], ez = this.pz[i] - this.pz[j];
-          const d2 = ex * ex + ez * ez; const rad = RADIUS[t] * 2.3;
+          // separation radius kept BELOW formation spacing so soldiers settled
+          // in their ranks don't shove each other (that caused the vibrating).
+          const d2 = ex * ex + ez * ez; const rad = RADIUS[t] * 1.7;
           if (d2 > 0.0001 && d2 < rad * rad) { const d = Math.sqrt(d2); sx += ex / d * (1 - d / rad); sz += ez / d * (1 - d / rad); }
         }
       }
-      dx += sx * 1.1; dz += sz * 1.1;
 
-      // integrate with wall collision
-      const dl = Math.hypot(dx, dz);
-      if (dl > 0.001) { dx /= dl; dz /= dl; }
-      const step = spd * dt * (dl > 0.001 ? 1 : 0);
-      let nx = this.px[i] + dx * step, nz = this.pz[i] + dz * step;
-      if (this.py[i] < 1) { // ground units collide with walls; wall archers stay put
-        if (blockedAt(nx, nz)) {
-          if (!blockedAt(nx, this.pz[i])) nz = this.pz[i];
-          else if (!blockedAt(this.px[i], nz)) nx = this.px[i];
-          else { nx = this.px[i]; nz = this.pz[i]; }
-        }
+      // Desired velocity = steering*speed + separation, then SMOOTHED toward the
+      // current velocity so tiny opposing forces don't make units jitter.
+      let desVx = dx * spd + sx * spd * 0.85;
+      let desVz = dz * spd + sz * spd * 0.85;
+      const dlen = Math.hypot(desVx, desVz), maxv = spd * 1.15;
+      if (dlen > maxv) { desVx *= maxv / dlen; desVz *= maxv / dlen; }
+      this.vx[i] += (desVx - this.vx[i]) * 0.3;
+      this.vz[i] += (desVz - this.vz[i]) * 0.3;
+      if (Math.abs(this.vx[i]) < 0.04 && Math.abs(this.vz[i]) < 0.04) { this.vx[i] = 0; this.vz[i] = 0; }
+
+      let nx = this.px[i] + this.vx[i] * dt, nz = this.pz[i] + this.vz[i] * dt;
+      if (this.py[i] < 1 && blockedAt(nx, nz)) { // ground units collide with walls
+        if (!blockedAt(nx, this.pz[i])) { nz = this.pz[i]; this.vz[i] = 0; }
+        else if (!blockedAt(this.px[i], nz)) { nx = this.px[i]; this.vx[i] = 0; }
+        else { nx = this.px[i]; nz = this.pz[i]; this.vx[i] = 0; this.vz[i] = 0; }
       }
       this.px[i] = Math.max(WORLD.minX, Math.min(WORLD.maxX, nx));
       this.pz[i] = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, nz));
@@ -502,8 +512,9 @@ export class Sim {
     if (l > 6 && u.goal >= 0 && pathBlocked(this.px[i], this.pz[i], slx, slz)) {
       const f = this.field(u.goal), ci = cellOf(this.px[i], this.pz[i]);
       this._dir[0] = f[ci * 2]; this._dir[1] = f[ci * 2 + 1];
-    } else if (l > 0.4) {
-      this._dir[0] = tx / l; this._dir[1] = tz / l;
+    } else if (l > 0.35) {
+      const mag = l < 2.5 ? l / 2.5 : 1; // ease into the slot (no overshoot/jitter)
+      this._dir[0] = (tx / l) * mag; this._dir[1] = (tz / l) * mag;
     } else { this._dir[0] = 0; this._dir[1] = 0; }
   }
 

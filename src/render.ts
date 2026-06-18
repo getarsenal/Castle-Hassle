@@ -66,7 +66,7 @@ export class Renderer {
     this.selRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85 }));
     this.selRing.visible = false; this.scene.add(this.selRing);
 
-    this.preview = new THREE.Mesh(new THREE.BoxGeometry(1, 0.25, 1.1),
+    this.preview = new THREE.Mesh(new THREE.BoxGeometry(1, 0.25, 1),
       new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.9 }));
     this.preview.visible = false; this.scene.add(this.preview);
     const ag = new THREE.ConeGeometry(1.4, 3, 4); ag.rotateX(Math.PI / 2);
@@ -214,7 +214,8 @@ export class Renderer {
     const len = Math.max(2, Math.hypot(p1.x - p0.x, p1.z - p0.z));
     const mx = (p0.x + p1.x) / 2, mz = (p0.z + p1.z) / 2;
     this.preview.visible = true; this.preview.position.set(mx, 0.08, mz);
-    this.preview.scale.set(len, 1, 1); this.preview.rotation.y = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+    // long axis is local +Z; rotate so it runs ALONG the drag line (the rank)
+    this.preview.scale.set(1.4, 1, len); this.preview.rotation.y = Math.atan2(p1.x - p0.x, p1.z - p0.z);
     this.previewArrow.visible = true; this.previewArrow.position.set(mx + fx * 5, 0.1, mz + fz * 5);
     this.previewArrow.rotation.y = Math.atan2(fx, fz);
   }
