@@ -160,6 +160,8 @@ function computeField(goal: number): Float32Array {
       if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
       const ni = nr * COLS + nc;
       if (BLOCKED[ni]) continue;
+      // no diagonal corner-cutting: both orthogonal cells must be open
+      if (k >= 4 && (BLOCKED[cr * COLS + nc] || BLOCKED[nr * COLS + cc])) continue;
       const ncost = co + NB[k][2];
       if (ncost < cost[ni]) { cost[ni] = ncost; push(ni, ncost); }
     }
@@ -173,6 +175,7 @@ function computeField(goal: number): Float32Array {
       const nc = c + NB[k][0], nr = r + NB[k][1];
       if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
       const ni = nr * COLS + nc;
+      if (k >= 4 && (BLOCKED[r * COLS + nc] || BLOCKED[nr * COLS + c])) continue; // no corner-cut
       if (cost[ni] < best) { best = cost[ni]; bx = NB[k][0]; bz = NB[k][1]; }
     }
     const len = Math.hypot(bx, bz) || 1;
@@ -542,10 +545,21 @@ export class Sim {
         }
       }
 
-      // Desired velocity = steering*speed + separation, then SMOOTHED toward the
-      // current velocity so tiny opposing forces don't make units jitter.
-      let desVx = dx * spd + sx * spd * 0.85;
-      let desVz = dz * spd + sz * spd * 0.85;
+      // Obstacle avoidance — push off nearby blocked cells (keep, buildings, and
+      // future deployable obstacles) so soldiers slide around them, not into them.
+      let ox = 0, oz = 0;
+      if (this.py[i] < 1) {
+        const OR = 2.6;
+        for (let a = 0; a < 8; a++) {
+          const ang = a * (Math.PI / 4), spx = this.px[i] + Math.cos(ang) * OR, spz = this.pz[i] + Math.sin(ang) * OR;
+          if (spx < WORLD.minX || spx > WORLD.maxX || spz < WORLD.minZ || spz > WORLD.maxZ || BLOCKED[cellOf(spx, spz)]) { ox -= Math.cos(ang); oz -= Math.sin(ang); }
+        }
+      }
+
+      // Desired velocity = steering*speed + separation + obstacle push, then
+      // SMOOTHED toward current velocity so tiny opposing forces don't jitter.
+      let desVx = dx * spd + sx * spd * 0.85 + ox * spd * 0.7;
+      let desVz = dz * spd + sz * spd * 0.85 + oz * spd * 0.7;
       const dlen = Math.hypot(desVx, desVz), maxv = spd * 1.15;
       if (dlen > maxv) { desVx *= maxv / dlen; desVz *= maxv / dlen; }
       this.vx[i] += (desVx - this.vx[i]) * 0.3;
@@ -595,7 +609,10 @@ export class Sim {
     const slx = u.ax + rrx * lr + ffx * lf, slz = u.az + rrz * lr + ffz * lf;
     const tx = slx - this.px[i], tz = slz - this.pz[i], l = Math.hypot(tx, tz);
     this._stuck = false;
-    if (l > 6 && u.goal >= 0 && pathBlocked(this.px[i], this.pz[i], slx, slz)) {
+    // Route via the flow field whenever an obstacle is between the soldier and
+    // its slot (at ANY distance) — so they flow around the keep / buildings /
+    // future deployable obstacles instead of piling against the near face.
+    if (l > 1.5 && u.goal >= 0 && pathBlocked(this.px[i], this.pz[i], slx, slz)) {
       const f = this.field(u.goal), ci = cellOf(this.px[i], this.pz[i]);
       this._dir[0] = f[ci * 2]; this._dir[1] = f[ci * 2 + 1];
       this._stuck = f[ci * 2] === 0 && f[ci * 2 + 1] === 0; // no path: goal is walled off
