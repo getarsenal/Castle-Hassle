@@ -38,6 +38,9 @@ export class Renderer {
   private previewArrow: THREE.Mesh;
   private dummy = new THREE.Object3D();
   private billboard = new THREE.Quaternion();
+  private _roll = new THREE.Quaternion();
+  private _zAxis = new THREE.Vector3(0, 0, 1);
+  private time = 0;
   private sscale: Float32Array;
   private rubbleMat = new THREE.MeshLambertMaterial({ color: '#a3987f' });
 
@@ -398,6 +401,7 @@ export class Renderer {
 
   render(dt = 0.016) {
     const sim = this.sim;
+    this.time += dt;
     this.updateWalls(dt);
     this.updateEffects(dt);
 
@@ -409,8 +413,13 @@ export class Renderer {
         this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.quaternion.identity(); this.dummy.updateMatrix();
         mesh.setMatrixAt(slot, this.dummy.matrix); this.shadowMesh.setMatrixAt(i, this.dummy.matrix); continue;
       }
-      this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s) / 2, sim.pz[i]);
-      this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(s, s, s); this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
+      // marching bob + side sway so soldiers feel alive (not flat & static)
+      const sp = Math.hypot(sim.vx[i], sim.vz[i]); const m = sp > 0.5 ? 1 : 0.28;
+      const w = Math.sin(this.time * 9 + i * 1.7);
+      const yb = w * 0.17 * m * s, h2 = (1 + Math.abs(w) * 0.06 * m); // bounce + slight stretch
+      this._roll.setFromAxisAngle(this._zAxis, w * 0.13 * m);
+      this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s * h2) / 2 + yb, sim.pz[i]);
+      this.dummy.quaternion.copy(this.billboard).multiply(this._roll); this.dummy.scale.set(s, s * h2, s); this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
       this.dummy.position.set(sim.px[i], sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05, sim.pz[i]);
       this.dummy.quaternion.identity(); this.dummy.scale.set(SHADOW_R[t] * s, 1, SHADOW_R[t] * s); this.dummy.updateMatrix(); this.shadowMesh.setMatrixAt(i, this.dummy.matrix);
     }

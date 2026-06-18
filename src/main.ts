@@ -21,11 +21,11 @@ const banner = $('banner'), bannerTitle = $('bannerTitle'), bannerText = $('bann
 // ---------------- Muster screen ----------------
 const comp: ArmyComp = { ...DEFAULT_COMP };
 const ROSTER = [
-  { key: 'heavy', name: 'Heavy Infantry', dsc: 'Tanky, slow — holds the line', step: 20 },
-  { key: 'light', name: 'Light Infantry', dsc: 'Fast, fragile — swarms', step: 20 },
-  { key: 'archer', name: 'Archers', dsc: 'Volleys, limited arrows', step: 20 },
-  { key: 'cavalry', name: 'Cavalry', dsc: 'Shock charge, weak in a grind', step: 20 },
-  { key: 'siege', name: 'Trebuchets', dsc: 'Smash walls, few boulders', step: 1 },
+  { key: 'heavy', icon: '🛡️', name: 'Heavy Infantry', dsc: 'Tanky, slow — holds the line', step: 20 },
+  { key: 'light', icon: '⚔️', name: 'Light Infantry', dsc: 'Fast, fragile — swarms', step: 20 },
+  { key: 'archer', icon: '🏹', name: 'Archers', dsc: 'Volleys, limited arrows', step: 20 },
+  { key: 'cavalry', icon: '🐎', name: 'Cavalry', dsc: 'Shock charge, weak in a grind', step: 20 },
+  { key: 'siege', icon: '🪨', name: 'Trebuchets', dsc: 'Smash walls, few boulders', step: 1 },
 ] as const;
 ($('ptsMax')).textContent = String(BUDGET);
 
@@ -33,7 +33,7 @@ function buildMuster() {
   const rows = $('rosterRows'); rows.innerHTML = '';
   for (const r of ROSTER) {
     const row = document.createElement('div'); row.className = 'rrow';
-    row.innerHTML = `<div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc} · ${(COST as any)[r.key]}p each</div></div>
+    row.innerHTML = `<div class="ic">${r.icon}</div><div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc} · ${(COST as any)[r.key]}p each</div></div>
       <button class="rbtn minus">−</button><div class="ct" data-k="${r.key}">0</div><button class="rbtn plus">+</button>`;
     const ct = row.querySelector('.ct') as HTMLElement;
     row.querySelector('.minus')!.addEventListener('click', () => { (comp as any)[r.key] = Math.max(0, (comp as any)[r.key] - r.step); ct.textContent = String((comp as any)[r.key]); updateBudget(); });

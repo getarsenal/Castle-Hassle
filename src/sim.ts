@@ -33,9 +33,10 @@ const SENSE = [16, 16, 46, 20, 110];
 const SRAD = SENSE.map((s) => Math.max(1, Math.ceil(s / 6))); // hash search radius in buckets (hCell=6)
 const RADIUS = [0.7, 0.6, 0.6, 0.95, 2.0];
 const ARCHER_PROJ_DMG = 12;
-const ARCHER_PROJ_SPEED = 55;
+const ARCHER_PROJ_SPEED = 32;
 const BOULDER_DMG = 200;       // damage a trebuchet boulder does to a wall section
 const BOULDER_SPEED = 30;
+const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
 
 export function maxHp(t: UType) { return HP[t]; }
@@ -704,10 +705,10 @@ export class Sim {
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
     const tx = this.px[target], tz = this.pz[target];
     const d = Math.hypot(tx - sx, tz - sz) || 1;
-    const tof = d / ARCHER_PROJ_SPEED;
+    const tof = Math.max(0.75, d / ARCHER_PROJ_SPEED); // min loft so even close shots arc
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
     p.dmg = fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG; p.wall = -1; p.big = false; p.fire = fire;
-    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * 18 * tof; // ballistic arc
+    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc
   }
 
   // Nearest still-standing wall/gate section within a trebuchet's range.
@@ -733,7 +734,7 @@ export class Sim {
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
     p.dmg = BOULDER_DMG; p.wall = segIdx; p.big = true; p.fire = false;
-    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * 18 * tof;
+    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
   }
 
   private breach(segIdx: number) {
@@ -758,7 +759,7 @@ export class Sim {
   private stepProjectiles(dt: number) {
     for (const p of this.projectiles) {
       if (!p.active) continue;
-      p.vy -= 18 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      p.vy -= PROJ_G * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
       const dxz = Math.hypot(p.x - p.tx, p.z - p.tz);
       if (p.y <= 0 || dxz < 1.4) {
         if (p.wall >= 0) {
