@@ -30,6 +30,12 @@ workflows:
       - name: Sync Capacitor
         script: |
           npx cap sync ios
+      - name: Generate app icons (from assets/icon.png)
+        # Writes the App Store / home-screen icon set into the iOS project from
+        # the single source art in assets/icon.png. Non-fatal so it can never
+        # break the build.
+        script: |
+          npm run icons || echo "icon generation skipped"
       - name: Apply code signing profiles
         script: |
           xcode-project use-profiles --verbose

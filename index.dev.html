@@ -4,7 +4,31 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Castle Hassle" />
+  <meta name="theme-color" content="#1a2433" />
   <title>Castle Hassle</title>
+  <meta name="description" content="Command an army of thousands and storm the castle — flood the gate, breach the walls, break the garrison." />
+
+  <!-- Icons: tab favicon (inline so it always shows), home-screen / PWA icons -->
+  <link rel="icon" type="image/png" href="data:image/png;base64,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" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+
+  <!-- iMessage / social rich link preview (Open Graph + Twitter card).
+       Absolute URLs are required; this game is served at the path below. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Castle Hassle" />
+  <meta property="og:title" content="Castle Hassle" />
+  <meta property="og:description" content="Command an army of thousands and storm the castle." />
+  <meta property="og:url" content="https://getarsenal.app/castle-hassle/" />
+  <meta property="og:image" content="https://getarsenal.app/castle-hassle/og.jpg" />
+  <meta property="og:image:width" content="1024" />
+  <meta property="og:image:height" content="1024" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Castle Hassle" />
+  <meta name="twitter:description" content="Command an army of thousands and storm the castle." />
+  <meta name="twitter:image" content="https://getarsenal.app/castle-hassle/og.jpg" />
   <style>
     :root { --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px); }
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }

@@ -8,6 +8,7 @@
     "dev": "vite --open /index.dev.html",
     "build": "vite build && node scripts/postbuild.mjs",
     "preview": "vite preview --port 4173",
+    "icons": "capacitor-assets generate --ios --iconBackgroundColor '#1a2433' --iconBackgroundColorDark '#1a2433'",
     "sync": "npm run build && npx cap sync ios"
   },
   "dependencies": {
@@ -17,6 +18,7 @@
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.4",
     "@types/three": "^0.184.0",
     "typescript": "^5.4.0",

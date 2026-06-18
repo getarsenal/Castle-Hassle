@@ -18,4 +18,12 @@ copyFileSync(src, resolve(root, 'www', 'index.html')); // Capacitor webDir
 copyFileSync(src, resolve(root, 'index.html'));        // repo-root deployable
 rmSync(src);
 
-console.log('postbuild: wrote self-contained index.html to repo root and www/');
+// Vite copies everything in public/ into www/. Mirror the icon/preview assets to
+// the repo root too, so the directly-deployable set (index.html + icons) is
+// self-contained when you drop it at getarsenal.app/castle-hassle/.
+for (const f of ['icon.png', 'icon-512.png', 'icon-192.png', 'apple-touch-icon.png', 'favicon.png', 'og.jpg', 'manifest.webmanifest']) {
+  const from = resolve(root, 'www', f);
+  if (existsSync(from)) copyFileSync(from, resolve(root, f));
+}
+
+console.log('postbuild: wrote self-contained index.html (+ icons) to repo root and www/');
