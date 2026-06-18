@@ -27,6 +27,7 @@ export class Renderer {
   private trebs: Treb[] = [];
   private selRing: THREE.Mesh;
   private targetRing: THREE.Mesh;
+  private rangeFan: THREE.Group;
   private preview: THREE.Mesh;
   private previewArrow: THREE.Mesh;
   private dummy = new THREE.Object3D();
@@ -69,6 +70,12 @@ export class Renderer {
     const tg = new THREE.RingGeometry(2.2, 3.2, 4); tg.rotateX(-Math.PI / 2);
     this.targetRing = new THREE.Mesh(tg, new THREE.MeshBasicMaterial({ color: '#ff5a3c', transparent: true, opacity: 0.95 }));
     this.targetRing.visible = false; this.scene.add(this.targetRing);
+
+    // range fan (translucent disc + bright edge ring), radius set per unit
+    this.rangeFan = new THREE.Group();
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.07, depthWrite: false }));
+    const edge = new THREE.Mesh(new THREE.RingGeometry(0.975, 1.0, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.5, depthWrite: false }));
+    this.rangeFan.add(disc, edge); this.rangeFan.visible = false; this.scene.add(this.rangeFan);
 
     this.preview = new THREE.Mesh(new THREE.BoxGeometry(1, 0.25, 1), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.9 }));
     this.preview.visible = false; this.scene.add(this.preview);
@@ -273,6 +280,7 @@ export class Renderer {
 
   setSelection(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.selRing.visible = false; return; } this.selRing.visible = true; this.selRing.position.set(cx, 0.06, cz); }
   setTargetMarker(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.targetRing.visible = false; return; } this.targetRing.visible = true; this.targetRing.position.set(cx, 0.5, cz); }
+  setRangeFan(cx: number | null, cz: number | null, r = 0) { if (cx === null || cz === null) { this.rangeFan.visible = false; return; } this.rangeFan.visible = true; this.rangeFan.position.set(cx, 0.04, cz); this.rangeFan.scale.set(r, 1, r); }
 
   setPreview(p0: THREE.Vector3 | null, p1?: THREE.Vector3, fx = 0, fz = 0) {
     if (!p0 || !p1) { this.preview.visible = false; this.previewArrow.visible = false; return; }

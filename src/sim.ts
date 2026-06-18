@@ -15,6 +15,14 @@ export const enum UType { Heavy = 0, Light = 1, Archer = 2, Cavalry = 3, Siege =
 
 export const TYPE_NAME = ['Heavy Inf', 'Light Inf', 'Archers', 'Cavalry', 'Trebuchets'];
 
+// ---- army composition (chosen on the muster screen before battle) ----
+export interface ArmyComp { heavy: number; light: number; archer: number; cavalry: number; siege: number; }
+export const COST = { heavy: 1.5, light: 1.0, archer: 1.3, cavalry: 2.0, siege: 70 };
+export const BUDGET = 1600;
+export const DEFAULT_COMP: ArmyComp = { heavy: 320, light: 240, archer: 240, cavalry: 120, siege: 4 }; // ~1552 / 1600
+export function compCost(c: ArmyComp): number { return c.heavy * COST.heavy + c.light * COST.light + c.archer * COST.archer + c.cavalry * COST.cavalry + c.siege * COST.siege; }
+const AMMO = [0, 0, 22, 0, 14]; // arrows per archer / boulders per trebuchet
+
 // Per-type stats, indexed by UType. (index 4 = siege engine / trebuchet)
 const HP = [120, 70, 55, 95, 260];
 const SPEED = [7, 11, 8, 17, 3.2];
@@ -183,11 +191,13 @@ export interface Unit {
   cols: number;            // formation width in soldiers
   cx: number; cz: number;  // live centroid
   siegeTargetSeg: number;  // wall section a trebuchet battery is ordered to hit (-1 = auto)
+  ammo: number; ammoMax: number; // live + starting ammunition (ranged units)
+  focusX: number; focusZ: number; hasFocus: boolean; // archer aim point (focus fire)
   name: string;
 }
 
 // per-type formation spacing
-const SPACING = [1.5, 1.3, 1.4, 2.1, 4.5];
+const SPACING = [1.5, 1.3, 1.4, 2.1, 10];
 const ENGAGE = 9; // range at which troops break formation to fight
 
 export interface Projectile {
@@ -208,17 +218,19 @@ export class Sim {
   hp = new Float32Array(this.MAX); cd = new Float32Array(this.MAX);
   unit = new Int16Array(this.MAX); fac = new Uint8Array(this.MAX); typ = new Uint8Array(this.MAX);
   alive = new Uint8Array(this.MAX); slot = new Int32Array(this.MAX);
+  ammo = new Float32Array(this.MAX);
   n = 0;
   units: Unit[] = [];
-  typeCount = [0, 0, 0, 0];
+  typeCount = [0, 0, 0, 0, 0];
   fields = new Map<number, Float32Array>();
   projectiles: Projectile[] = [];
   phase: 'deploy' | 'battle' | 'over' = 'deploy';
   winner: Faction | null = null;
   private seed: number;
+  private comp: ArmyComp;
   attackerAliveStart = 0; defenderAliveStart = 0;
 
-  constructor(seed = 1234) { this.seed = seed >>> 0; this.setup(); }
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP) { this.seed = seed >>> 0; this.comp = comp; this.setup(); }
 
   private rnd() { // mulberry32
     this.seed |= 0; this.seed = (this.seed + 0x6D2B79F5) | 0;
@@ -242,7 +254,7 @@ export class Sim {
       const id = this.n++;
       const [x, z, y] = place(i);
       this.px[id] = x; this.pz[id] = z; this.py[id] = y; sx += x; sz += z;
-      this.hp[id] = HP[type]; this.cd[id] = this.rnd() * 0.5;
+      this.hp[id] = HP[type]; this.cd[id] = this.rnd() * 0.5; this.ammo[id] = AMMO[type];
       this.unit[id] = this.units.length; this.fac[id] = faction; this.typ[id] = type;
       this.alive[id] = 1; this.slot[id] = this.typeCount[type]++;
     }
@@ -253,8 +265,11 @@ export class Sim {
       goal: opts.goal ?? cellOf(ax, az),
       ax, az,
       facing: Math.atan2(0 - ax, 0 - az), // face the castle (origin) by default
-      cols: opts.cols ?? Math.max(6, Math.round(Math.sqrt(count) * 1.7)),
-      cx: ax, cz: az, siegeTargetSeg: -1, name: opts.name ?? TYPE_NAME[type],
+      cols: opts.cols ?? (type === UType.Siege ? count : Math.max(6, Math.round(Math.sqrt(count) * 1.7))),
+      cx: ax, cz: az, siegeTargetSeg: -1,
+      ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
+      focusX: 0, focusZ: 0, hasFocus: false,
+      name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
     return u;
@@ -284,14 +299,14 @@ export class Sim {
     // ---------------- ATTACKERS (south, player) ----------------
     // Default orders split the host between the gate (centre) and the breach
     // (right) so both entries are used; the player can redirect any unit.
-    // They hold their deploy formation until you command them (Total War style).
-    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(-36, 80, 30, 1.6), { name: 'Vanguard', cols: 30 });
-    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(36, 80, 30, 1.6), { name: 'Ironsides', cols: 30 });
-    this.addUnit(Faction.Attacker, UType.Light, 320, block(0, 92, 40, 1.4), { name: 'Skirmishers', cols: 40 });
-    this.addUnit(Faction.Attacker, UType.Archer, 260, block(0, 102, 44, 1.5), { name: 'Longbows', cols: 44 });
-    this.addUnit(Faction.Attacker, UType.Cavalry, 160, block(-74, 86, 26, 2.2), { name: 'Lancers', cols: 26 });
-    // Trebuchet battery — bombards walls to crumble a breach (select it to aim).
-    this.addUnit(Faction.Attacker, UType.Siege, 4, block(0, 114, 4, 16), { name: 'Trebuchets', cols: 4 });
+    // Army is whatever was mustered. They hold their deploy formation until
+    // commanded (you can reposition them during the deploy phase).
+    const C = this.comp; const cols = (n: number) => Math.max(8, Math.round(Math.sqrt(n) * 1.7));
+    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, C.heavy, block(0, 80, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(C.heavy) });
+    if (C.light) this.addUnit(Faction.Attacker, UType.Light, C.light, block(-58, 86, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(C.light) });
+    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, C.archer, block(0, 98, cols(C.archer), 1.5), { name: 'Archers', cols: cols(C.archer) });
+    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, C.cavalry, block(62, 86, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(C.cavalry) });
+    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, 116, C.siege, 11), { name: 'Trebuchets', cols: C.siege });
 
     // ---------------- DEFENDERS (the castle, AI) ----------------
     // Archers lined ALONG the south parapet walkway (two ranks, either side of
@@ -326,7 +341,8 @@ export class Sim {
     u.ax = Math.max(WORLD.minX + 2, Math.min(WORLD.maxX - 2, x));
     u.az = Math.max(WORLD.minZ + 2, Math.min(WORLD.maxZ - 2, z));
     u.facing = facing;
-    u.cols = Math.max(3, Math.min(u.count, Math.round(cols)));
+    // trebuchets line up in a single rank so they spread along the emplacement
+    u.cols = u.type === UType.Siege ? u.count : Math.max(3, Math.min(u.count, Math.round(cols)));
     u.hold = false;
     let cell = cellOf(u.ax, u.az);
     if (BLOCKED[cell]) cell = cellOf(u.ax, u.az + 5); // nudge the flow goal off walls
@@ -379,6 +395,8 @@ export class Sim {
   }
   segCenter(s: number): [number, number] { const g = CASTLE[s]; return [(g.x0 + g.x1) / 2, (g.z0 + g.z1) / 2]; }
   hasSiegeUnit(): boolean { return this.units.some(u => u.faction === Faction.Attacker && u.type === UType.Siege); }
+  unitRange(unitId: number): number { return RANGE[this.units[unitId].type]; }
+  isRanged(unitId: number): boolean { const t = this.units[unitId]?.type; return t === UType.Archer || t === UType.Siege; }
 
   begin() { if (this.phase === 'deploy') this.phase = 'battle'; }
 
@@ -400,24 +418,25 @@ export class Sim {
   }
 
   step(dt: number) {
-    if (this.phase !== 'battle') return;
+    if (this.phase === 'over') return;
+    const deploy = this.phase === 'deploy'; // positioning phase: move, but no combat
     this.rebuildHash();
 
-    // morale / routing per unit + centroids
+    // morale / routing per unit + centroids + live ammo
     for (const u of this.units) {
-      let ax = 0, az = 0, a = 0;
-      for (let i = u.s0; i < u.s0 + u.count; i++) if (this.alive[i]) { ax += this.px[i]; az += this.pz[i]; a++; }
-      u.alive = a;
+      let ax = 0, az = 0, a = 0, am = 0;
+      for (let i = u.s0; i < u.s0 + u.count; i++) if (this.alive[i]) { ax += this.px[i]; az += this.pz[i]; a++; am += this.ammo[i]; }
+      u.alive = a; u.ammo = am;
       if (a > 0) { u.cx = ax / a; u.cz = az / a; }
-      if (!u.routing && a > 0 && a / u.count < ROUT_FRAC) u.routing = true;
+      if (!deploy && !u.routing && a > 0 && a / u.count < ROUT_FRAC) u.routing = true;
     }
-    // Once the courtyard garrison (all defender melee) is broken, the walls are
-    // overrun — the wall archers' morale collapses and they abandon their posts.
-    let defMelee = 0;
-    for (const u of this.units) if (u.faction === Faction.Defender && (u.type === UType.Heavy || u.type === UType.Light)) defMelee += u.alive;
-    if (defMelee < 25) for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
-
-    const sense = (i: number) => SENSE[this.typ[i]];
+    if (!deploy) {
+      // Once the courtyard garrison (all defender melee) is broken, the walls are
+      // overrun — the wall archers' morale collapses and they abandon their posts.
+      let defMelee = 0;
+      for (const u of this.units) if (u.faction === Faction.Defender && (u.type === UType.Heavy || u.type === UType.Light)) defMelee += u.alive;
+      if (defMelee < 25) for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
+    }
 
     for (let i = 0; i < this.n; i++) {
       if (!this.alive[i]) continue;
@@ -427,15 +446,12 @@ export class Sim {
       let dx = 0, dz = 0;       // desired direction
       this.cd[i] -= dt;
 
-      // ---- find nearest enemy via hash ----
-      // Search radius covers the unit's full sense, so archers actually find
-      // targets out to their (long) range instead of only the adjacent buckets.
-      // True 2D distance; melee ignore enemies up on the walls (elevation gap)
-      // so they don't stall trying to reach unreachable wall archers.
       const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((this.px[i] - WORLD.minX) / this.hCell)));
       const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((this.pz[i] - WORLD.minZ) / this.hCell)));
+
+      // ---- nearest reachable enemy (skipped during deploy & for siege) ----
       let nearest = -1, nd2 = SENSE[t] * SENSE[t];
-      if (t !== UType.Siege) {
+      if (!deploy && t !== UType.Siege) {
         const sr = SRAD[t]; const isMelee = t === UType.Heavy || t === UType.Light || t === UType.Cavalry;
         const my = this.py[i];
         for (let rr = hr - sr; rr <= hr + sr; rr++) for (let cc = hc - sr; cc <= hc + sr; cc++) {
@@ -452,37 +468,37 @@ export class Sim {
         }
       }
 
-      if (u.routing) {
-        // flee toward the nearest map edge (south for attackers, away otherwise)
+      if (deploy) {
+        // positioning phase: march to formation, no combat
+        if (u.faction === Faction.Attacker && !u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
+      } else if (u.routing) {
         const fz = u.faction === Faction.Attacker ? 1 : -1;
         dx = (this.px[i] > 0 ? 0.4 : -0.4); dz = fz;
         if (this.px[i] < WORLD.minX + 3 || this.px[i] > WORLD.maxX - 3 ||
             this.pz[i] < WORLD.minZ + 3 || this.pz[i] > WORLD.maxZ - 3) { this.kill(i, u); continue; }
       } else if (t === UType.Siege) {
-        // trebuchet: fire on the ordered wall section (if set & in range),
-        // otherwise the nearest standing wall; crew hauls it toward its slot.
         let seg = u.siegeTargetSeg;
         if (seg < 0 || CASTLE[seg].dead) { seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]); if (u.siegeTargetSeg >= 0 && CASTLE[u.siegeTargetSeg].dead) u.siegeTargetSeg = -1; }
-        else if ((((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + (((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2)) > RANGE[t] * RANGE[t]) seg = -1;
-        if (seg >= 0 && this.cd[i] <= 0) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; }
+        else if (((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + ((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2 > RANGE[t] * RANGE[t]) seg = -1;
+        if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
         if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
-        const rng = RANGE[t];
-        const shooting = t === UType.Archer && nearest >= 0 && dist <= rng;
-        const meleeing = t !== UType.Archer && nearest >= 0 && dist <= rng;
-
-        if (shooting) {
-          if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; }
-        } else if (meleeing) {
-          if (this.cd[i] <= 0) { this.hp[nearest] -= MELEE[t]; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
-        } else if (t !== UType.Archer && nearest >= 0 && dist < ENGAGE && !u.hold) {
-          // close enough to break formation and charge into contact
-          const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
-        } else if (!u.hold) {
-          this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
+        if (t === UType.Archer && this.ammo[i] > 0) {
+          // active archer: volley enemies in range (within the focus area if set)
+          if (nearest >= 0 && dist <= RANGE[t] && this.focusOk(u, nearest)) {
+            if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
+          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
+        } else {
+          // melee — including archers who've spent all their arrows
+          const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
+          const mdmg = t === UType.Archer ? MELEE[UType.Light] : MELEE[t];
+          if (nearest >= 0 && dist <= mrng) {
+            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+          } else if (nearest >= 0 && dist < ENGAGE && !u.hold) {
+            const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
+          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
         }
-        // hold units with no enemy in range simply stay put
       }
 
       // ---- separation from same-faction neighbours ----
@@ -520,9 +536,21 @@ export class Sim {
       this.pz[i] = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, nz));
     }
 
-    this.stepProjectiles(dt);
-    this.checkVictory();
+    if (!deploy) { this.stepProjectiles(dt); this.checkVictory(); }
   }
+
+  // Archers only fire at enemies inside their ordered focus area (if one is set),
+  // so the player can concentrate volleys — and not waste arrows on everything.
+  private focusOk(u: Unit, j: number): boolean {
+    if (!u.hasFocus) return true;
+    const dx = this.px[j] - u.focusX, dz = this.pz[j] - u.focusZ;
+    return dx * dx + dz * dz < 18 * 18;
+  }
+  setFocus(unitId: number, x: number, z: number) {
+    const u = this.units[unitId];
+    if (u && u.type === UType.Archer) { u.focusX = x; u.focusZ = z; u.hasFocus = true; }
+  }
+  clearFocus(unitId: number) { const u = this.units[unitId]; if (u) u.hasFocus = false; }
 
   private kill(i: number, u: Unit) { this.alive[i] = 0; if (u) u.alive = Math.max(0, u.alive - 1); }
 
