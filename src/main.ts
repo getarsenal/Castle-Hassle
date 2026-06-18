@@ -130,7 +130,6 @@ function showEnd() {
 }
 
 // ---------------- Input ----------------
-let bound = false;
 const pointers = new Map<number, { x: number; y: number }>();
 let gesture: 'none' | 'orbit' | 'command' | 'camera' = 'none';
 let downAt = { x: 0, y: 0, t: 0 }; let moved = false;
@@ -145,7 +144,9 @@ function lineFacing(p0: THREE.Vector3, p1: THREE.Vector3): [number, number] {
 }
 
 function bindInput() {
-  if (bound) return; bound = true;
+  // Bind to the CURRENT canvas. newGame() replaces the canvas each time, so the
+  // listeners must attach to the new element (the old one is discarded with it).
+  pointers.clear(); gesture = 'none';
   const el = renderer.gl.domElement;
   el.addEventListener('pointerdown', (e) => {
     el.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
