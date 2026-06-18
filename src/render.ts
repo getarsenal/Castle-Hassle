@@ -12,8 +12,10 @@ const COL_DEFEND = new THREE.Color('#4f8fd0');
 
 function jit(i: number, s: number): number { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); }
 
-interface SegVis { box: THREE.Mesh; extras: THREE.Object3D[]; crumbled: boolean; h: number; }
+interface SegVis { box: THREE.Mesh; mat: THREE.MeshLambertMaterial; base: THREE.Color; extras: THREE.Object3D[]; h: number; maxhp: number; prevHp: number; crumbling: number; }
 interface Treb { group: THREE.Group; arm: THREE.Group; idx: number; prevCd: number; ang: number; throwing: boolean; tp: number; }
+interface Debris { x: number; y: number; z: number; vx: number; vy: number; vz: number; rx: number; ry: number; rz: number; vr: number; active: boolean; }
+interface Dust { x: number; y: number; z: number; s: number; life: number; max: number; active: boolean; }
 
 export class Renderer {
   scene = new THREE.Scene();
@@ -25,6 +27,9 @@ export class Renderer {
   private boulderMesh!: THREE.InstancedMesh;
   private segVis: (SegVis | null)[] = [];
   private trebs: Treb[] = [];
+  private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
+  private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
+  private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
   private selRing: THREE.Mesh;
   private targetRing: THREE.Mesh;
   private rangeFan: THREE.Group;
@@ -63,6 +68,7 @@ export class Renderer {
     this.buildShadows();
     this.buildProjectiles();
     this.buildTrebuchets();
+    this.buildEffects();
 
     const ringGeo = new THREE.RingGeometry(2.6, 3.4, 40); ringGeo.rotateX(-Math.PI / 2);
     this.selRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85 }));
@@ -130,7 +136,7 @@ export class Renderer {
       const extras: THREE.Object3D[] = [];
 
       if (b.kind === 'wall' || b.kind === 'gate') {
-        const mat = b.kind === 'gate' ? timber : wallMat;
+        const mat = (b.kind === 'gate' ? timber : wallMat).clone(); // own material → can darken with damage
         const box = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), mat);
         box.position.set(cx, b.h / 2, cz); this.scene.add(box);
 
@@ -157,7 +163,7 @@ export class Renderer {
           const arch = new THREE.Mesh(new THREE.BoxGeometry(w + 2, 1.6, d + 1), wallMat);
           arch.position.set(cx, b.h + 0.4, cz); this.scene.add(arch); extras.push(arch);
         }
-        this.segVis[s] = { box, extras, crumbled: false, h: b.h };
+        this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
         const box = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), towerMat);
         box.position.set(cx, b.h / 2, cz); this.scene.add(box);
@@ -203,10 +209,44 @@ export class Renderer {
     well.position.set(-30, 0, -10); this.scene.add(well);
   }
 
+  private buildEffects() {
+    const rock = new THREE.IcosahedronGeometry(0.6, 0);
+    this.debrisMesh = new THREE.InstancedMesh(rock, new THREE.MeshLambertMaterial({ color: '#b3a685', flatShading: true }), 240);
+    this.debrisMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.debrisMesh.frustumCulled = false; this.scene.add(this.debrisMesh);
+    for (let i = 0; i < 240; i++) this.debris.push({ x: 0, y: -1000, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, vr: 0, active: false });
+
+    const c = document.createElement('canvas'); c.width = c.height = 64; const ctx = c.getContext('2d')!;
+    const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30); g.addColorStop(0, 'rgba(228,218,196,0.92)'); g.addColorStop(1, 'rgba(228,218,196,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+    const dtex = new THREE.CanvasTexture(c); dtex.colorSpace = THREE.SRGBColorSpace;
+    this.dustMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: dtex, transparent: true, depthWrite: false }), 140);
+    this.dustMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.dustMesh.frustumCulled = false; this.scene.add(this.dustMesh);
+    for (let i = 0; i < 140; i++) this.dust.push({ x: 0, y: -1000, z: 0, s: 1, life: 0, max: 1, active: false });
+  }
+
+  private spawnDebris(x: number, y: number, z: number, n: number) {
+    for (let k = 0; k < n; k++) {
+      const d = this.debris[this.debrisHead]; this.debrisHead = (this.debrisHead + 1) % this.debris.length;
+      d.x = x + (Math.random() - 0.5) * 5; d.y = y + Math.random() * 3; d.z = z + (Math.random() - 0.5) * 5;
+      d.vx = (Math.random() - 0.5) * 9; d.vy = 4 + Math.random() * 9; d.vz = (Math.random() - 0.5) * 9;
+      d.rx = Math.random() * 6; d.ry = Math.random() * 6; d.rz = Math.random() * 6; d.vr = (Math.random() - 0.5) * 8; d.active = true;
+    }
+  }
+  private spawnDust(x: number, y: number, z: number, size: number, n: number) {
+    for (let k = 0; k < n; k++) {
+      const p = this.dust[this.dustHead]; this.dustHead = (this.dustHead + 1) % this.dust.length;
+      p.x = x + (Math.random() - 0.5) * 3; p.y = y + Math.random() * 2; p.z = z + (Math.random() - 0.5) * 3;
+      p.s = size * (0.6 + Math.random() * 0.6); p.max = 0.7 + Math.random() * 0.6; p.life = p.max; p.active = true;
+    }
+  }
+
+  // Begin the collapse: debris + dust burst; the box sinks over ~0.7s (render()).
   private crumble(s: number) {
-    const v = this.segVis[s]; if (!v || v.crumbled) return;
-    v.crumbled = true; v.box.material = this.rubbleMat; v.box.scale.y = 0.3; v.box.position.y = v.h * 0.15;
+    const v = this.segVis[s]; if (!v || v.crumbling > 0) return;
+    v.crumbling = 0.0001; v.mat.color.copy(this.rubbleMat.color);
     for (const e of v.extras) e.visible = false;
+    this.spawnDebris(v.box.position.x, v.h * 0.5, v.box.position.z, 16);
+    this.spawnDust(v.box.position.x, v.h * 0.5, v.box.position.z, 9, 6);
   }
 
   private buildSoldiers() {
@@ -297,9 +337,56 @@ export class Renderer {
     this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dir.x, dir.z));
   }
 
+  // wall damage tint, impact puffs, and the animated collapse
+  private updateWalls(dt: number) {
+    for (let s = 0; s < CASTLE.length; s++) {
+      const v = this.segVis[s]; if (!v) continue;
+      const seg = CASTLE[s];
+      if (seg.dead) { if (v.crumbling === 0) this.crumble(s); }
+      else if (seg.hp < v.prevHp) {
+        this.spawnDust(v.box.position.x, v.h * 0.62, v.box.position.z, 5, 2);
+        this.spawnDebris(v.box.position.x, v.h * 0.62, v.box.position.z, 3);
+        const ratio = Math.max(0, seg.hp / v.maxhp);
+        v.mat.color.copy(v.base).lerp(this.dmgColor, 1 - ratio);
+      }
+      v.prevHp = seg.hp;
+      if (v.crumbling > 0 && v.crumbling < 1) {
+        v.crumbling = Math.min(1, v.crumbling + dt / 0.7);
+        const e = v.crumbling, k = 1 - 0.72 * e;
+        v.box.scale.y = k; v.box.position.y = (v.h / 2) * k - 0.4 * e; v.box.rotation.z = e * 0.12 * (s % 2 ? 1 : -1);
+        if (e >= 1) v.box.material = this.rubbleMat;
+      }
+    }
+  }
+
+  private updateEffects(dt: number) {
+    // debris physics → settle into rubble
+    for (let i = 0; i < this.debris.length; i++) {
+      const d = this.debris[i];
+      if (!d.active) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.debrisMesh.setMatrixAt(i, this.dummy.matrix); continue; }
+      if (d.y > 0.4) { d.vy -= 26 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt; d.rx += d.vr * dt; d.ry += d.vr * 0.7 * dt; }
+      else if (d.y !== 0.4) { d.y = 0.4; d.vx *= 0.2; d.vz *= 0.2; d.vy = 0; } // settled
+      this.dummy.position.set(d.x, d.y, d.z); this.dummy.rotation.set(d.rx, d.ry, d.rz); this.dummy.scale.set(1, 1, 1); this.dummy.updateMatrix();
+      this.debrisMesh.setMatrixAt(i, this.dummy.matrix); this.dummy.rotation.set(0, 0, 0);
+    }
+    this.debrisMesh.instanceMatrix.needsUpdate = true;
+    // dust puffs → expand and fade (shrink-out near end of life)
+    for (let i = 0; i < this.dust.length; i++) {
+      const p = this.dust[i];
+      if (!p.active) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.dustMesh.setMatrixAt(i, this.dummy.matrix); continue; }
+      p.life -= dt; if (p.life <= 0) { p.active = false; }
+      p.y += dt * 1.2; const t = 1 - p.life / p.max; const grow = 0.5 + t * 1.4, fade = t > 0.7 ? (1 - t) / 0.3 : 1;
+      const sc = p.s * grow * fade;
+      this.dummy.position.set(p.x, p.y, p.z); this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(sc, sc, sc); this.dummy.updateMatrix();
+      this.dustMesh.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.dustMesh.instanceMatrix.needsUpdate = true;
+  }
+
   render(dt = 0.016) {
     const sim = this.sim;
-    for (let s = 0; s < CASTLE.length; s++) if (CASTLE[s].dead && this.segVis[s] && !this.segVis[s]!.crumbled) this.crumble(s);
+    this.updateWalls(dt);
+    this.updateEffects(dt);
 
     for (let i = 0; i < sim.n; i++) {
       const t = sim.typ[i]; const mesh = this.meshes[t];

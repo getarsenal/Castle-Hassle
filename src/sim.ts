@@ -219,6 +219,8 @@ export class Sim {
   unit = new Int16Array(this.MAX); fac = new Uint8Array(this.MAX); typ = new Uint8Array(this.MAX);
   alive = new Uint8Array(this.MAX); slot = new Int32Array(this.MAX);
   ammo = new Float32Array(this.MAX);
+  // wall-scaling: 0 ground, 1 climbing up, 2 on wall-top, 3 descending inside
+  climbState = new Uint8Array(this.MAX); climbSeg = new Int16Array(this.MAX);
   n = 0;
   units: Unit[] = [];
   typeCount = [0, 0, 0, 0, 0];
@@ -431,11 +433,17 @@ export class Sim {
       if (!deploy && !u.routing && a > 0 && a / u.count < ROUT_FRAC) u.routing = true;
     }
     if (!deploy) {
-      // Once the courtyard garrison (all defender melee) is broken, the walls are
-      // overrun — the wall archers' morale collapses and they abandon their posts.
-      let defMelee = 0;
-      for (const u of this.units) if (u.faction === Faction.Defender && (u.type === UType.Heavy || u.type === UType.Light)) defMelee += u.alive;
-      if (defMelee < 25) for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
+      // Walls are overrun once the GROUND garrison is broken — OR once the
+      // attackers control the courtyard and vastly outnumber the defenders.
+      // Then every defender's morale collapses and they abandon the walls.
+      let defGround = 0, attInside = 0;
+      for (let i = 0; i < this.n; i++) {
+        if (!this.alive[i] || this.climbState[i] > 0 || this.py[i] >= 2) continue;
+        if (this.fac[i] === Faction.Defender) { if (this.typ[i] === UType.Heavy || this.typ[i] === UType.Light) defGround++; }
+        else if (Math.abs(this.px[i]) < HALF - 1 && Math.abs(this.pz[i]) < HALF - 1 && this.typ[i] !== UType.Siege) attInside++;
+      }
+      if (defGround < 25 || (defGround > 0 && attInside > 60 && attInside > 4 * defGround))
+        for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
 
     for (let i = 0; i < this.n; i++) {
@@ -468,10 +476,16 @@ export class Sim {
         }
       }
 
+      // soldiers on a ladder / wall-top are handled by climbStep (unless routing,
+      // in which case they bail off the wall and flee)
+      if (!deploy && this.climbState[i] > 0 && !u.routing) { this.climbStep(i, u, t, dt, nearest); continue; }
+
       if (deploy) {
         // positioning phase: march to formation, no combat
         if (u.faction === Faction.Attacker && !u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else if (u.routing) {
+        if (this.climbState[i] > 0) this.climbState[i] = 0;
+        if (this.py[i] > 0) this.py[i] = Math.max(0, this.py[i] - 14 * dt); // scramble down the wall
         const fz = u.faction === Faction.Attacker ? 1 : -1;
         dx = (this.px[i] > 0 ? 0.4 : -0.4); dz = fz;
         if (this.px[i] < WORLD.minX + 3 || this.px[i] > WORLD.maxX - 3 ||
@@ -488,16 +502,28 @@ export class Sim {
           // active archer: volley enemies in range (within the focus area if set)
           if (nearest >= 0 && dist <= RANGE[t] && this.focusOk(u, nearest)) {
             if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
-          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
+          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.scaleWall(i); dx = this._dir[0]; dz = this._dir[1]; } }
         } else {
           // melee — including archers who've spent all their arrows
+          // Defender reserves rush to MOUNT a wall the enemy is scaling.
+          if (u.hold && u.faction === Faction.Defender && t === UType.Light && nearest >= 0 && this.py[nearest] > 2 && dist < 16) {
+            const seg = this.nearestClimbWall(this.px[i], this.pz[i]); if (seg >= 0) { this.startClimb(i, seg); continue; }
+          }
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
           const mdmg = t === UType.Archer ? MELEE[UType.Light] : MELEE[t];
           if (nearest >= 0 && dist <= mrng) {
             if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
-          } else if (nearest >= 0 && dist < ENGAGE && !u.hold) {
+          } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
+            // chase only a *reachable* enemy — never walk into a wall after one
             const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
-          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
+          } else if (!u.hold) {
+            this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
+            // no breach to filter through → march to the wall in front and scale it
+            if (this._stuck && t !== UType.Cavalry) { this.scaleWall(i); dx = this._dir[0]; dz = this._dir[1]; }
+          } else if (u.hold && nearest >= 0 && dist < 24 && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
+            // garrison surges off its hold to engage enemies that get inside the walls
+            const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
+          }
         }
       }
 
@@ -507,7 +533,7 @@ export class Sim {
         if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
         const b = this.buckets[rr * this.hCols + cc];
         for (let bi = 0; bi < b.length; bi++) {
-          const j = b[bi]; if (j === i || this.fac[j] !== this.fac[i]) continue;
+          const j = b[bi]; if (j === i || this.fac[j] !== this.fac[i] || this.climbState[j] > 0) continue;
           const ex = this.px[i] - this.px[j], ez = this.pz[i] - this.pz[j];
           // separation radius kept BELOW formation spacing so soldiers settled
           // in their ranks don't shove each other (that caused the vibrating).
@@ -558,6 +584,7 @@ export class Sim {
   // Routes via the flow field only when a wall actually blocks the straight
   // path to the slot — otherwise steers directly (so ranks spread, no clumping).
   private _dir = [0, 0];
+  private _stuck = false; // set when the flow field can't reach the goal (enclosed)
   private formMove(u: Unit, i: number) {
     const t = this.typ[i] as UType;
     const sp = SPACING[t], cols = Math.max(1, u.cols), rows = Math.ceil(u.count / cols);
@@ -567,13 +594,79 @@ export class Sim {
     const lr = (col - (cols - 1) / 2) * sp, lf = ((rows - 1) / 2 - row) * sp;
     const slx = u.ax + rrx * lr + ffx * lf, slz = u.az + rrz * lr + ffz * lf;
     const tx = slx - this.px[i], tz = slz - this.pz[i], l = Math.hypot(tx, tz);
+    this._stuck = false;
     if (l > 6 && u.goal >= 0 && pathBlocked(this.px[i], this.pz[i], slx, slz)) {
       const f = this.field(u.goal), ci = cellOf(this.px[i], this.pz[i]);
       this._dir[0] = f[ci * 2]; this._dir[1] = f[ci * 2 + 1];
+      this._stuck = f[ci * 2] === 0 && f[ci * 2 + 1] === 0; // no path: goal is walled off
     } else if (l > 0.35) {
       const mag = l < 2.5 ? l / 2.5 : 1; // ease into the slot (no overshoot/jitter)
       this._dir[0] = (tx / l) * mag; this._dir[1] = (tz / l) * mag;
     } else { this._dir[0] = 0; this._dir[1] = 0; }
+  }
+
+  // ---- wall scaling (ladders) ----
+  private CLIMB = 4.5; // distance from a wall section's box at which a soldier mounts the ladder
+  private nearestClimbWall(x: number, z: number): number {
+    let best = -1, bd = 1e9;
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s]; if (g.dead || (g.kind !== 'wall' && g.kind !== 'gate')) continue;
+      const cx = Math.max(g.x0, Math.min(g.x1, x)), cz = Math.max(g.z0, Math.min(g.z1, z));
+      const d2 = (cx - x) ** 2 + (cz - z) ** 2;
+      if (d2 < bd) { bd = d2; best = s; }
+    }
+    return best;
+  }
+  private startClimb(i: number, seg: number) { this.climbState[i] = 1; this.climbSeg[i] = seg; }
+
+  // Walled off from the goal: head to the nearest wall section and start scaling
+  // it. Writes the approach direction to _dir (0,0 once the ladder is mounted).
+  private scaleWall(i: number) {
+    const seg = this.nearestClimbWall(this.px[i], this.pz[i]);
+    if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
+    const g = CASTLE[seg];
+    const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
+    const ddx = cpx - this.px[i], ddz = cpz - this.pz[i], l = Math.hypot(ddx, ddz) || 1;
+    if (l <= this.CLIMB) { this.startClimb(i, seg); this._dir[0] = 0; this._dir[1] = 0; }
+    else { this._dir[0] = ddx / l; this._dir[1] = ddz / l; }
+  }
+
+  // Fully controls a climbing soldier for the tick (sets px/pz/py). Each soldier
+  // climbs at its OWN position along the wall (so they spread out, not jam) and
+  // pushes across the walkway while fighting, then drops inside.
+  private climbStep(i: number, u: Unit, t: UType, dt: number, nearest: number) {
+    const seg = CASTLE[this.climbSeg[i]];
+    if (!seg || seg.dead) { this.climbState[i] = 0; this.py[i] = 0; return; } // wall fell → it's a breach now
+    const horiz = (seg.x1 - seg.x0) >= (seg.z1 - seg.z0);
+    const wallPerp = horiz ? (seg.z0 + seg.z1) / 2 : (seg.x0 + seg.x1) / 2;
+    const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
+    const along = Math.max(aMin, Math.min(aMax, horiz ? this.px[i] : this.pz[i]));
+    const sgn = wallPerp >= 0 ? 1 : -1;
+    const innerPerp = wallPerp - sgn * (T + 3.5);
+    const at = (alongV: number, perpV: number, sp: number) => {
+      const tx = horiz ? alongV : perpV, tz = horiz ? perpV : alongV;
+      const dx = tx - this.px[i], dz = tz - this.pz[i], l = Math.hypot(dx, dz);
+      if (l > 0.05) { const s = Math.min(l, sp * dt); this.px[i] += dx / l * s; this.pz[i] += dz / l * s; }
+      return l;
+    };
+    // strike a same-level enemy if adjacent (the wall-top melee)
+    if (nearest >= 0 && Math.abs(this.py[nearest] - this.py[i]) < 2.5) {
+      const dd = Math.hypot(this.px[nearest] - this.px[i], this.pz[nearest] - this.pz[i]);
+      if (dd < 2.2 && this.cd[i] <= 0) { const dmg = (MELEE[t] || 7) * 1.4; this.hp[nearest] -= dmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+    }
+    const st = this.climbState[i];
+    if (st === 1) {                       // up the outer face onto the walkway
+      const l = at(along, wallPerp, 3.0); this.py[i] = Math.min(WH, this.py[i] + 4 * dt);
+      if (l < 1.0 && this.py[i] >= WH - 0.1) this.climbState[i] = u.faction === Faction.Attacker ? 2 : 4;
+    } else if (st === 2) {                // attacker: push across the walkway (fighting), then drop in
+      const l = at(along, innerPerp, 1.6);
+      if (l < 1.2) this.climbState[i] = 3;
+    } else if (st === 3) {                // descend into the courtyard
+      const l = at(along, innerPerp, 3.0); this.py[i] = Math.max(0, this.py[i] - 4 * dt);
+      if (this.py[i] <= 0.05 && l < 1.2) { this.climbState[i] = 0; this.py[i] = 0; }
+    } else {                              // st 4: defender holds the wall-top
+      at(along, wallPerp, 1.5);
+    }
   }
 
   private shoot(i: number, target: number) {
