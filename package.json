@@ -5,8 +5,8 @@
   "description": "Castle Hassle - a 2.5D medieval siege game",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite --open /index.dev.html",
+    "build": "vite build && node scripts/postbuild.mjs",
     "preview": "vite preview --port 4173",
     "sync": "npm run build && npx cap sync ios"
   },
