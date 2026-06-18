@@ -207,6 +207,7 @@ export class Renderer {
     for (let i = 0; i < sim.n; i++) {
       const t = sim.typ[i];
       const mesh = this.meshes[t];
+      if (!mesh) continue; // safety: never let a bad type index crash the frame
       const slot = sim.slot[i];
       if (!sim.alive[i]) {
         this.dummy.position.set(0, -1000, 0); this.dummy.scale.set(0.0001, 0.0001, 0.0001);

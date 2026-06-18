@@ -152,7 +152,11 @@ export interface Unit {
 export interface Projectile { active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number; tx: number; tz: number; dmg: number; fac: Faction; }
 
 export class Sim {
-  MAX = 2200;
+  // Must exceed the total soldier count (currently ~2,220). If it's too small,
+  // overflow soldiers have no backing storage: typed-array writes are silently
+  // dropped and reads return undefined, which crashed the renderer
+  // (this.meshes[undefined].setMatrixAt). Keep generous headroom.
+  MAX = 3000;
   px = new Float32Array(this.MAX); pz = new Float32Array(this.MAX); py = new Float32Array(this.MAX);
   vx = new Float32Array(this.MAX); vz = new Float32Array(this.MAX);
   hp = new Float32Array(this.MAX); cd = new Float32Array(this.MAX);
@@ -185,6 +189,7 @@ export class Sim {
 
   private addUnit(faction: Faction, type: UType, count: number,
                   place: (i: number) => [number, number, number], opts: Partial<Unit> = {}): Unit {
+    if (this.n + count > this.MAX) throw new Error(`Soldier cap exceeded: need ${this.n + count}, MAX is ${this.MAX}. Raise Sim.MAX.`);
     const s0 = this.n;
     for (let i = 0; i < count; i++) {
       const id = this.n++;
