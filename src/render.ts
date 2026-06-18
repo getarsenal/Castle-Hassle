@@ -7,8 +7,8 @@ const SPRITE_W = [2.0, 1.8, 1.8, 3.0];
 const SPRITE_H = [2.7, 2.4, 2.4, 2.8];
 const SHADOW_R = [0.95, 0.8, 0.8, 1.35];
 
-const COL_ATTACK = new THREE.Color('#e2673b');
-const COL_DEFEND = new THREE.Color('#4f8fd0');
+const COL_ATTACK = new THREE.Color('#e0552f');
+const COL_DEFEND = new THREE.Color('#3f86d8');
 
 function jit(i: number, s: number): number { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); }
 
@@ -51,15 +51,22 @@ export class Renderer {
     this.gl = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.gl.setSize(window.innerWidth, window.innerHeight);
     this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Filmic tone mapping — the single biggest "real game" upgrade: warm highlight
+    // rolloff + richer contrast, matching the icon's golden, punchy look.
+    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
+    this.gl.toneMappingExposure = 1.12;
     canvasParent.appendChild(this.gl.domElement);
 
-    this.scene.background = new THREE.Color('#cfe3f2');
-    this.scene.fog = new THREE.Fog('#dceaf3', 200, 420);
+    this.scene.background = new THREE.Color('#bcd6ec');
+    // warm golden haze on the horizon so the big field reads with depth
+    this.scene.fog = new THREE.Fog('#e7d9bd', 230, 560);
     this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 1100);
 
-    this.scene.add(new THREE.HemisphereLight('#eaf4ff', '#7e8a4e', 1.0));
-    const sun = new THREE.DirectionalLight('#fff1d4', 1.2); sun.position.set(80, 150, 60); this.scene.add(sun);
-    this.scene.add(new THREE.AmbientLight('#fff4e0', 0.28));
+    // Warm raking key light (low sun) + cool sky fill so shadows stay alive.
+    this.scene.add(new THREE.HemisphereLight('#fff4da', '#6d7b3e', 0.82));
+    const sun = new THREE.DirectionalLight('#ffdca2', 1.95); sun.position.set(95, 115, 55); this.scene.add(sun);
+    const fill = new THREE.DirectionalLight('#aac6e4', 0.32); fill.position.set(-70, 55, -45); this.scene.add(fill);
+    this.scene.add(new THREE.AmbientLight('#fff0d6', 0.2));
 
     this.sscale = new Float32Array(sim.n);
     for (let i = 0; i < sim.n; i++) this.sscale[i] = 0.9 + jit(i, 1) * 0.28;
@@ -293,7 +300,7 @@ export class Renderer {
     for (let t = 0; t < 4; t++) {
       const total = this.sim.typeCount[t];
       const tex = makeSoldierTexture(KIND[t]);
-      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.45, side: THREE.DoubleSide });
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.45, side: THREE.DoubleSide, toneMapped: false });
       const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(SPRITE_W[t], SPRITE_H[t]), mat, Math.max(1, total));
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.frustumCulled = false;
       for (let i = 0; i < this.sim.n; i++) {

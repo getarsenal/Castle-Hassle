@@ -77,13 +77,25 @@ function drawSoldier(ctx: CanvasRenderingContext2D, kind: SpriteKind) {
     }
   }
 
-  // ---- baked shading: top highlight + bottom shadow (survives tint) ----
+  // ---- baked shading (survives the per-instance tint multiply) ----
   ctx.globalCompositeOperation = 'source-atop';
-  const grad = ctx.createLinearGradient(0, 0, 0, S);
-  grad.addColorStop(0, 'rgba(255,255,255,0.35)');
-  grad.addColorStop(0.45, 'rgba(255,255,255,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.33)');
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, S, S);
+  // vertical: bright top highlight -> neutral -> deep bottom shadow (grounds it)
+  const vg = ctx.createLinearGradient(0, 0, 0, S);
+  vg.addColorStop(0, 'rgba(255,255,255,0.46)');
+  vg.addColorStop(0.4, 'rgba(255,255,255,0)');
+  vg.addColorStop(0.78, 'rgba(0,0,0,0.12)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.42)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, S, S);
+  // horizontal form light: lit on the sun side (left), shaded on the right
+  const hg = ctx.createLinearGradient(0, 0, S, 0);
+  hg.addColorStop(0, 'rgba(255,250,235,0.22)');
+  hg.addColorStop(0.5, 'rgba(255,255,255,0)');
+  hg.addColorStop(1, 'rgba(0,0,0,0.26)');
+  ctx.fillStyle = hg; ctx.fillRect(0, 0, S, S);
+  // metal sheen: a small bright spot on the helmet/head
+  const sh = ctx.createRadialGradient(S / 2 - 3, 13, 1, S / 2 - 3, 13, 9);
+  sh.addColorStop(0, 'rgba(255,255,255,0.5)'); sh.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sh; ctx.fillRect(0, 0, S, S);
   ctx.globalCompositeOperation = 'source-over';
 }
 

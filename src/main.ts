@@ -203,10 +203,22 @@ newGame(); // backdrop sim while mustering
 loading.remove();
 (window as any).__running = true;
 
+// perf readout (fps / ms / unit count) for on-device testing; tap to hide
+const perfEl = document.getElementById('perf');
+perfEl?.addEventListener('click', () => perfEl.classList.add('hidden'));
+let perfAcc = 0, perfFrames = 0;
+
 const SIM_DT = 1 / 30; let acc = 0, last = performance.now(), ended = false;
 function frame(now: number) {
   let dt = (now - last) / 1000; last = now; if (dt > 0.1) dt = 0.1;
   acc += dt; while (acc >= SIM_DT) { sim.step(SIM_DT); acc -= SIM_DT; }
+
+  perfAcc += dt; perfFrames++;
+  if (perfEl && perfAcc >= 0.5) {
+    const fps = perfFrames / perfAcc;
+    perfEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / fps).toFixed(1)} ms · ${sim.n} units`;
+    perfAcc = 0; perfFrames = 0;
+  }
 
   const u = selected >= 0 ? sim.units[selected] : null;
   if (u && u.alive > 0) renderer.setSelection(u.cx, u.cz); else renderer.setSelection(null, null);
