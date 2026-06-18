@@ -143,11 +143,17 @@ export interface Unit {
   id: number; faction: Faction; type: UType;
   s0: number; count: number; alive: number;
   morale: number; routing: boolean; hold: boolean;
-  guardX: number; guardZ: number;
-  goal: number;          // goal cell, or -1
-  cx: number; cz: number; // centroid
+  goal: number;            // flow-field goal cell (for long-range routing to the anchor)
+  ax: number; az: number;  // formation anchor (centre)
+  facing: number;          // direction the unit faces (forward = (sin f, cos f))
+  cols: number;            // formation width in soldiers
+  cx: number; cz: number;  // live centroid
   name: string;
 }
+
+// per-type formation spacing
+const SPACING = [1.5, 1.3, 1.4, 2.1];
+const ENGAGE = 9; // range at which troops break formation to fight
 
 export interface Projectile { active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number; tx: number; tz: number; dmg: number; fac: Faction; }
 
@@ -191,22 +197,40 @@ export class Sim {
                   place: (i: number) => [number, number, number], opts: Partial<Unit> = {}): Unit {
     if (this.n + count > this.MAX) throw new Error(`Soldier cap exceeded: need ${this.n + count}, MAX is ${this.MAX}. Raise Sim.MAX.`);
     const s0 = this.n;
+    let sx = 0, sz = 0;
     for (let i = 0; i < count; i++) {
       const id = this.n++;
       const [x, z, y] = place(i);
-      this.px[id] = x; this.pz[id] = z; this.py[id] = y;
+      this.px[id] = x; this.pz[id] = z; this.py[id] = y; sx += x; sz += z;
       this.hp[id] = HP[type]; this.cd[id] = this.rnd() * 0.5;
       this.unit[id] = this.units.length; this.fac[id] = faction; this.typ[id] = type;
       this.alive[id] = 1; this.slot[id] = this.typeCount[type]++;
     }
+    const ax = sx / count, az = sz / count;
     const u: Unit = {
       id: this.units.length, faction, type, s0, count, alive: count,
       morale: 100, routing: false, hold: !!opts.hold,
-      guardX: opts.guardX ?? 0, guardZ: opts.guardZ ?? 0, goal: opts.goal ?? -1,
-      cx: 0, cz: 0, name: opts.name ?? TYPE_NAME[type],
+      goal: opts.goal ?? cellOf(ax, az),
+      ax, az,
+      facing: Math.atan2(0 - ax, 0 - az), // face the castle (origin) by default
+      cols: opts.cols ?? Math.max(6, Math.round(Math.sqrt(count) * 1.7)),
+      cx: ax, cz: az, name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
     return u;
+  }
+
+  // World position of soldier index k's slot within its unit's formation.
+  private slotPos(u: Unit, k: number): [number, number] {
+    const sp = SPACING[u.type];
+    const cols = Math.max(1, u.cols);
+    const rows = Math.ceil(u.count / cols);
+    const col = k % cols, row = (k - col) / cols;
+    const fx = Math.sin(u.facing), fz = Math.cos(u.facing); // forward
+    const rx = Math.cos(u.facing), rz = -Math.sin(u.facing); // right
+    const lr = (col - (cols - 1) / 2) * sp;
+    const lf = ((rows - 1) / 2 - row) * sp;
+    return [u.ax + rx * lr + fx * lf, u.az + rz * lr + fz * lf];
   }
 
   private setup() {
@@ -220,11 +244,12 @@ export class Sim {
     // ---------------- ATTACKERS (south, player) ----------------
     // Default orders split the host between the gate (centre) and the breach
     // (right) so both entries are used; the player can redirect any unit.
-    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(-34, 62, 30, 1.3), { name: 'Vanguard', goal: cellOf(0, 14) });
-    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(34, 62, 30, 1.3), { name: 'Ironsides', goal: cellOf(17, 13) });
-    this.addUnit(Faction.Attacker, UType.Light, 320, block(0, 70, 36, 1.2), { name: 'Skirmishers', goal: cellOf(0, 14) });
-    this.addUnit(Faction.Attacker, UType.Archer, 260, block(0, 80, 40, 1.3), { name: 'Longbows', goal: cellOf(0, 32) });
-    this.addUnit(Faction.Attacker, UType.Cavalry, 160, block(-62, 64, 20, 1.8), { name: 'Lancers', goal: cellOf(17, 13) });
+    // They hold their deploy formation until you command them (Total War style).
+    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(-30, 60, 30, 1.5), { name: 'Vanguard', cols: 30 });
+    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(30, 60, 30, 1.5), { name: 'Ironsides', cols: 30 });
+    this.addUnit(Faction.Attacker, UType.Light, 320, block(0, 70, 40, 1.3), { name: 'Skirmishers', cols: 40 });
+    this.addUnit(Faction.Attacker, UType.Archer, 260, block(0, 80, 44, 1.4), { name: 'Longbows', cols: 44 });
+    this.addUnit(Faction.Attacker, UType.Cavalry, 160, block(-64, 66, 26, 2.1), { name: 'Lancers', cols: 26 });
 
     // ---------------- DEFENDERS (the castle, AI) ----------------
     // Archers along the south wall tops (either side of the gate) + side walls.
@@ -253,19 +278,44 @@ export class Sim {
       if (u.faction === Faction.Attacker) this.attackerAliveStart += u.count;
       else this.defenderAliveStart += u.count;
     }
-    // prime the fields the AI/initial orders use
-    this.field(cellOf(0, 14)); this.field(cellOf(17, 13)); this.field(cellOf(0, 32));
   }
 
-  issueMove(unitId: number, x: number, z: number) {
+  private setAnchor(u: Unit, x: number, z: number, facing: number, cols: number) {
+    u.ax = Math.max(WORLD.minX + 2, Math.min(WORLD.maxX - 2, x));
+    u.az = Math.max(WORLD.minZ + 2, Math.min(WORLD.maxZ - 2, z));
+    u.facing = facing;
+    u.cols = Math.max(3, Math.min(u.count, Math.round(cols)));
+    u.hold = false;
+    let cell = cellOf(u.ax, u.az);
+    if (BLOCKED[cell]) cell = cellOf(u.ax, u.az + 5); // nudge the flow goal off walls
+    u.goal = cell;
+    this.field(cell);
+  }
+
+  // Quick move: form up centred on a point, facing the castle (origin).
+  orderMove(unitId: number, x: number, z: number) {
     const u = this.units[unitId];
     if (!u || u.faction !== Faction.Attacker || u.routing) return;
-    let cx = Math.max(WORLD.minX + 1, Math.min(WORLD.maxX - 1, x));
-    let cz = Math.max(WORLD.minZ + 1, Math.min(WORLD.maxZ - 1, z));
-    let cell = cellOf(cx, cz);
-    if (BLOCKED[cell]) cell = cellOf(cx, cz + 4); // nudge off walls
-    u.goal = cell; u.hold = false;
-    this.field(cell);
+    const facing = Math.atan2(0 - x, 0 - z);
+    this.setAnchor(u, x, z, facing, Math.round(Math.sqrt(u.count) * 1.7));
+  }
+
+  // Formation line: the unit lines up along the drag P0->P1, facing the side
+  // toward the castle. Width of the drag sets the formation width.
+  orderFormation(unitId: number, x0: number, z0: number, x1: number, z1: number) {
+    const u = this.units[unitId];
+    if (!u || u.faction !== Faction.Attacker || u.routing) return;
+    const dx = x1 - x0, dz = z1 - z0;
+    const width = Math.hypot(dx, dz);
+    if (width < 4) { this.orderMove(unitId, x1, z1); return; }
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+    const rx = dx / width, rz = dz / width;        // line (right) axis
+    // two perpendicular candidates; pick the one pointing toward the castle
+    let fx = -rz, fz = rx;
+    if (fx * (0 - mx) + fz * (0 - mz) < 0) { fx = -fx; fz = -fz; }
+    const facing = Math.atan2(fx, fz);
+    const cols = Math.round(width / SPACING[u.type]) + 1;
+    this.setAnchor(u, mx, mz, facing, cols);
   }
 
   begin() { if (this.phase === 'deploy') this.phase = 'battle'; }
@@ -345,25 +395,37 @@ export class Sim {
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
         const rng = RANGE[t];
-        if (nearest >= 0 && t === UType.Archer) {
-          // archers: shoot if in range, else (defenders hold; attackers edge closer)
-          if (dist <= rng && this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; }
-          if (!u.hold && dist > rng * 0.8) { const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l; }
-        } else if (nearest >= 0 && dist <= rng) {
-          // melee: in range → strike, hold ground
+        const shooting = t === UType.Archer && nearest >= 0 && dist <= rng;
+        const meleeing = t !== UType.Archer && nearest >= 0 && dist <= rng;
+
+        if (shooting) {
+          // halt and volley
+          if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; }
+        } else if (meleeing) {
+          // strike, hold ground
           if (this.cd[i] <= 0) { this.hp[nearest] -= MELEE[t]; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
-        } else if (nearest >= 0 && !u.hold && dist < 12) {
-          // melee: only *short-range* chase for final convergence. Beyond that
-          // we trust the flow field (below) so troops route through the gate /
-          // breach instead of mobbing the solid wall face.
+        } else if (t !== UType.Archer && nearest >= 0 && dist < ENGAGE && !u.hold) {
+          // close enough to break formation and charge into contact
           const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
-        } else if (!u.hold && u.goal >= 0) {
-          // otherwise follow the flow field toward the unit's goal
-          const f = this.field(u.goal); const ci = cellOf(this.px[i], this.pz[i]);
-          dx = f[ci * 2]; dz = f[ci * 2 + 1];
-        } else if (u.hold) {
-          // garrison: hold position and fight whatever comes (no drift)
+        } else if (!u.hold) {
+          // move in formation toward this soldier's slot; route via the flow
+          // field while still far from the anchor (so walls are handled)
+          const adx = u.ax - this.px[i], adz = u.az - this.pz[i];
+          if (adx * adx + adz * adz > 18 * 18 && u.goal >= 0) {
+            const f = this.field(u.goal); const ci = cellOf(this.px[i], this.pz[i]);
+            dx = f[ci * 2]; dz = f[ci * 2 + 1];
+          } else {
+            const sp = SPACING[t], cols = Math.max(1, u.cols), rows = Math.ceil(u.count / cols);
+            const k = i - u.s0, col = k % cols, row = (k - col) / cols;
+            const ffx = Math.sin(u.facing), ffz = Math.cos(u.facing);
+            const rrx = Math.cos(u.facing), rrz = -Math.sin(u.facing);
+            const lr = (col - (cols - 1) / 2) * sp, lf = ((rows - 1) / 2 - row) * sp;
+            const tx = u.ax + rrx * lr + ffx * lf - this.px[i], tz = u.az + rrz * lr + ffz * lf - this.pz[i];
+            const l = Math.hypot(tx, tz);
+            if (l > 0.4) { dx = tx / l; dz = tz / l; }
+          }
         }
+        // hold units with no enemy in range simply stay put
       }
 
       // ---- separation from same-faction neighbours ----
