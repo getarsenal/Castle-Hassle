@@ -209,20 +209,26 @@ perfEl?.addEventListener('click', () => perfEl.classList.add('hidden'));
 let perfAcc = 0, perfFrames = 0, adaptCooldown = 0;
 
 const SIM_DT = 1 / 30; let acc = 0, last = performance.now(), ended = false;
+let simMs = 0, gfxMs = 0;
 function frame(now: number) {
   let dt = (now - last) / 1000; last = now; if (dt > 0.1) dt = 0.1;
-  acc += dt; while (acc >= SIM_DT) { sim.step(SIM_DT); acc -= SIM_DT; }
+  // At most ONE sim step per frame, and never accumulate a backlog — otherwise a
+  // slow frame triggers extra steps that slow it further (a death spiral). Under
+  // heavy load the battle just runs slightly slow-mo instead of locking up.
+  const ts = performance.now();
+  acc += dt; if (acc >= SIM_DT) { sim.step(SIM_DT); acc = Math.min(acc - SIM_DT, SIM_DT); }
+  simMs += performance.now() - ts;
 
   perfAcc += dt; perfFrames++;
   if (perfAcc >= 0.5) {
     const fps = perfFrames / perfAcc;
     const q = renderer.quality;
-    if (perfEl) perfEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / fps).toFixed(1)} ms · ${sim.n} units · ${Math.round(q * 100)}%`;
+    if (perfEl) perfEl.textContent = `${fps.toFixed(0)}fps · sim ${(simMs / perfFrames).toFixed(0)} · gfx ${(gfxMs / perfFrames).toFixed(0)}ms · ${sim.n}u · ${Math.round(q * 100)}%`;
     // adaptive resolution: ease down when struggling, back up when there's room
     if (adaptCooldown > 0) adaptCooldown--;
     else if (fps < 26 && q > 0.6) { renderer.setQuality(q - 0.1); adaptCooldown = 3; }
     else if (fps > 54 && q < 1) { renderer.setQuality(q + 0.1); adaptCooldown = 3; }
-    perfAcc = 0; perfFrames = 0;
+    perfAcc = 0; perfFrames = 0; simMs = 0; gfxMs = 0;
   }
 
   const u = selected >= 0 ? sim.units[selected] : null;
@@ -234,7 +240,9 @@ function frame(now: number) {
   if (u && u.alive > 0 && (u.type === UType.Archer || u.type === UType.Siege) && showRange) renderer.setRangeFan(u.cx, u.cz, sim.unitRange(u.id));
   else renderer.setRangeFan(null, null);
 
+  const tg = performance.now();
   renderer.render(Math.min(dt, 0.05));
+  gfxMs += performance.now() - tg;
   refreshCards(); updateTopbar();
   if (sim.phase === 'over' && !ended) { ended = true; showEnd(); }
   if (sim.phase !== 'over') ended = false;

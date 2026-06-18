@@ -388,10 +388,17 @@ export class Renderer {
   }
 
   private buildShadows() {
-    const geo = new THREE.CircleGeometry(0.7, 14); geo.rotateX(-Math.PI / 2);
+    const geo = new THREE.CircleGeometry(0.7, 12); geo.rotateX(-Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({ color: '#23311c', transparent: true, opacity: 0.2, depthWrite: false });
     this.shadowMesh = new THREE.InstancedMesh(geo, mat, this.sim.n);
     this.shadowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.shadowMesh.frustumCulled = false; this.scene.add(this.shadowMesh);
+    // Shadow scale/rotation are constant per unit, so bake them once into the
+    // instance matrices; the render loop then only patches the translation.
+    const a = this.shadowMesh.instanceMatrix.array as Float32Array;
+    for (let i = 0; i < this.sim.n; i++) {
+      const t = this.sim.typ[i], sr = (t < 4 ? SHADOW_R[t] : 0) * (this.sscale[i] || 1), o = i * 16;
+      a[o] = sr; a[o + 5] = 1; a[o + 10] = sr; a[o + 15] = 1; a[o + 13] = -1000;
+    }
   }
 
   private buildProjectiles() {
@@ -514,23 +521,25 @@ export class Renderer {
     this.updateWalls(dt);
     this.updateEffects(dt);
 
+    const sa = this.shadowMesh.instanceMatrix.array as Float32Array;
+    const tm = this.time * 9;
     for (let i = 0; i < sim.n; i++) {
-      const t = sim.typ[i]; const mesh = this.meshes[t];
-      if (!mesh) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.shadowMesh.setMatrixAt(i, this.dummy.matrix); continue; } // siege -> 3D
+      const t = sim.typ[i]; const mesh = this.meshes[t]; const o = i * 16;
+      if (!mesh) { sa[o + 13] = -1000; continue; } // siege -> 3D model, no sprite
       const slot = sim.slot[i]; const s = this.sscale[i] || 1;
       if (!sim.alive[i]) {
         this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.quaternion.identity(); this.dummy.updateMatrix();
-        mesh.setMatrixAt(slot, this.dummy.matrix); this.shadowMesh.setMatrixAt(i, this.dummy.matrix); continue;
+        mesh.setMatrixAt(slot, this.dummy.matrix); sa[o + 13] = -1000; continue;
       }
       // marching bob + side sway so soldiers feel alive (not flat & static)
-      const sp = Math.hypot(sim.vx[i], sim.vz[i]); const m = sp > 0.5 ? 1 : 0.28;
-      const w = Math.sin(this.time * 9 + i * 1.7);
+      const sp = Math.abs(sim.vx[i]) + Math.abs(sim.vz[i]); const m = sp > 0.5 ? 1 : 0.28;
+      const w = Math.sin(tm + i * 1.7);
       const yb = w * 0.17 * m * s, h2 = (1 + Math.abs(w) * 0.06 * m); // bounce + slight stretch
       this._roll.setFromAxisAngle(this._zAxis, w * 0.13 * m);
       this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s * h2) / 2 + yb, sim.pz[i]);
       this.dummy.quaternion.copy(this.billboard).multiply(this._roll); this.dummy.scale.set(s, s * h2, s); this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
-      this.dummy.position.set(sim.px[i], sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05, sim.pz[i]);
-      this.dummy.quaternion.identity(); this.dummy.scale.set(SHADOW_R[t] * s, 1, SHADOW_R[t] * s); this.dummy.updateMatrix(); this.shadowMesh.setMatrixAt(i, this.dummy.matrix);
+      // shadow: only the translation changes (scale/rotation baked at build)
+      sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i];
     }
     for (let t = 0; t < 4; t++) this.meshes[t].instanceMatrix.needsUpdate = true;
     this.shadowMesh.instanceMatrix.needsUpdate = true;
