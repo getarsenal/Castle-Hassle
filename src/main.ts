@@ -1,6 +1,10 @@
 import { Sim, Faction, maxHp } from './sim';
 import { Renderer } from './render';
 
+// Tell the startup watchdog (inline script in index.html) the module loaded and
+// is executing — any throw from here on is caught by window.onerror and shown.
+(window as any).__started = true;
+
 const app = document.getElementById('app')!;
 const loading = document.getElementById('loading')!;
 
@@ -158,6 +162,7 @@ function handleTap(clientX: number, clientY: number) {
 
 // ---------------- Loop ----------------
 buildCards();
+(window as any).__running = true; // watchdog: init finished, game is live
 loading.remove();
 
 const SIM_DT = 1 / 30;

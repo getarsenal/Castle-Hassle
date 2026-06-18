@@ -82,6 +82,42 @@
 <body>
   <div id="app"></div>
   <div id="loading">RAISING THE BANNERS…</div>
+  <script>
+    // Startup diagnostics: if the game module fails to load or throws during
+    // init, surface the reason on screen instead of an eternal loading screen.
+    (function () {
+      function box() {
+        var l = document.getElementById('loading');
+        if (!l) {
+          l = document.createElement('div');
+          l.id = 'loading';
+          document.body.appendChild(l);
+        }
+        l.style.whiteSpace = 'pre-wrap';
+        l.style.padding = '26px';
+        l.style.fontSize = '12px';
+        l.style.lineHeight = '1.5';
+        l.style.textAlign = 'left';
+        l.style.color = '#ff9a6a';
+        l.style.fontFamily = 'monospace';
+        return l;
+      }
+      function show(msg) { box().textContent = msg; }
+      window.addEventListener('error', function (e) {
+        // resource (script/img) load failures have no e.message
+        if (e && e.target && e.target.src) { show('FAILED TO LOAD:\n' + e.target.src + '\n\nThe JS bundle did not load — the assets/ folder probably was not deployed next to index.html.'); return; }
+        show('STARTUP ERROR:\n' + (e.message || e.type) + '\n' + (e.filename || '') + ':' + (e.lineno || '') + '\n\n' + ((e.error && e.error.stack) || ''));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        show('STARTUP REJECTION:\n' + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+      });
+      setTimeout(function () {
+        if (window.__running) return; // game is live, all good
+        if (!window.__started) show('Game did not start within 9s.\nThe JS bundle never executed — the assets/ folder was probably not deployed next to index.html (check for a 404 on /assets/*.js).');
+        else show('Init did not finish within 9s.\nThe script loaded but setup hung — likely WebGL is unavailable/slow in this browser, or an error was swallowed.');
+      }, 9000);
+    })();
+  </script>
   <div id="hud">
     <div id="title">CASTLE HASSLE</div>
     <div id="topbar">
