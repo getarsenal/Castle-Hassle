@@ -122,6 +122,15 @@ export class Renderer {
     this.gl.setSize(window.innerWidth, window.innerHeight);
   }
 
+  // Adaptive resolution: render the 3D buffer at `q`× screen pixels (HUD is DOM,
+  // stays crisp). Driven by measured fps so weak devices auto-scale down.
+  quality = 1;
+  setQuality(q: number) {
+    q = Math.max(0.6, Math.min(1, Math.round(q * 100) / 100));
+    if (q === this.quality) return;
+    this.quality = q; this.gl.setPixelRatio(q); this.gl.setSize(window.innerWidth, window.innerHeight);
+  }
+
   private buildSky() {
     const geo = new THREE.SphereGeometry(560, 24, 16);
     const top = new THREE.Color('#bcd9f0'), bot = new THREE.Color('#f4ead2');
@@ -396,29 +405,27 @@ export class Renderer {
     const fg = fx.createRadialGradient(16, 16, 1, 16, 16, 15); fg.addColorStop(0, 'rgba(255,240,180,1)'); fg.addColorStop(0.4, 'rgba(255,150,40,0.9)'); fg.addColorStop(1, 'rgba(255,80,0,0)');
     fx.fillStyle = fg; fx.fillRect(0, 0, 32, 32);
     const ftex = new THREE.CanvasTexture(fc); ftex.colorSpace = THREE.SRGBColorSpace;
-    this.fireMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.6, 1.6), new THREE.MeshBasicMaterial({ map: ftex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 700);
+    this.fireMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.6, 1.6), new THREE.MeshBasicMaterial({ map: ftex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 450);
     this.fireMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.fireMesh.frustumCulled = false; this.scene.add(this.fireMesh);
   }
 
   private makeTreb(): { group: THREE.Group; arm: THREE.Group } {
     const timber = this.stone('#8a6a42'); const dark = this.stone('#6a4f30');
     const g = new THREE.Group();
-    // base sled
-    for (const sx of [-1.6, 1.6]) { const beam = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 8), timber); beam.position.set(sx, 0.4, 0); g.add(beam); }
-    for (const sz of [-3, 3]) { const cross = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.6, 0.7), timber); cross.position.set(0, 0.4, sz); g.add(cross); }
-    // A-frame to pivot at y≈6
+    // static frame (sled + A-frame) merged into ONE mesh
+    const frame: THREE.BufferGeometry[] = [];
+    for (const sx of [-1.6, 1.6]) frame.push(new THREE.BoxGeometry(0.7, 0.7, 8).translate(sx, 0.4, 0));
+    for (const sz of [-3, 3]) frame.push(new THREE.BoxGeometry(3.9, 0.6, 0.7).translate(0, 0.4, sz));
     for (const sx of [-1.6, 1.6]) {
-      const a = new THREE.Mesh(new THREE.BoxGeometry(0.55, 8, 0.55), timber);
-      a.position.set(sx, 3.4, 0.9); a.rotation.x = -0.32; g.add(a);
-      const b = new THREE.Mesh(new THREE.BoxGeometry(0.55, 8, 0.55), timber);
-      b.position.set(sx, 3.4, -0.9); b.rotation.x = 0.32; g.add(b);
+      const a = new THREE.BoxGeometry(0.55, 8, 0.55); a.rotateX(-0.32); a.translate(sx, 3.4, 0.9); frame.push(a);
+      const b = new THREE.BoxGeometry(0.55, 8, 0.55); b.rotateX(0.32); b.translate(sx, 3.4, -0.9); frame.push(b);
     }
-    // axle
+    g.add(new THREE.Mesh(mergeGeometries(frame, false), timber));
     const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 4), dark); axle.rotation.z = Math.PI / 2; axle.position.y = 6.4; g.add(axle);
-    // arm pivot group
+    // arm pivot group (animates): merge the two beams, keep counterweight + rock
     const arm = new THREE.Group(); arm.position.set(0, 6.4, 0); g.add(arm);
-    const longArm = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 11), timber); longArm.position.set(0, 0, -3.2); arm.add(longArm);
-    const shortArm = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 4), timber); shortArm.position.set(0, 0, 3.2); arm.add(shortArm);
+    const beams = mergeGeometries([new THREE.BoxGeometry(0.5, 0.5, 11).translate(0, 0, -3.2), new THREE.BoxGeometry(0.5, 0.5, 4).translate(0, 0, 3.2)], false);
+    arm.add(new THREE.Mesh(beams, timber));
     const cw = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 2.2), dark); cw.position.set(0, -0.6, 5.4); arm.add(cw);
     const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 0), new THREE.MeshLambertMaterial({ color: '#6f655a', flatShading: true })); rock.position.set(0, -1.2, -8.4); arm.add(rock);
     arm.rotation.x = -1.0; // cocked
@@ -550,7 +557,7 @@ export class Renderer {
         this.dummy.position.set(p.x, Math.max(0.3, p.y), p.z); this.dummy.quaternion.set(jit(bc, 1), jit(bc, 2), jit(bc, 3), 1).normalize();
         this.dummy.scale.set(1, 1, 1); this.dummy.updateMatrix(); this.boulderMesh.setMatrixAt(bc++, this.dummy.matrix);
       } else if (p.fire) {
-        if (fc >= 700) continue;
+        if (fc >= 450) continue;
         this.dummy.position.set(p.x, Math.max(0.1, p.y), p.z); this.dummy.quaternion.copy(this.billboard);
         const fl = 0.8 + jit(fc, 5) * 0.5; this.dummy.scale.set(fl, fl, fl); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(fc++, this.dummy.matrix);
       } else {
@@ -561,8 +568,8 @@ export class Renderer {
     }
     for (let k = ac; k < 1400; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(k, this.dummy.matrix); }
     for (let k = bc; k < 60; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.boulderMesh.setMatrixAt(k, this.dummy.matrix); }
-    for (let k = fc; k < 700; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(k, this.dummy.matrix); }
-    this.projMesh.count = 1400; this.boulderMesh.count = 60; this.fireMesh.count = 700;
+    for (let k = fc; k < 450; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(k, this.dummy.matrix); }
+    this.projMesh.count = 1400; this.boulderMesh.count = 60; this.fireMesh.count = 450;
     this.projMesh.instanceMatrix.needsUpdate = true; this.boulderMesh.instanceMatrix.needsUpdate = true; this.fireMesh.instanceMatrix.needsUpdate = true;
 
     this.updateCamera(); this.gl.render(this.scene, this.camera);

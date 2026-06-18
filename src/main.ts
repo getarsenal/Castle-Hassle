@@ -206,7 +206,7 @@ loading.remove();
 // perf readout (fps / ms / unit count) for on-device testing; tap to hide
 const perfEl = document.getElementById('perf');
 perfEl?.addEventListener('click', () => perfEl.classList.add('hidden'));
-let perfAcc = 0, perfFrames = 0;
+let perfAcc = 0, perfFrames = 0, adaptCooldown = 0;
 
 const SIM_DT = 1 / 30; let acc = 0, last = performance.now(), ended = false;
 function frame(now: number) {
@@ -214,9 +214,14 @@ function frame(now: number) {
   acc += dt; while (acc >= SIM_DT) { sim.step(SIM_DT); acc -= SIM_DT; }
 
   perfAcc += dt; perfFrames++;
-  if (perfEl && perfAcc >= 0.5) {
+  if (perfAcc >= 0.5) {
     const fps = perfFrames / perfAcc;
-    perfEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / fps).toFixed(1)} ms · ${sim.n} units`;
+    const q = renderer.quality;
+    if (perfEl) perfEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / fps).toFixed(1)} ms · ${sim.n} units · ${Math.round(q * 100)}%`;
+    // adaptive resolution: ease down when struggling, back up when there's room
+    if (adaptCooldown > 0) adaptCooldown--;
+    else if (fps < 26 && q > 0.6) { renderer.setQuality(q - 0.1); adaptCooldown = 3; }
+    else if (fps > 54 && q < 1) { renderer.setQuality(q + 0.1); adaptCooldown = 3; }
     perfAcc = 0; perfFrames = 0;
   }
 
