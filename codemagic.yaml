@@ -1,0 +1,61 @@
+workflows:
+  ios-workflow:
+    name: Castle Hassle iOS Build
+    integrations:
+      app_store_connect: Scheidel Holdings LLC
+    environment:
+      xcode: latest
+      node: latest
+      # Same proven signing mechanism as the other Scheidel apps: Codemagic
+      # installs the managed distribution certificate from the integration and
+      # fetches the matching uploaded provisioning profile before scripts run.
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.scheidelholdings.castlehassle
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm install
+      - name: Build web (Vite -> www/)
+        # Castle Hassle is a bundled TypeScript/three.js app, so unlike the
+        # single-file games we build the web bundle before syncing it into iOS.
+        script: |
+          npm run build
+      - name: Sync Capacitor
+        script: |
+          npx cap sync ios
+      - name: Apply code signing profiles
+        script: |
+          xcode-project use-profiles --verbose
+          echo "================ SIGNING DIAGNOSTICS ================"
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || echo "(none)"
+          SETTINGS=$(xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -showBuildSettings 2>/dev/null || true)
+          echo "$SETTINGS" | grep -iE "CODE_SIGN_STYLE|DEVELOPMENT_TEAM|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|PRODUCT_BUNDLE_IDENTIFIER" || echo "(no signing settings resolved)"
+          echo "===================================================="
+          if ! echo "$SETTINGS" | grep -qiE "PROVISIONING_PROFILE_SPECIFIER = [A-Za-z0-9]"; then
+            echo "STOPPING: use-profiles did not wire a provisioning profile into the App target."
+            exit 1
+          fi
+          echo "Signing is wired. Proceeding to build."
+      - name: Set build number from timestamp
+        script: |
+          cd $CM_BUILD_DIR/ios/App
+          BUILD_NUMBER=$(date +%Y%m%d%H%M)
+          agvtool new-version -all $BUILD_NUMBER
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --project "ios/App/App.xcodeproj" \
+            --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
