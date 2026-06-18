@@ -4,7 +4,7 @@
 // flow field per destination (no per-agent A*). Fixed-timestep & seeded so it's
 // deterministic (replays / future PvP come cheap).
 
-export const WORLD = { minX: -100, maxX: 100, minZ: -90, maxZ: 90 };
+export const WORLD = { minX: -120, maxX: 120, minZ: -110, maxZ: 125 };
 export const CELL = 2;
 export const COLS = Math.round((WORLD.maxX - WORLD.minX) / CELL); // 100
 export const ROWS = Math.round((WORLD.maxZ - WORLD.minZ) / CELL); // 90
@@ -19,15 +19,15 @@ export const TYPE_NAME = ['Heavy Inf', 'Light Inf', 'Archers', 'Cavalry', 'Trebu
 const HP = [120, 70, 55, 95, 260];
 const SPEED = [7, 11, 8, 17, 3.2];
 const MELEE = [9, 7, 5, 15, 0];
-const ATKCD = [0.8, 0.55, 1.3, 0.75, 4.5];
-const RANGE = [1.8, 1.7, 40, 2.0, 88];   // siege = bombardment range
-const SENSE = [16, 16, 46, 20, 90];
+const ATKCD = [0.8, 0.55, 1.3, 0.75, 6.5]; // trebuchets reload slowly
+const RANGE = [1.8, 1.7, 40, 2.0, 110];   // siege = bombardment range
+const SENSE = [16, 16, 46, 20, 110];
 const SRAD = SENSE.map((s) => Math.max(1, Math.ceil(s / 6))); // hash search radius in buckets (hCell=6)
 const RADIUS = [0.7, 0.6, 0.6, 0.95, 2.0];
 const ARCHER_PROJ_DMG = 12;
 const ARCHER_PROJ_SPEED = 55;
-const BOULDER_DMG = 175;       // damage a trebuchet boulder does to a wall section
-const BOULDER_SPEED = 34;
+const BOULDER_DMG = 200;       // damage a trebuchet boulder does to a wall section
+const BOULDER_SPEED = 30;
 const ROUT_FRAC = 0.3;
 
 export function maxHp(t: UType) { return HP[t]; }
@@ -38,17 +38,19 @@ export function maxHp(t: UType) { return HP[t]; }
 export type SegKind = 'wall' | 'gate' | 'tower' | 'keep';
 export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; }
 
-const HALF = 28, T = 3.5, WH = 7, SEG = 7;
+export const HALF = 40, T = 4, WH = 9, SEG = 8, GATE_HALF = 9;
+// tower indices marked so the renderer can give the gatehouse pair extra height
+export const TOWERS: { x: number; z: number; big: boolean }[] = [];
 function buildCastle(): Seg[] {
   const segs: Seg[] = [];
   const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind) => {
-    const hp = kind === 'gate' ? 480 : 820;
-    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? 6 : WH, kind, hp, maxhp: hp, dead: false });
+    const hp = kind === 'gate' ? 1100 : 1750; // tough — many boulders to crumble
+    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? WH - 1 : WH, kind, hp, maxhp: hp, dead: false });
   };
   // South wall (nearest the attackers) — a wooden GATE in the centre
   for (let x = -HALF; x < HALF - 0.1; x += SEG) {
     const x1 = Math.min(x + SEG, HALF); const cx = (x + x1) / 2;
-    wall(x, x1, HALF - T, HALF, Math.abs(cx) < 7 ? 'gate' : 'wall');
+    wall(x, x1, HALF - T, HALF, Math.abs(cx) < GATE_HALF ? 'gate' : 'wall');
   }
   // North wall
   for (let x = -HALF; x < HALF - 0.1; x += SEG) wall(x, Math.min(x + SEG, HALF), -HALF, -HALF + T, 'wall');
@@ -57,11 +59,17 @@ function buildCastle(): Seg[] {
     const z1 = Math.min(z + SEG, HALF);
     wall(-HALF, -HALF + T, z, z1, 'wall'); wall(HALF - T, HALF, z, z1, 'wall');
   }
-  // Corner towers (indestructible)
-  for (const [tx, tz] of [[-HALF, -HALF], [HALF, -HALF], [-HALF, HALF], [HALF, HALF]] as const)
-    segs.push({ x0: tx - 3.5, x1: tx + 3.5, z0: tz - 3.5, z1: tz + 3.5, h: 11, kind: 'tower', hp: Infinity, maxhp: Infinity, dead: false });
-  // Keep (smaller footprint so it doesn't dominate the yard)
-  segs.push({ x0: -7, x1: 7, z0: -7, z1: 7, h: 13, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+  // Towers: corners, mid-walls, and a taller gatehouse pair flanking the gate
+  const tower = (x: number, z: number, big = false) => {
+    const r = big ? 5 : 4.2;
+    segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: big ? WH + 6 : WH + 4, kind: 'tower', hp: Infinity, maxhp: Infinity, dead: false });
+    TOWERS.push({ x, z, big });
+  };
+  tower(-HALF, -HALF); tower(HALF, -HALF); tower(-HALF, HALF); tower(HALF, HALF); // corners
+  tower(0, -HALF); tower(-HALF, 0); tower(HALF, 0);                                 // mid walls
+  tower(-GATE_HALF - 3, HALF, true); tower(GATE_HALF + 3, HALF, true);              // gatehouse
+  // Keep
+  segs.push({ x0: -9, x1: 9, z0: -9, z1: 9, h: 18, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
   return segs;
 }
 export const CASTLE: Seg[] = buildCastle();
@@ -174,6 +182,7 @@ export interface Unit {
   facing: number;          // direction the unit faces (forward = (sin f, cos f))
   cols: number;            // formation width in soldiers
   cx: number; cz: number;  // live centroid
+  siegeTargetSeg: number;  // wall section a trebuchet battery is ordered to hit (-1 = auto)
   name: string;
 }
 
@@ -245,7 +254,7 @@ export class Sim {
       ax, az,
       facing: Math.atan2(0 - ax, 0 - az), // face the castle (origin) by default
       cols: opts.cols ?? Math.max(6, Math.round(Math.sqrt(count) * 1.7)),
-      cx: ax, cz: az, name: opts.name ?? TYPE_NAME[type],
+      cx: ax, cz: az, siegeTargetSeg: -1, name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
     return u;
@@ -276,37 +285,36 @@ export class Sim {
     // Default orders split the host between the gate (centre) and the breach
     // (right) so both entries are used; the player can redirect any unit.
     // They hold their deploy formation until you command them (Total War style).
-    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(-30, 60, 30, 1.5), { name: 'Vanguard', cols: 30 });
-    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(30, 60, 30, 1.5), { name: 'Ironsides', cols: 30 });
-    this.addUnit(Faction.Attacker, UType.Light, 320, block(0, 70, 40, 1.3), { name: 'Skirmishers', cols: 40 });
-    this.addUnit(Faction.Attacker, UType.Archer, 260, block(0, 80, 44, 1.4), { name: 'Longbows', cols: 44 });
-    this.addUnit(Faction.Attacker, UType.Cavalry, 160, block(-64, 66, 26, 2.1), { name: 'Lancers', cols: 26 });
-    // Trebuchet battery — bombards the nearest wall to crumble a breach.
-    this.addUnit(Faction.Attacker, UType.Siege, 4, block(0, 92, 4, 10), { name: 'Trebuchets', cols: 4 });
+    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(-36, 80, 30, 1.6), { name: 'Vanguard', cols: 30 });
+    this.addUnit(Faction.Attacker, UType.Heavy, 300, block(36, 80, 30, 1.6), { name: 'Ironsides', cols: 30 });
+    this.addUnit(Faction.Attacker, UType.Light, 320, block(0, 92, 40, 1.4), { name: 'Skirmishers', cols: 40 });
+    this.addUnit(Faction.Attacker, UType.Archer, 260, block(0, 102, 44, 1.5), { name: 'Longbows', cols: 44 });
+    this.addUnit(Faction.Attacker, UType.Cavalry, 160, block(-74, 86, 26, 2.2), { name: 'Lancers', cols: 26 });
+    // Trebuchet battery — bombards walls to crumble a breach (select it to aim).
+    this.addUnit(Faction.Attacker, UType.Siege, 4, block(0, 114, 4, 16), { name: 'Trebuchets', cols: 4 });
 
     // ---------------- DEFENDERS (the castle, AI) ----------------
-    // Archers standing ON the south wall-top (either side of the gate), y = wall height.
-    this.addUnit(Faction.Defender, UType.Archer, 80, (i) => {
-      const left = i < 40; const k = left ? i : i - 40;
-      const x = left ? -25 + (k % 8) * 2.1 : 9 + (k % 8) * 2.1;
-      const z = 25.0 + Math.floor(k / 8) * 1.2;
-      return [x, z, WH];
+    // Archers lined ALONG the south parapet walkway (two ranks, either side of
+    // the gatehouse), standing on the wall-top.
+    const wz = HALF - T / 2; // walkway centreline (z)
+    this.addUnit(Faction.Defender, UType.Archer, 96, (i) => {
+      const left = i < 48; const k = left ? i : i - 48;
+      const rank = k % 2, col = Math.floor(k / 2);
+      const x = left ? -(GATE_HALF + 3) - col * 1.5 : (GATE_HALF + 3) + col * 1.5;
+      return [x, wz - 0.7 + rank * 1.4, WH];
     }, { hold: true, name: 'Wall Archers' });
-    // Archers on the east & west wall-tops.
-    this.addUnit(Faction.Defender, UType.Archer, 50, (i) => {
-      const east = i < 25; const k = east ? i : i - 25;
-      const z = -22 + (k % 5) * 9;
-      const x = east ? 25.5 + Math.floor(k / 5) * 1.2 : -26.5 - Math.floor(k / 5) * 1.2;
-      return [x, z, WH];
+    // Archers along the east & west parapet walkways.
+    const wx = HALF - T / 2;
+    this.addUnit(Faction.Defender, UType.Archer, 64, (i) => {
+      const east = i < 32; const k = east ? i : i - 32;
+      const rank = k % 2, col = Math.floor(k / 2);
+      const z = -30 + col * 3.8;
+      return [east ? wx - 0.7 + rank * 1.4 : -(wx) + 0.7 - rank * 1.4, z, WH];
     }, { hold: true, name: 'Flank Archers' });
-    // Garrison melee HOLD the south courtyard, right where the flood enters
-    // (between the keep and the gate) so attackers meet them head-on and their
-    // numbers tell — no safe corner to hide in.
-    // A large garrison packed across the whole courtyard (scattered, holding
-    // position). The assault must fight through the entire yard to take it.
-    const yard = (): [number, number, number] => { let x = 0, z = 0; do { x = R(-23, 23); z = R(-21, 21); } while (blockedAt(x, z)); return [x, z, 0]; };
-    this.addUnit(Faction.Defender, UType.Heavy, 450, yard, { hold: true, name: 'Garrison' });
-    this.addUnit(Faction.Defender, UType.Light, 300, yard, { hold: true, name: 'Reserves' });
+    // Garrison melee hold the courtyard in FORMED BLOCKS (not scattered) so they
+    // don't drift into the corners; the assault must break through them.
+    this.addUnit(Faction.Defender, UType.Heavy, 460, block(0, 18, 34, 1.6), { hold: true, name: 'Garrison' });
+    this.addUnit(Faction.Defender, UType.Light, 300, block(0, -2, 34, 1.5), { hold: true, name: 'Reserves' });
 
     for (const u of this.units) {
       if (u.faction === Faction.Attacker) this.attackerAliveStart += u.count;
@@ -351,6 +359,26 @@ export class Sim {
     const cols = Math.round(width / SPACING[u.type]) + 1;
     this.setAnchor(u, mx, mz, facing, cols);
   }
+
+  // ---- trebuchet target selection ----
+  // Nearest still-standing wall/gate section to a tapped point (or -1).
+  wallSegAt(x: number, z: number, maxDist = 14): number {
+    let best = -1, bd = maxDist * maxDist;
+    for (let s = 0; s < CASTLE.length; s++) {
+      const seg = CASTLE[s];
+      if (seg.dead || (seg.kind !== 'wall' && seg.kind !== 'gate')) continue;
+      const cx = Math.max(seg.x0, Math.min(seg.x1, x)), cz = Math.max(seg.z0, Math.min(seg.z1, z));
+      const d2 = (cx - x) ** 2 + (cz - z) ** 2;
+      if (d2 < bd) { bd = d2; best = s; }
+    }
+    return best;
+  }
+  setSiegeTarget(unitId: number, segIdx: number) {
+    const u = this.units[unitId];
+    if (u && u.type === UType.Siege) u.siegeTargetSeg = segIdx;
+  }
+  segCenter(s: number): [number, number] { const g = CASTLE[s]; return [(g.x0 + g.x1) / 2, (g.z0 + g.z1) / 2]; }
+  hasSiegeUnit(): boolean { return this.units.some(u => u.faction === Faction.Attacker && u.type === UType.Siege); }
 
   begin() { if (this.phase === 'deploy') this.phase = 'battle'; }
 
@@ -431,9 +459,11 @@ export class Sim {
         if (this.px[i] < WORLD.minX + 3 || this.px[i] > WORLD.maxX - 3 ||
             this.pz[i] < WORLD.minZ + 3 || this.pz[i] > WORLD.maxZ - 3) { this.kill(i, u); continue; }
       } else if (t === UType.Siege) {
-        // trebuchet: bombard the nearest standing wall in range; otherwise the
-        // crew hauls it toward its slot (player positions the battery).
-        const seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]);
+        // trebuchet: fire on the ordered wall section (if set & in range),
+        // otherwise the nearest standing wall; crew hauls it toward its slot.
+        let seg = u.siegeTargetSeg;
+        if (seg < 0 || CASTLE[seg].dead) { seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]); if (u.siegeTargetSeg >= 0 && CASTLE[u.siegeTargetSeg].dead) u.siegeTargetSeg = -1; }
+        else if ((((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + (((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2)) > RANGE[t] * RANGE[t]) seg = -1;
         if (seg >= 0 && this.cd[i] <= 0) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; }
         if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
@@ -546,7 +576,8 @@ export class Sim {
     const seg = CASTLE[segIdx];
     const p = this.getProj();
     const sx = this.px[i], sz = this.pz[i], sy = 3;
-    const tx = (seg.x0 + seg.x1) / 2, tz = (seg.z0 + seg.z1) / 2;
+    // aim at the section centre with a little scatter (siege isn't pinpoint)
+    const tx = (seg.x0 + seg.x1) / 2 + (this.rnd() - 0.5) * 5, tz = (seg.z0 + seg.z1) / 2 + (this.rnd() - 0.5) * 4;
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;

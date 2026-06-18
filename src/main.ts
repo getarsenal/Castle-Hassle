@@ -1,4 +1,4 @@
-import { Sim, Faction } from './sim';
+import { Sim, Faction, UType } from './sim';
 import { Renderer } from './render';
 import * as THREE from 'three';
 
@@ -59,6 +59,10 @@ function updateTopbar() {
 
 function updateHint() {
   if (sim.phase === 'deploy') { hintEl.textContent = 'Position your army, then ⚔ Begin Assault. One finger rotates the camera.'; return; }
+  if (selected >= 0 && sim.units[selected]?.type === UType.Siege) {
+    hintEl.textContent = 'Trebuchets: TAP A WALL to aim the battery · tap open ground to move it';
+    return;
+  }
   hintEl.textContent = selected >= 0
     ? 'Tap to send · DRAG to set their line & facing · two fingers = camera'
     : 'Trebuchets breach the walls — then send troops through the gap. Tap a unit to select.';
@@ -188,7 +192,14 @@ function handleTap(cx: number, cy: number) {
     if (d < bd) { bd = d; best = u.id; }
   }
   if (best >= 0) { selected = best; refreshCards(); updateHint(); return; }
-  if (selected >= 0 && sim.phase !== 'over') sim.orderMove(selected, p.x, p.z);
+  if (selected >= 0 && sim.phase !== 'over') {
+    const u = sim.units[selected];
+    if (u.type === UType.Siege) {
+      const seg = sim.wallSegAt(p.x, p.z); // aim battery at a wall if tapped near one
+      if (seg >= 0) { sim.setSiegeTarget(selected, seg); return; }
+    }
+    sim.orderMove(selected, p.x, p.z);
+  }
 }
 
 // ---------------- Loop ----------------
@@ -205,10 +216,12 @@ function frame(now: number) {
   acc += dt;
   while (acc >= SIM_DT) { sim.step(SIM_DT); acc -= SIM_DT; }
 
-  if (selected >= 0) { const u = sim.units[selected]; renderer.setSelection(u && u.alive > 0 ? u.cx : null, u && u.alive > 0 ? u.cz : null); }
-  else renderer.setSelection(null, null);
+  const selU = selected >= 0 ? sim.units[selected] : null;
+  if (selU && selU.alive > 0) renderer.setSelection(selU.cx, selU.cz); else renderer.setSelection(null, null);
+  if (selU && selU.type === UType.Siege && selU.siegeTargetSeg >= 0) { const [tx, tz] = sim.segCenter(selU.siegeTargetSeg); renderer.setTargetMarker(tx, tz); }
+  else renderer.setTargetMarker(null, null);
 
-  renderer.render();
+  renderer.render(Math.min(dt, 0.05));
   refreshCards(); updateTopbar();
 
   if (sim.phase === 'over' && !ended) { ended = true; showEnd(); }
