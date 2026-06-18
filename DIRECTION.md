@@ -16,9 +16,12 @@
 
 | Question | Decision | Why |
 |---|---|---|
-| **Engine** | **Unity 6** (URP mobile) | Only mainstream engine that ships *thousands of agents on a phone* (Burst/Jobs + GPU instancing) **and** has an asset store that slashes art/content cost. One codebase → iOS, Android, PC. |
-| **Render model** | **2.5D** — real low-poly 3D terrain & castles, **billboarded sprite soldiers** | The cheapest possible way to draw a soldier, while keeping the "deep detail from above" 3D feel. This is the biggest single efficiency lever. |
-| **Sim architecture** | **Data-oriented** (Jobs + Burst + flow-field pathfinding), deterministic, fixed-timestep | Thousands of agents at 60fps; deterministic buys replays now and async PvP later for free. Start with Jobs+NativeArrays; adopt full Entities/ECS only if profiling demands it (avoids the DOTS learning tax up front). |
+| **Engine** | **Unity 6** (Personal license — free) | Free under the revenue threshold. Best-in-class iOS pipeline and the strongest *thousands-of-agents-on-a-phone* story (Burst/Jobs/DOTS + GPU instancing) — directly serves the scale you want to maximize. |
+| **Target platform** | **iOS App Store first** (iPhone), iPad next, Android later | You have an Apple developer account; ship there first. One Unity codebase ports to the rest. |
+| **Test distribution** | **TestFlight public links** | Preserves your "send friends a link" workflow — they tap a link and install a real native build on their own device. Better perf signal than a browser, and it's the standard pre-release path to the App Store. |
+| **Render model** | **2.5D** — real low-poly 3D terrain & castles, **billboarded sprite soldiers** | The cheapest possible way to draw a soldier, while keeping the "deep detail from above" 3D feel. Rendered via GPU instancing (`BatchRendererGroup` / `RenderMeshInstanced`). The biggest single efficiency lever. |
+| **Sim architecture** | **Data-oriented** (Jobs + Burst + flow-field pathfinding), deterministic, fixed-timestep | Thousands of agents at 60fps; Burst compiles to native SIMD. Deterministic buys replays now and async PvP later for free. Start with Jobs + `NativeArray`; adopt full Entities/ECS only if profiling demands it (avoids the DOTS learning tax up front). |
+| **Art & sound (100% free)** | **CC0 asset packs** (Kenney.nl) + procedural geometry; **CC0 SFX** (Freesound) | Zero-cost, license-clean. Procedurally-assembled low-poly castles + a single recolorable soldier sprite sheet. No paid asset store needed. |
 | **Scale model** | **1 rendered sprite = N soldiers.** Units are *blocks*; "thousands" is unit *strength*, not 1:1 bodies | A unit of 200 men rendered as ~30 sprites. ~1,500 sprites on screen reads as an army of ~10,000+. This is how we "maximize scale" without melting the phone. |
 | **Tone / art** | **Soft, hand-painted, charming, bloodless** — original IP. "Bluey" = *aesthetic reference only* | Keeps the wow + family-friendly rating; sidesteps the Bluey IP/legal trap entirely. |
 | **Combat** | **Morale & routing**, not annihilation | Battles resolve fast and feel real; makes the "barely took it → counter-siege" loop natural. |
@@ -59,7 +62,7 @@ If M1 hits this, the whole "holy shit, on a phone?" vision is real. If it doesn'
 
 Each milestone is a thing you can hold and judge. We do not widen until the core is fun.
 
-- **M0 — Skeleton.** Unity project, URP-mobile, data schemas (unit/weapon/castle), CI, on-device deploy pipeline. *(I can scaffold the repo structure + data schemas now.)*
+- **M0 — Skeleton.** Unity project, URP-mobile, data schemas (unit/weapon/castle), iOS build + TestFlight pipeline. *(See §6 for how we split this given the dev environment.)*
 - **M1 — "Crowd on a phone."** Render + move **1,500+ instanced sprites** via flow-field at 60fps on a real device. No game yet — pure tech proof of the scale budget. **This is the make-or-break milestone; we do it first.**
 - **M2 — "First blood."** Two armies clash on open ground: 4 unit types with rock-paper-scissors roles + **morale/routing**. The core combat must feel good here.
 - **M3 — "The wall."** One modular castle, archers-on-walls, **one breach mechanic** (trebuchet crumbles a wall section → chokepoint fight), one siege weapon.
@@ -69,11 +72,40 @@ Each milestone is a thing you can hold and judge. We do not widen until the core
 
 ---
 
-## 5. What I Need From You (only the truly blocking ones)
+## 5. Constraints (locked in)
 
-I've decided everything I reasonably can. Two things genuinely change the plan and only you can answer:
+- **Solo developer.** Scope is cut accordingly — everything is vertical-slice-first, and we lean hard on free CC0 assets and procedural content so one person can carry it.
+- **100% free *tools*** — Unity Personal, CC0 art/sound, free CI. Distribution costs (your existing Apple account) are fine.
+- **Ships to the iOS App Store**, tested via TestFlight links to friends.
 
-1. **Do you have Unity experience / a preference against it?** If you'd rather a web-first build (instant share-by-URL, faster iteration) I'll adapt — but it trades away some peak scale. My pick stands at Unity for the scale you asked to maximize.
-2. **Solo or small team?** Sets exactly how hard we cut scope. I've planned as if it's small/solo.
+---
 
-If neither is a blocker, say "go" and I'll **scaffold M0** — the Unity project layout, the data schemas (unit/weapon/castle definitions), and a written M1 tech spec — committed to this branch.
+## 6. How We Build It (given the dev environment)
+
+The honest constraint: **Unity needs the Unity Editor on your Mac** — it can't be
+created or compiled in this cloud Linux container. So we split M0 cleanly:
+
+**You do (once, ~30 min, on your Mac):**
+1. Install **Unity Hub** + **Unity 6 LTS** with the **iOS Build Support** module.
+2. Create a new project (**Universal 3D / URP** template), name it `CastleHassle`,
+   inside this repo folder.
+3. Add packages via Package Manager: **Burst**, **Collections**, **Mathematics**
+   (and **Entities** later if/when we need full ECS).
+4. Commit the generated `Assets/`, `Packages/`, `ProjectSettings/` (I'll provide
+   the `.gitignore` so we don't commit `Library/`).
+
+**I do (now, in this repo):**
+1. A Unity-correct **`.gitignore`**.
+2. The **data schemas as C# `ScriptableObject` scripts** (`UnitDef`, `WeaponDef`,
+   `CastleDef`) — drop into `Assets/Scripts/Data/`.
+3. The **M1 core**: a Jobs+Burst crowd system (flat `NativeArray` agent data,
+   flow-field movement) + an instanced sprite renderer — the make-or-break
+   "1,500 sprites moving at 60fps" proof, as ready-to-compile C#.
+4. A written **M1 tech spec** and a step-by-step **TestFlight deploy guide**.
+
+You open the project, the scripts compile, and you press Play. From there the
+loop is: I write systems here → you pull, compile, test on device → send the
+TestFlight link to friends.
+
+**Say "go" and I'll commit the `.gitignore`, the data-schema scripts, the M1
+crowd system, and the setup + TestFlight guide to this branch.**
