@@ -25,6 +25,7 @@ export class Renderer {
   private shadowMesh!: THREE.InstancedMesh;
   private projMesh!: THREE.InstancedMesh;
   private boulderMesh!: THREE.InstancedMesh;
+  private fireMesh!: THREE.InstancedMesh;
   private segVis: (SegVis | null)[] = [];
   private trebs: Treb[] = [];
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
@@ -141,19 +142,24 @@ export class Renderer {
         box.position.set(cx, b.h / 2, cz); this.scene.add(box);
 
         if (b.kind === 'wall') {
-          const along = w > d ? 'x' : 'z'; const len = Math.max(w, d);
-          // parapet walkway cap (slightly proud, for archers to stand on)
-          const walk = new THREE.Mesh(new THREE.BoxGeometry(w + (along === 'z' ? 1 : 0), 0.4, d + (along === 'x' ? 1 : 0)), walkMat);
-          walk.position.set(cx, b.h + 0.2, cz); this.scene.add(walk); extras.push(walk);
-          // crenellations along the outer edge
-          const n = Math.floor(len / 1.8);
-          for (let k = 0; k < n; k++) {
+          const horiz = w > d, len = horiz ? w : d;
+          const outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
+          // worn walkway floor — the DEFINED area units stand within
+          const wf = new THREE.Mesh(new THREE.BoxGeometry(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d), walkMat);
+          wf.position.set(cx, b.h + 0.25, cz); this.scene.add(wf); extras.push(wf);
+          // LOW crenellated parapet on the OUTER edge only
+          const n = Math.floor(len / 1.7);
+          for (let k = 0; k <= n; k++) {
             if (k % 2) continue;
-            const m = new THREE.Mesh(new THREE.BoxGeometry(along === 'x' ? 1.1 : d + 0.6, 1.3, along === 'x' ? d + 0.6 : 1.1), crenMat);
-            if (along === 'x') m.position.set(b.x0 + 0.9 + k * 1.8, b.h + 1.0, cz);
-            else m.position.set(cx, b.h + 1.0, b.z0 + 0.9 + k * 1.8);
+            const m = new THREE.Mesh(new THREE.BoxGeometry(horiz ? 1.0 : 0.7, 1.7, horiz ? 0.7 : 1.0), crenMat);
+            if (horiz) m.position.set(b.x0 + 0.85 + k * 1.7, b.h + 0.85, cz + outer * (d / 2 - 0.35));
+            else m.position.set(cx + outer * (w / 2 - 0.35), b.h + 0.85, b.z0 + 0.85 + k * 1.7);
             this.scene.add(m); extras.push(m);
           }
+          // low inner rail so the walkway reads as an enclosed walk
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d), crenMat);
+          rail.position.set(horiz ? cx : cx - outer * (w / 2 - 0.25), b.h + 0.35, horiz ? cz - outer * (d / 2 - 0.25) : cz);
+          this.scene.add(rail); extras.push(rail);
         } else {
           // gate: two timber doors + stone arch
           for (const sx of [-1, 1]) {
@@ -165,18 +171,18 @@ export class Renderer {
         }
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
-        const box = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), towerMat);
+        const tmat = towerMat.clone(); // own material → darkens with damage
+        const box = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), tmat);
         box.position.set(cx, b.h / 2, cz); this.scene.add(box);
-        // battlement ring
         for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const) {
-          const m = new THREE.Mesh(new THREE.BoxGeometry(ew, 1.3, ed), crenMat); m.position.set(cx + ex, b.h + 0.6, cz + ez); this.scene.add(m);
+          const m = new THREE.Mesh(new THREE.BoxGeometry(ew, 1.3, ed), crenMat); m.position.set(cx + ex, b.h + 0.6, cz + ez); this.scene.add(m); extras.push(m);
         }
         const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.82, 5.5, 4), roofMat);
-        roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.4, cz); this.scene.add(roof);
-        // banner
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole);
+        roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.4, cz); this.scene.add(roof); extras.push(roof);
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole); extras.push(pole);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide }));
-        flag.position.set(cx + 1.2, b.h + 8, cz); this.scene.add(flag);
+        flag.position.set(cx + 1.2, b.h + 8, cz); this.scene.add(flag); extras.push(flag);
+        this.segVis[s] = { box, mat: tmat, base: tmat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'keep') {
         const base = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), keepMat); base.position.set(cx, b.h / 2, cz); this.scene.add(base);
         const upper = new THREE.Mesh(new THREE.BoxGeometry(w - 5, 5, d - 5), keepMat); upper.position.set(cx, b.h + 2.5, cz); this.scene.add(upper);
@@ -282,6 +288,13 @@ export class Renderer {
     this.projMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.projMesh.frustumCulled = false; this.scene.add(this.projMesh);
     this.boulderMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.0, 0), new THREE.MeshLambertMaterial({ color: '#6f655a', flatShading: true }), 60);
     this.boulderMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.boulderMesh.frustumCulled = false; this.scene.add(this.boulderMesh);
+    // flaming arrows — additive glowing blob
+    const fc = document.createElement('canvas'); fc.width = fc.height = 32; const fx = fc.getContext('2d')!;
+    const fg = fx.createRadialGradient(16, 16, 1, 16, 16, 15); fg.addColorStop(0, 'rgba(255,240,180,1)'); fg.addColorStop(0.4, 'rgba(255,150,40,0.9)'); fg.addColorStop(1, 'rgba(255,80,0,0)');
+    fx.fillStyle = fg; fx.fillRect(0, 0, 32, 32);
+    const ftex = new THREE.CanvasTexture(fc); ftex.colorSpace = THREE.SRGBColorSpace;
+    this.fireMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.6, 1.6), new THREE.MeshBasicMaterial({ map: ftex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 400);
+    this.fireMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.fireMesh.frustumCulled = false; this.scene.add(this.fireMesh);
   }
 
   private makeTreb(): { group: THREE.Group; arm: THREE.Group } {
@@ -418,13 +431,17 @@ export class Renderer {
       tr.arm.rotation.x = tr.ang;
     }
 
-    let ac = 0, bc = 0; const up = new THREE.Vector3(0, 1, 0); const v = new THREE.Vector3();
+    let ac = 0, bc = 0, fc = 0; const up = new THREE.Vector3(0, 1, 0); const v = new THREE.Vector3();
     for (const p of sim.projectiles) {
       if (!p.active) continue;
       if (p.big) {
         if (bc >= 60) continue;
         this.dummy.position.set(p.x, Math.max(0.3, p.y), p.z); this.dummy.quaternion.set(jit(bc, 1), jit(bc, 2), jit(bc, 3), 1).normalize();
         this.dummy.scale.set(1, 1, 1); this.dummy.updateMatrix(); this.boulderMesh.setMatrixAt(bc++, this.dummy.matrix);
+      } else if (p.fire) {
+        if (fc >= 400) continue;
+        this.dummy.position.set(p.x, Math.max(0.1, p.y), p.z); this.dummy.quaternion.copy(this.billboard);
+        const fl = 0.8 + jit(fc, 5) * 0.5; this.dummy.scale.set(fl, fl, fl); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(fc++, this.dummy.matrix);
       } else {
         if (ac >= 900) continue;
         this.dummy.position.set(p.x, Math.max(0.1, p.y), p.z); v.set(p.vx, p.vy, p.vz); if (v.lengthSq() > 0.0001) { v.normalize(); this.dummy.quaternion.setFromUnitVectors(up, v); }
@@ -433,8 +450,9 @@ export class Renderer {
     }
     for (let k = ac; k < 900; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(k, this.dummy.matrix); }
     for (let k = bc; k < 60; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.boulderMesh.setMatrixAt(k, this.dummy.matrix); }
-    this.projMesh.count = 900; this.boulderMesh.count = 60;
-    this.projMesh.instanceMatrix.needsUpdate = true; this.boulderMesh.instanceMatrix.needsUpdate = true;
+    for (let k = fc; k < 400; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(k, this.dummy.matrix); }
+    this.projMesh.count = 900; this.boulderMesh.count = 60; this.fireMesh.count = 400;
+    this.projMesh.instanceMatrix.needsUpdate = true; this.boulderMesh.instanceMatrix.needsUpdate = true; this.fireMesh.instanceMatrix.needsUpdate = true;
 
     this.updateCamera(); this.gl.render(this.scene, this.camera);
   }

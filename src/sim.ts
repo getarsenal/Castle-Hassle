@@ -70,7 +70,8 @@ function buildCastle(): Seg[] {
   // Towers: corners, mid-walls, and a taller gatehouse pair flanking the gate
   const tower = (x: number, z: number, big = false) => {
     const r = big ? 5 : 4.2;
-    segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: big ? WH + 6 : WH + 4, kind: 'tower', hp: Infinity, maxhp: Infinity, dead: false });
+    const hp = big ? 3200 : 2600; // towers are tough but destructible
+    segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: big ? WH + 6 : WH + 4, kind: 'tower', hp, maxhp: hp, dead: false });
     TOWERS.push({ x, z, big });
   };
   tower(-HALF, -HALF); tower(HALF, -HALF); tower(-HALF, HALF); tower(HALF, HALF); // corners
@@ -196,6 +197,7 @@ export interface Unit {
   siegeTargetSeg: number;  // wall section a trebuchet battery is ordered to hit (-1 = auto)
   ammo: number; ammoMax: number; // live + starting ammunition (ranged units)
   focusX: number; focusZ: number; hasFocus: boolean; // archer aim point (focus fire)
+  fireArrows: boolean; // tower archers loose flaming arrows
   name: string;
 }
 
@@ -208,6 +210,7 @@ export interface Projectile {
   tx: number; tz: number; dmg: number; fac: Faction;
   wall: number;   // target wall-segment index for boulders, else -1
   big: boolean;   // boulder vs arrow (render size)
+  fire: boolean;  // flaming arrow (tower archers)
 }
 
 export class Sim {
@@ -273,7 +276,7 @@ export class Sim {
       cols: opts.cols ?? (type === UType.Siege ? count : Math.max(6, Math.round(Math.sqrt(count) * 1.7))),
       cx: ax, cz: az, siegeTargetSeg: -1,
       ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
-      focusX: 0, focusZ: 0, hasFocus: false,
+      focusX: 0, focusZ: 0, hasFocus: false, fireArrows: !!opts.fireArrows,
       name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
@@ -314,23 +317,32 @@ export class Sim {
     if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, 116, C.siege, 11), { name: 'Trebuchets', cols: C.siege });
 
     // ---------------- DEFENDERS (the castle, AI) ----------------
-    // Archers lined ALONG the south parapet walkway (two ranks, either side of
-    // the gatehouse), standing on the wall-top.
-    const wz = HALF - T / 2; // walkway centreline (z)
+    // Walkway is the inner ~3 units of the wall-top; archers stand on it, inset
+    // from the outer parapet and well clear of the corner towers.
+    const wIn = HALF - T + 0.9;       // inner walkway line (just inside the wall)
+    const wMid = HALF - T + 2.1;      // second rank
+    const corner = HALF - 7;          // keep clear of corners
+    // South wall (either side of the gatehouse), two ranks
     this.addUnit(Faction.Defender, UType.Archer, 96, (i) => {
       const left = i < 48; const k = left ? i : i - 48;
       const rank = k % 2, col = Math.floor(k / 2);
-      const x = left ? -(GATE_HALF + 3) - col * 1.5 : (GATE_HALF + 3) + col * 1.5;
-      return [x, wz - 0.7 + rank * 1.4, WH];
+      const x = left ? -(GATE_HALF + 3) - col * 1.6 : (GATE_HALF + 3) + col * 1.6;
+      return [Math.max(-corner, Math.min(corner, x)), rank ? wMid : wIn, WH];
     }, { hold: true, name: 'Wall Archers' });
-    // Archers along the east & west parapet walkways.
-    const wx = HALF - T / 2;
+    // East & west walls, two ranks each, inset from corners
     this.addUnit(Faction.Defender, UType.Archer, 64, (i) => {
       const east = i < 32; const k = east ? i : i - 32;
       const rank = k % 2, col = Math.floor(k / 2);
-      const z = -30 + col * 3.8;
-      return [east ? wx - 0.7 + rank * 1.4 : -(wx) + 0.7 - rank * 1.4, z, WH];
+      const z = Math.max(-corner, Math.min(corner, -28 + col * 3.7));
+      return [east ? (rank ? wMid : wIn) : -(rank ? wMid : wIn), z, WH];
     }, { hold: true, name: 'Flank Archers' });
+    // Tower archers loose FLAMING arrows from the tower tops; killed if the tower falls.
+    const NT = TOWERS.length;
+    this.addUnit(Faction.Defender, UType.Archer, NT * 6, (i) => {
+      const tw = TOWERS[Math.floor(i / 6) % NT], k = i % 6;
+      const h = tw.big ? WH + 6 : WH + 4;
+      return [tw.x + (k % 3 - 1) * 1.7, tw.z + (Math.floor(k / 3) - 0.5) * 1.7, h];
+    }, { hold: true, fireArrows: true, name: 'Tower Archers' });
     // Garrison melee hold the courtyard in FORMED BLOCKS (not scattered) so they
     // don't drift into the corners; the assault must break through them.
     this.addUnit(Faction.Defender, UType.Heavy, 460, block(0, 18, 34, 1.6), { hold: true, name: 'Garrison' });
@@ -387,7 +399,7 @@ export class Sim {
     let best = -1, bd = maxDist * maxDist;
     for (let s = 0; s < CASTLE.length; s++) {
       const seg = CASTLE[s];
-      if (seg.dead || (seg.kind !== 'wall' && seg.kind !== 'gate')) continue;
+      if (seg.dead || seg.kind === 'keep') continue; // walls, gate AND towers are targetable
       const cx = Math.max(seg.x0, Math.min(seg.x1, x)), cz = Math.max(seg.z0, Math.min(seg.z1, z));
       const d2 = (cx - x) ** 2 + (cz - z) ** 2;
       if (d2 < bd) { bd = d2; best = s; }
@@ -688,12 +700,13 @@ export class Sim {
 
   private shoot(i: number, target: number) {
     const p = this.getProj();
+    const fire = this.units[this.unit[i]].fireArrows;
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
     const tx = this.px[target], tz = this.pz[target];
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / ARCHER_PROJ_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
-    p.dmg = ARCHER_PROJ_DMG; p.wall = -1; p.big = false;
+    p.dmg = fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG; p.wall = -1; p.big = false; p.fire = fire;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * 18 * tof; // ballistic arc
   }
 
@@ -719,7 +732,7 @@ export class Sim {
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
-    p.dmg = BOULDER_DMG; p.wall = segIdx; p.big = true;
+    p.dmg = BOULDER_DMG; p.wall = segIdx; p.big = true; p.fire = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * 18 * tof;
   }
 
@@ -739,7 +752,7 @@ export class Sim {
 
   private getProj(): Projectile {
     for (const p of this.projectiles) if (!p.active) return p;
-    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, dmg: 0, fac: 0, wall: -1, big: false };
+    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, dmg: 0, fac: 0, wall: -1, big: false, fire: false };
     this.projectiles.push(p); return p;
   }
   private stepProjectiles(dt: number) {
