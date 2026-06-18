@@ -14,6 +14,7 @@ A check against your original instructions, so we don't drift from the vision.
 | Move troops, archers onto walls, direct artillery | ✅ Formation orders; defender archers on walls; trebuchets auto-bombard (repositionable) |
 | Troop types w/ roles (light/heavy/cav/archer) | ✅ All four + **siege engines** (5th type) |
 | Thousands of troops, low system cost (sprites) | ✅ ~2,200 instanced sprite soldiers |
+| Varied, larger castles w/ town + inner citadel | ✅ **Procedural castles** — 3–4× larger compounds, a town of houses in the bailey, and an inner **citadel** to storm on the big ones (per-seed) |
 | Total War campaign map, economy, recover/counter-siege | **Pending** — battle layer first |
 | "Holy shit, a mobile game?" | Getting there; art + juice is the ongoing push |
 

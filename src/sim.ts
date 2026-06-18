@@ -4,7 +4,7 @@
 // flow field per destination (no per-agent A*). Fixed-timestep & seeded so it's
 // deterministic (replays / future PvP come cheap).
 
-export const WORLD = { minX: -120, maxX: 120, minZ: -110, maxZ: 125 };
+export const WORLD = { minX: -130, maxX: 130, minZ: -120, maxZ: 175 };
 export const CELL = 2;
 export const COLS = Math.round((WORLD.maxX - WORLD.minX) / CELL); // 100
 export const ROWS = Math.round((WORLD.maxZ - WORLD.minZ) / CELL); // 90
@@ -18,10 +18,10 @@ export const TYPE_NAME = ['Heavy Inf', 'Light Inf', 'Archers', 'Cavalry', 'Trebu
 // ---- army composition (chosen on the muster screen before battle) ----
 export interface ArmyComp { heavy: number; light: number; archer: number; cavalry: number; siege: number; }
 export const COST = { heavy: 1.5, light: 1.0, archer: 1.3, cavalry: 2.0, siege: 70 };
-export const BUDGET = 1600;
-export const DEFAULT_COMP: ArmyComp = { heavy: 320, light: 240, archer: 240, cavalry: 120, siege: 4 }; // ~1552 / 1600
+export const BUDGET = 3200; // bigger castles + garrisons → a bigger assault army
+export const DEFAULT_COMP: ArmyComp = { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 }; // ~3066 / 3200
 export function compCost(c: ArmyComp): number { return c.heavy * COST.heavy + c.light * COST.light + c.archer * COST.archer + c.cavalry * COST.cavalry + c.siege * COST.siege; }
-const AMMO = [0, 0, 22, 0, 14]; // arrows per archer / boulders per trebuchet
+const AMMO = [0, 0, 16, 0, 16]; // arrows per archer / boulders per trebuchet
 
 // Per-type stats, indexed by UType. (index 4 = siege engine / trebuchet)
 const HP = [120, 70, 55, 95, 260];
@@ -41,48 +41,93 @@ const ROUT_FRAC = 0.3;
 
 export function maxHp(t: UType) { return HP[t]; }
 
-// ---- Castle: a ring of destructible wall SEGMENTS (shared with the renderer
-// so geometry matches collision). Walls start intact; trebuchets crumble
-// sections into breaches. Towers & keep are indestructible. ----
-export type SegKind = 'wall' | 'gate' | 'tower' | 'keep';
+// ---- Procedural castle. A destructible AABB segment list (so all collision &
+// siege mechanics work unchanged) plus a structured LAYOUT used for rendering
+// and defender deployment. Bigger than before, varied per seed, with a town of
+// buildings inside and (on larger ones) an inner CITADEL that must be taken. ----
+export type SegKind = 'wall' | 'gate' | 'tower' | 'keep' | 'building';
 export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; }
-
-export const HALF = 40, T = 4, WH = 9, SEG = 8, GATE_HALF = 9;
-// tower indices marked so the renderer can give the gatehouse pair extra height
-export const TOWERS: { x: number; z: number; big: boolean }[] = [];
-function buildCastle(): Seg[] {
-  const segs: Seg[] = [];
-  const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind) => {
-    const hp = kind === 'gate' ? 1100 : 1750; // tough — many boulders to crumble
-    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? WH - 1 : WH, kind, hp, maxhp: hp, dead: false });
-  };
-  // South wall (nearest the attackers) — a wooden GATE in the centre
-  for (let x = -HALF; x < HALF - 0.1; x += SEG) {
-    const x1 = Math.min(x + SEG, HALF); const cx = (x + x1) / 2;
-    wall(x, x1, HALF - T, HALF, Math.abs(cx) < GATE_HALF ? 'gate' : 'wall');
-  }
-  // North wall
-  for (let x = -HALF; x < HALF - 0.1; x += SEG) wall(x, Math.min(x + SEG, HALF), -HALF, -HALF + T, 'wall');
-  // West & East walls
-  for (let z = -HALF; z < HALF - 0.1; z += SEG) {
-    const z1 = Math.min(z + SEG, HALF);
-    wall(-HALF, -HALF + T, z, z1, 'wall'); wall(HALF - T, HALF, z, z1, 'wall');
-  }
-  // Towers: corners, mid-walls, and a taller gatehouse pair flanking the gate
-  const tower = (x: number, z: number, big = false) => {
-    const r = big ? 5 : 4.2;
-    const hp = big ? 3200 : 2600; // towers are tough but destructible
-    segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: big ? WH + 6 : WH + 4, kind: 'tower', hp, maxhp: hp, dead: false });
-    TOWERS.push({ x, z, big });
-  };
-  tower(-HALF, -HALF); tower(HALF, -HALF); tower(-HALF, HALF); tower(HALF, HALF); // corners
-  tower(0, -HALF); tower(-HALF, 0); tower(HALF, 0);                                 // mid walls
-  tower(-GATE_HALF - 3, HALF, true); tower(GATE_HALF + 3, HALF, true);              // gatehouse
-  // Keep
-  segs.push({ x0: -9, x1: 9, z0: -9, z1: 9, h: 18, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
-  return segs;
+export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; }
+export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
+export interface CastleLayout {
+  W: number; D: number; gate: { x: number; z: number };
+  wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
+  buildings: { x: number; z: number; w: number; d: number }[]; citadel: Citadel | null;
 }
-export const CASTLE: Seg[] = buildCastle();
+
+export const T = 4, WH = 9, SEG = 8;
+export const TOWERS: { x: number; z: number; big: boolean }[] = [];
+export let CASTLE: Seg[] = [];
+export let LAYOUT: CastleLayout = null as any;
+
+function genRng(seed: number) { let s = (seed >>> 0) || 1; return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+export function generateCastle(seed: number) {
+  CASTLE = []; TOWERS.length = 0;
+  const segs = CASTLE;
+  const R = genRng(Math.imul(seed >>> 0, 2654435761) >>> 0);
+  const rr = (a: number, b: number) => a + R() * (b - a);
+  const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind = 'wall', h = WH) => {
+    if (x1 - x0 < 0.3 || z1 - z0 < 0.3) return;
+    const hp = kind === 'gate' ? 1100 : kind === 'building' ? 1e9 : 1700;
+    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? WH - 1 : h, kind, hp, maxhp: hp, dead: false });
+  };
+  const tower = (x: number, z: number, big: boolean, list?: { x: number; z: number; big: boolean }[]) => {
+    const r = big ? 5 : 4.2, hp = big ? 3200 : 2600;
+    segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: big ? WH + 6 : WH + 4, kind: 'tower', hp, maxhp: hp, dead: false });
+    TOWERS.push({ x, z, big }); if (list) list.push({ x, z, big });
+  };
+  // a four-walled compound with a south gate; returns its wall-lines + towers
+  const compound = (x0: number, x1: number, z0: number, z1: number, gateX: number, gh: number, gateOnSouth: boolean, tw?: { x: number; z: number; big: boolean }[]) => {
+    const lines: WallLine[] = [];
+    for (let x = x0; x < x1 - 0.1; x += SEG) { const e = Math.min(x + SEG, x1), c = (x + e) / 2; wall(x, e, z1 - T, z1, gateOnSouth && Math.abs(c - gateX) < gh ? 'gate' : 'wall'); } // south
+    for (let x = x0; x < x1 - 0.1; x += SEG) wall(x, Math.min(x + SEG, x1), z0, z0 + T, 'wall'); // north
+    for (let z = z0; z < z1 - 0.1; z += SEG) { const e = Math.min(z + SEG, z1); wall(x0, x0 + T, z, e, 'wall'); wall(x1 - T, x1, z, e, 'wall'); } // w/e
+    lines.push({ x0, z0: z1 - T / 2, x1, z1: z1 - T / 2, horiz: true, outer: 1, gapC: gateOnSouth ? gateX : 1e9, gapH: gh });
+    lines.push({ x0, z0: z0 + T / 2, x1, z1: z0 + T / 2, horiz: true, outer: -1, gapC: 1e9, gapH: 0 });
+    lines.push({ x0: x0 + T / 2, z0, x1: x0 + T / 2, z1, horiz: false, outer: -1, gapC: 1e9, gapH: 0 });
+    lines.push({ x0: x1 - T / 2, z0, x1: x1 - T / 2, z1, horiz: false, outer: 1, gapC: 1e9, gapH: 0 });
+    tower(x0, z0, false, tw); tower(x1, z0, false, tw); tower(x0, z1, false, tw); tower(x1, z1, false, tw);
+    return lines;
+  };
+
+  // ----- outer compound (bigger & varied) -----
+  const W = Math.round(rr(52, 72) / 2) * 2, D = Math.round(rr(48, 62) / 2) * 2;
+  const GH = 9, gateX = Math.round(rr(-W * 0.22, W * 0.22) / SEG) * SEG;
+  const wallLines = compound(-W, W, -D, D, gateX, GH, true);
+  // mid-wall towers
+  for (let x = -W + 28; x < W - 18; x += 28) { tower(x, -D, false); if (Math.abs(x - gateX) > GH + 7) tower(x, D, false); }
+  for (let z = -D + 28; z < D - 18; z += 28) { tower(-W, z, false); tower(W, z, false); }
+  tower(gateX - GH - 3, D, true); tower(gateX + GH + 3, D, true); // gatehouse
+
+  // ----- citadel (inner keep complex) on larger castles -----
+  let citadel: Citadel | null = null;
+  if (W * D > 2900 || R() < 0.55) {
+    const cw = 19, cd = 15, ccx = Math.round(rr(-W * 0.18, W * 0.18)), ccz = -Math.round(D * 0.34);
+    const cTowers: { x: number; z: number; big: boolean }[] = [];
+    const cLines = compound(ccx - cw, ccx + cw, ccz - cd, ccz + cd, ccx, 6, true, cTowers);
+    segs.push({ x0: ccx - 7, x1: ccx + 7, z0: ccz - 6, z1: ccz + 6, h: 21, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+    citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx, z: ccz + cd }, wallLines: cLines };
+  } else {
+    segs.push({ x0: -8, x1: 8, z0: -8, z1: 8, h: 18, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+  }
+
+  // ----- town buildings in the bailey (avoid walls, the gate avenue & citadel) -----
+  const buildings: { x: number; z: number; w: number; d: number }[] = [];
+  for (let bx = -W + 14; bx < W - 14; bx += rr(13, 18)) {
+    for (let bz = -D + 14; bz < D - 14; bz += rr(12, 17)) {
+      if (R() < 0.34) continue;
+      const bw = rr(3.5, 6.5), bd = rr(3.5, 5.5), x = bx + rr(0, 4), z = bz + rr(0, 4);
+      if (Math.abs(x - gateX) < 9 && z > -D * 0.1) continue;                 // keep the gate avenue clear
+      if (citadel && x > citadel.x0 - 7 && x < citadel.x1 + 7 && z > citadel.z0 - 7 && z < citadel.z1 + 7) continue;
+      if (x - bw < -W + T + 3 || x + bw > W - T - 3 || z - bd < -D + T + 3 || z + bd > D - T - 3) continue;
+      wall(x - bw, x + bw, z - bd, z + bd, 'building', rr(5, 9)); buildings.push({ x, z, w: bw, d: bd });
+    }
+  }
+
+  LAYOUT = { W, D, gate: { x: gateX, z: D }, wallLines, towers: [...TOWERS], buildings, citadel };
+  rebuildBlocked();
+}
 
 function blockedAt(x: number, z: number): boolean {
   for (let i = 0; i < CASTLE.length; i++) {
@@ -112,7 +157,9 @@ function rebuildBlocked() {
     BLOCKED[r * COLS + c] = blockedAt(x, z) ? 1 : 0;
   }
 }
-rebuildBlocked();
+// Build a default castle at module load so CASTLE/LAYOUT are never null. (Now
+// that BLOCKED + rebuildBlocked exist, generateCastle's rebuild call is safe.)
+generateCastle(1);
 
 // Is the straight segment a->b obstructed by a (live) wall? Used so troops only
 // fall back to flow-field routing when a wall is actually in the way — otherwise
@@ -219,7 +266,7 @@ export class Sim {
   // overflow soldiers have no backing storage: typed-array writes are silently
   // dropped and reads return undefined, which crashed the renderer
   // (this.meshes[undefined].setMatrixAt). Keep generous headroom.
-  MAX = 3000;
+  MAX = 3800;
   px = new Float32Array(this.MAX); pz = new Float32Array(this.MAX); py = new Float32Array(this.MAX);
   vx = new Float32Array(this.MAX); vz = new Float32Array(this.MAX);
   hp = new Float32Array(this.MAX); cd = new Float32Array(this.MAX);
@@ -239,7 +286,7 @@ export class Sim {
   private comp: ArmyComp;
   attackerAliveStart = 0; defenderAliveStart = 0;
 
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP) { this.seed = seed >>> 0; this.comp = comp; this.setup(); }
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP) { this.seed = seed >>> 0; this.comp = comp; generateCastle(seed); this.setup(); }
 
   private rnd() { // mulberry32
     this.seed |= 0; this.seed = (this.seed + 0x6D2B79F5) | 0;
@@ -305,49 +352,66 @@ export class Sim {
       return [cx + (c - cols / 2) * gap + R(-0.4, 0.4), cz + r * gap + R(-0.4, 0.4), 0];
     };
 
-    // ---------------- ATTACKERS (south, player) ----------------
-    // Default orders split the host between the gate (centre) and the breach
-    // (right) so both entries are used; the player can redirect any unit.
-    // Army is whatever was mustered. They hold their deploy formation until
-    // commanded (you can reposition them during the deploy phase).
+    const L = LAYOUT, W = L.W, D = L.D;
+    // ---------------- ATTACKERS (south of the castle, player) ----------------
     const C = this.comp; const cols = (n: number) => Math.max(8, Math.round(Math.sqrt(n) * 1.7));
-    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, C.heavy, block(0, 80, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(C.heavy) });
-    if (C.light) this.addUnit(Faction.Attacker, UType.Light, C.light, block(-58, 86, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(C.light) });
-    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, C.archer, block(0, 98, cols(C.archer), 1.5), { name: 'Archers', cols: cols(C.archer) });
-    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, C.cavalry, block(62, 86, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(C.cavalry) });
-    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, 116, C.siege, 11), { name: 'Trebuchets', cols: C.siege });
+    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, C.heavy, block(0, D + 22, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(C.heavy) });
+    if (C.light) this.addUnit(Faction.Attacker, UType.Light, C.light, block(-W * 0.7, D + 30, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(C.light) });
+    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, C.archer, block(0, D + 42, cols(C.archer), 1.5), { name: 'Archers', cols: cols(C.archer) });
+    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, C.cavalry, block(W * 0.8, D + 30, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(C.cavalry) });
+    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, D + 58, C.siege, 13), { name: 'Trebuchets', cols: C.siege });
 
-    // ---------------- DEFENDERS (the castle, AI) ----------------
-    // Walkway is the inner ~3 units of the wall-top; archers stand on it, inset
-    // from the outer parapet and well clear of the corner towers.
-    const wIn = HALF - T + 0.9;       // inner walkway line (just inside the wall)
-    const wMid = HALF - T + 2.1;      // second rank
-    const corner = HALF - 7;          // keep clear of corners
-    // South wall (either side of the gatehouse), two ranks
-    this.addUnit(Faction.Defender, UType.Archer, 96, (i) => {
-      const left = i < 48; const k = left ? i : i - 48;
-      const rank = k % 2, col = Math.floor(k / 2);
-      const x = left ? -(GATE_HALF + 3) - col * 1.6 : (GATE_HALF + 3) + col * 1.6;
-      return [Math.max(-corner, Math.min(corner, x)), rank ? wMid : wIn, WH];
-    }, { hold: true, name: 'Wall Archers' });
-    // East & west walls, two ranks each, inset from corners
-    this.addUnit(Faction.Defender, UType.Archer, 64, (i) => {
-      const east = i < 32; const k = east ? i : i - 32;
-      const rank = k % 2, col = Math.floor(k / 2);
-      const z = Math.max(-corner, Math.min(corner, -28 + col * 3.7));
-      return [east ? (rank ? wMid : wIn) : -(rank ? wMid : wIn), z, WH];
-    }, { hold: true, name: 'Flank Archers' });
-    // Tower archers loose FLAMING arrows from the tower tops; killed if the tower falls.
+    // ---------------- DEFENDERS (generated from the layout) ----------------
+    // archers lined along a set of wall-lines (two ranks, inset from corners/gate)
+    const archersOnLines = (lines: WallLine[], spacing: number, inset: number): [number, number, number][] => {
+      const pts: [number, number, number][] = [];
+      for (const ln of lines) {
+        const a0 = (ln.horiz ? ln.x0 : ln.z0) + inset, a1 = (ln.horiz ? ln.x1 : ln.z1) - inset;
+        for (let a = a0; a <= a1; a += spacing) {
+          if (Math.abs(a - ln.gapC) < ln.gapH + 1) continue; // leave the gate clear
+          for (let rk = 0; rk < 2; rk++) {
+            const off = -ln.outer * rk * 1.3;
+            pts.push(ln.horiz ? [a, ln.z0 + off, WH] : [ln.x0 + off, a, WH]);
+          }
+        }
+      }
+      return pts;
+    };
+    const wallPts = archersOnLines(L.wallLines, 2.6, 6);
+    this.addUnit(Faction.Defender, UType.Archer, wallPts.length, (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
+    // tower archers (flaming) on every tower top
     const NT = TOWERS.length;
-    this.addUnit(Faction.Defender, UType.Archer, NT * 6, (i) => {
-      const tw = TOWERS[Math.floor(i / 6) % NT], k = i % 6;
-      const h = tw.big ? WH + 6 : WH + 4;
-      return [tw.x + (k % 3 - 1) * 1.7, tw.z + (Math.floor(k / 3) - 0.5) * 1.7, h];
+    this.addUnit(Faction.Defender, UType.Archer, NT * 4, (i) => {
+      const tw = TOWERS[Math.floor(i / 4) % NT], k = i % 4;
+      return [tw.x + (k % 2 - 0.5) * 2.2, tw.z + (Math.floor(k / 2) - 0.5) * 2.2, tw.big ? WH + 6 : WH + 4];
     }, { hold: true, fireArrows: true, name: 'Tower Archers' });
-    // Garrison melee hold the courtyard in FORMED BLOCKS (not scattered) so they
-    // don't drift into the corners; the assault must break through them.
-    this.addUnit(Faction.Defender, UType.Heavy, 460, block(0, 18, 34, 1.6), { hold: true, name: 'Garrison' });
-    this.addUnit(Faction.Defender, UType.Light, 300, block(0, -2, 34, 1.5), { hold: true, name: 'Reserves' });
+    // garrison + reserves scattered through the open bailey (rejection-sampled
+    // off the buildings/walls/citadel), holding their ground
+    const cit = L.citadel;
+    const openBailey = (): [number, number, number] => {
+      let x = 0, z = 0;
+      for (let t = 0; t < 50; t++) {
+        x = R(-(W - T - 2), W - T - 2); z = R(-(D - T - 2), D - T - 2);
+        if (blockedAt(x, z)) continue;
+        if (cit && x > cit.x0 - 2 && x < cit.x1 + 2 && z > cit.z0 - 2 && z < cit.z1 + 2) continue;
+        return [x, z, 0];
+      }
+      return [x, z, 0];
+    };
+    const garr = Math.max(280, Math.min(560, Math.round(W * D / 14)));
+    this.addUnit(Faction.Defender, UType.Heavy, garr, openBailey, { hold: true, name: 'Garrison' });
+    this.addUnit(Faction.Defender, UType.Light, Math.round(garr * 0.6), openBailey, { hold: true, name: 'Reserves' });
+    // citadel garrison + its own wall archers (the last redoubt)
+    if (cit) {
+      const inCit = (): [number, number, number] => {
+        let x = 0, z = 0;
+        for (let t = 0; t < 40; t++) { x = R(cit.x0 + T + 1, cit.x1 - T - 1); z = R(cit.z0 + T + 1, cit.z1 - T - 1); if (!blockedAt(x, z)) return [x, z, 0]; }
+        return [x, z, 0];
+      };
+      this.addUnit(Faction.Defender, UType.Heavy, 220, inCit, { hold: true, name: 'Citadel Guard' });
+      const cPts = archersOnLines(cit.wallLines, 2.4, 4);
+      this.addUnit(Faction.Defender, UType.Archer, cPts.length, (i) => cPts[i], { hold: true, name: 'Citadel Archers' });
+    }
 
     for (const u of this.units) {
       if (u.faction === Faction.Attacker) this.attackerAliveStart += u.count;
@@ -456,9 +520,9 @@ export class Sim {
       for (let i = 0; i < this.n; i++) {
         if (!this.alive[i] || this.climbState[i] > 0 || this.py[i] >= 2) continue;
         if (this.fac[i] === Faction.Defender) { if (this.typ[i] === UType.Heavy || this.typ[i] === UType.Light) defGround++; }
-        else if (Math.abs(this.px[i]) < HALF - 1 && Math.abs(this.pz[i]) < HALF - 1 && this.typ[i] !== UType.Siege) attInside++;
+        else if (Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1 && this.typ[i] !== UType.Siege) attInside++;
       }
-      if (defGround < 25 || (defGround > 0 && attInside > 60 && attInside > 4 * defGround))
+      if (defGround < 25 || (defGround > 0 && attInside > 60 && attInside > 3 * defGround))
         for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
 
