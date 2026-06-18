@@ -60,8 +60,8 @@ function updateTopbar() {
 function updateHint() {
   if (sim.phase === 'deploy') { hintEl.textContent = 'Position your army, then ⚔ Begin Assault. One finger rotates the camera.'; return; }
   hintEl.textContent = selected >= 0
-    ? 'Tap to send · DRAG to set their line & facing · two fingers to move camera'
-    : 'Tap a unit (or its card) to select · one finger rotates · two fingers pan/zoom';
+    ? 'Tap to send · DRAG to set their line & facing · two fingers = camera'
+    : 'Trebuchets breach the walls — then send troops through the gap. Tap a unit to select.';
 }
 
 startBtn.addEventListener('click', () => { sim.begin(); startOverlay.classList.add('hidden'); updateHint(); });

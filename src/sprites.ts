@@ -1,24 +1,22 @@
 import * as THREE from 'three';
 
-// Procedurally drawn soldier sprites in the house style: chunky, rounded,
-// flat-shaded silhouettes. Drawn in near-white so a per-instance faction tint
-// (InstancedMesh.setColorAt) multiplies cleanly into a solid colored figure
-// with darker edges. One texture per unit type; shape conveys the role.
+// Procedurally drawn, chunky "toy-soldier" sprites in the house style. Each is
+// drawn mostly in white (so a per-instance faction tint multiplies into a solid
+// coloured figure) with a baked dark outline + soft top-highlight / bottom-shade
+// so they read as shaded figures, not flat blobs. Silhouette conveys the role.
 
-export type SpriteKind = 'heavy' | 'light' | 'archer' | 'cavalry';
+export type SpriteKind = 'heavy' | 'light' | 'archer' | 'cavalry' | 'siege';
 
-const S = 64; // texture size (px) — small & cheap, looks chunky on purpose
+const S = 96;
 
 function newCanvas(): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
   c.width = S; c.height = S;
   const ctx = c.getContext('2d')!;
-  ctx.imageSmoothingEnabled = false;
   return [c, ctx];
 }
 
-// Rounded blob helper
-function blob(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -26,90 +24,83 @@ function blob(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h:
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-  ctx.fill();
 }
 
-function draw(kind: SpriteKind): HTMLCanvasElement {
-  const [c, ctx] = newCanvas();
-  // We draw a darker "outline" layer first (slightly larger), then a bright
-  // body on top. After faction tint multiply: outline = darker faction color,
-  // body = faction color. Reads as a flat-shaded little trooper.
-  const OUT = '#8a8a8a';   // becomes darker tint
-  const BODY = '#ffffff';  // becomes full faction color
-  const DARK = '#b9b9b9';  // mid detail (helmet band etc.)
-
+function drawSoldier(ctx: CanvasRenderingContext2D, kind: SpriteKind) {
   const cx = S / 2;
+  // ---- outline pass (dark, slightly inflated) then body pass (white) ----
+  const passes: [string, number][] = [['#2b2b2b', 3.2], ['#ffffff', 0]];
 
-  const figure = (color: string, grow: number) => {
-    ctx.fillStyle = color;
+  for (const [color, g] of passes) {
+    ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
     if (kind === 'cavalry') {
-      // horse body
-      blob(ctx, cx - 20 - grow, 40 - grow, 40 + grow * 2, 16 + grow * 2, 7);
-      // horse neck/head
-      blob(ctx, cx + 8 - grow, 26 - grow, 12 + grow * 2, 16 + grow * 2, 5);
+      // horse body + neck + head
+      rr(ctx, cx - 26 - g, 50 - g, 46 + g * 2, 17 + g * 2, 8); ctx.fill();
+      rr(ctx, cx + 8 - g, 34 - g, 14 + g * 2, 20 + g * 2, 6); ctx.fill();
+      rr(ctx, cx + 16 - g, 30 - g, 12 + g * 2, 10 + g * 2, 4); ctx.fill();
       // legs
-      blob(ctx, cx - 16 - grow, 52 - grow, 6 + grow * 2, 10 + grow * 2, 2);
-      blob(ctx, cx + 10 - grow, 52 - grow, 6 + grow * 2, 10 + grow * 2, 2);
+      rr(ctx, cx - 20 - g, 64 - g, 7 + g * 2, 14 + g * 2, 3); ctx.fill();
+      rr(ctx, cx + 12 - g, 64 - g, 7 + g * 2, 14 + g * 2, 3); ctx.fill();
       // rider torso + head
-      blob(ctx, cx - 9 - grow, 18 - grow, 16 + grow * 2, 18 + grow * 2, 6);
-      blob(ctx, cx - 6 - grow, 6 - grow, 12 + grow * 2, 12 + grow * 2, 5);
+      rr(ctx, cx - 10 - g, 24 - g, 18 + g * 2, 22 + g * 2, 7); ctx.fill();
+      rr(ctx, cx - 6 - g, 10 - g, 14 + g * 2, 14 + g * 2, 6); ctx.fill();
       // lance
-      ctx.save(); ctx.fillRect(cx + 12 - grow, 8 - grow, 3 + grow, 34 + grow * 2); ctx.restore();
-      return;
+      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 16, 8); ctx.lineTo(cx + 26, 60); ctx.stroke();
+      continue;
     }
-    // foot soldier: legs, torso, head
-    blob(ctx, cx - 9 - grow, 40 - grow, 7 + grow * 2, 16 + grow * 2, 3);
-    blob(ctx, cx + 2 - grow, 40 - grow, 7 + grow * 2, 16 + grow * 2, 3);
-    blob(ctx, cx - 11 - grow, 20 - grow, 22 + grow * 2, 24 + grow * 2, 8); // torso
-    blob(ctx, cx - 7 - grow, 6 - grow, 14 + grow * 2, 14 + grow * 2, 6);   // head/helmet
+    if (kind === 'siege') {
+      // trebuchet: base, A-frame, throwing arm + counterweight
+      rr(ctx, cx - 30 - g, 66 - g, 60 + g * 2, 9 + g * 2, 3); ctx.fill();        // base beam
+      ctx.lineWidth = 6 + g;
+      ctx.beginPath(); ctx.moveTo(cx - 14, 70); ctx.lineTo(cx, 30); ctx.lineTo(cx + 14, 70); ctx.stroke(); // A-frame
+      ctx.beginPath(); ctx.moveTo(cx - 22, 18); ctx.lineTo(cx + 20, 44); ctx.stroke();                      // arm
+      rr(ctx, cx + 14 - g, 44 - g, 14 + g * 2, 14 + g * 2, 4); ctx.fill();        // counterweight
+      continue;
+    }
+
+    // foot soldiers: legs, torso, head/helmet
+    rr(ctx, cx - 10 - g, 52 - g, 8 + g * 2, 20 + g * 2, 3); ctx.fill();
+    rr(ctx, cx + 2 - g, 52 - g, 8 + g * 2, 20 + g * 2, 3); ctx.fill();
+    rr(ctx, cx - 13 - g, 26 - g, 26 + g * 2, 30 + g * 2, 9); ctx.fill();  // torso
+    rr(ctx, cx - 8 - g, 8 - g, 16 + g * 2, 16 + g * 2, 7); ctx.fill();    // head
 
     if (kind === 'heavy') {
-      // shield slab
-      blob(ctx, cx - 18 - grow, 22 - grow, 11 + grow * 2, 20 + grow * 2, 4);
-      // spear
-      ctx.fillRect(cx + 10 - grow, 2 - grow, 3 + grow, 46 + grow * 2);
+      rr(ctx, cx - 22 - g, 28 - g, 13 + g * 2, 26 + g * 2, 4); ctx.fill();          // tall shield
+      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 13, 4); ctx.lineTo(cx + 13, 58); ctx.stroke(); // spear
     } else if (kind === 'light') {
-      // sword arm
-      blob(ctx, cx + 8 - grow, 22 - grow, 7 + grow * 2, 9 + grow * 2, 3);
-      ctx.fillRect(cx + 12 - grow, 8 - grow, 3 + grow, 20 + grow);
+      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 12, 30); ctx.lineTo(cx + 22, 12); ctx.stroke(); // raised sword
+      rr(ctx, cx - 19 - g, 32 - g, 9 + g * 2, 16 + g * 2, 3); ctx.fill();           // small buckler
     } else if (kind === 'archer') {
-      // bow (arc)
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3 + grow;
-      ctx.beginPath();
-      ctx.arc(cx + 12, 28, 16 + grow, -1.1, 1.1);
-      ctx.stroke();
-      ctx.restore();
+      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.arc(cx + 13, 34, 18, -1.15, 1.15); ctx.stroke();           // bow
+      ctx.lineWidth = 1.5 + g; ctx.beginPath(); ctx.moveTo(cx + 13 + 18 * Math.cos(-1.15), 34 + 18 * Math.sin(-1.15)); ctx.lineTo(cx + 13 + 18 * Math.cos(1.15), 34 + 18 * Math.sin(1.15)); ctx.stroke(); // string
     }
-  };
+  }
 
-  figure(OUT, 1.6);   // outline pass
-  figure(BODY, 0);    // body pass
-  // a touch of mid-tone on the head for a flat-shaded helmet look
-  ctx.fillStyle = DARK;
-  if (kind !== 'cavalry') blob(ctx, cx - 7, 6, 14, 5, 3);
-
-  return c;
+  // ---- baked shading: top highlight + bottom shadow (survives tint) ----
+  ctx.globalCompositeOperation = 'source-atop';
+  const grad = ctx.createLinearGradient(0, 0, 0, S);
+  grad.addColorStop(0, 'rgba(255,255,255,0.35)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.33)');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, S, S);
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 export function makeSoldierTexture(kind: SpriteKind): THREE.CanvasTexture {
-  const tex = new THREE.CanvasTexture(draw(kind));
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  const [c, ctx] = newCanvas();
+  drawSoldier(ctx, kind);
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.colorSpace = THREE.SRGBColorSpace; tex.needsUpdate = true;
   return tex;
 }
 
-// A small arrow texture for projectiles.
 export function makeArrowTexture(): THREE.CanvasTexture {
   const [c, ctx] = newCanvas();
-  ctx.fillStyle = '#3a2c1a';
-  ctx.fillRect(28, 6, 8, 52);
+  ctx.strokeStyle = '#3a2c1a'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(S / 2, 14); ctx.lineTo(S / 2, S - 18); ctx.stroke();
   ctx.fillStyle = '#d8d8d8';
-  ctx.beginPath(); ctx.moveTo(32, 0); ctx.lineTo(40, 14); ctx.lineTo(24, 14); ctx.closePath(); ctx.fill();
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  ctx.beginPath(); ctx.moveTo(S / 2, 4); ctx.lineTo(S / 2 + 9, 20); ctx.lineTo(S / 2 - 9, 20); ctx.closePath(); ctx.fill();
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; return tex;
 }

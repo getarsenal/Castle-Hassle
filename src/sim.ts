@@ -11,54 +11,64 @@ export const ROWS = Math.round((WORLD.maxZ - WORLD.minZ) / CELL); // 90
 export const NCELLS = COLS * ROWS;
 
 export const enum Faction { Attacker = 0, Defender = 1 }
-export const enum UType { Heavy = 0, Light = 1, Archer = 2, Cavalry = 3 }
+export const enum UType { Heavy = 0, Light = 1, Archer = 2, Cavalry = 3, Siege = 4 }
 
-export const TYPE_NAME = ['Heavy Inf', 'Light Inf', 'Archers', 'Cavalry'];
+export const TYPE_NAME = ['Heavy Inf', 'Light Inf', 'Archers', 'Cavalry', 'Trebuchets'];
 
-// Per-type stats, indexed by UType.
-const HP = [120, 70, 55, 95];
-const SPEED = [7, 11, 8, 17];
-const MELEE = [9, 7, 5, 15];
-const ATKCD = [0.8, 0.55, 1.3, 0.75];
-const RANGE = [1.8, 1.7, 40, 2.0];
-const SENSE = [16, 16, 46, 20];
-const RADIUS = [0.7, 0.6, 0.6, 0.95];
+// Per-type stats, indexed by UType. (index 4 = siege engine / trebuchet)
+const HP = [120, 70, 55, 95, 260];
+const SPEED = [7, 11, 8, 17, 3.2];
+const MELEE = [9, 7, 5, 15, 0];
+const ATKCD = [0.8, 0.55, 1.3, 0.75, 4.5];
+const RANGE = [1.8, 1.7, 40, 2.0, 88];   // siege = bombardment range
+const SENSE = [16, 16, 46, 20, 90];
+const RADIUS = [0.7, 0.6, 0.6, 0.95, 2.0];
 const ARCHER_PROJ_DMG = 12;
 const ARCHER_PROJ_SPEED = 55;
+const BOULDER_DMG = 175;       // damage a trebuchet boulder does to a wall section
+const BOULDER_SPEED = 34;
 const ROUT_FRAC = 0.3;
 
 export function maxHp(t: UType) { return HP[t]; }
 
-// ---- Castle layout (shared with renderer so geometry matches collision) ----
-export interface Box { x0: number; x1: number; z0: number; z1: number; h: number; kind: 'wall' | 'tower' | 'keep'; }
-const HALF = 26, T = 3, GATE = 11;
-export const CASTLE: Box[] = [
-  // North wall (far side, solid)
-  { x0: -HALF, x1: HALF, z0: -HALF, z1: -HALF + T, h: 6, kind: 'wall' },
-  // South wall (near attackers): a central gate gap (|x|<GATE) plus a battered
-  // BREACH gap on the right (x 14..22) — two wide ways in, so the host floods.
-  { x0: -HALF, x1: -GATE, z0: HALF - T, z1: HALF, h: 6, kind: 'wall' },
-  { x0: GATE, x1: 14, z0: HALF - T, z1: HALF, h: 6, kind: 'wall' },
-  { x0: 22, x1: HALF, z0: HALF - T, z1: HALF, h: 6, kind: 'wall' },
-  // rubble stubs marking the breach (short, broken wall — low)
-  { x0: 14, x1: 15.2, z0: HALF - T, z1: HALF, h: 2.2, kind: 'wall' },
-  { x0: 20.8, x1: 22, z0: HALF - T, z1: HALF, h: 1.6, kind: 'wall' },
+// ---- Castle: a ring of destructible wall SEGMENTS (shared with the renderer
+// so geometry matches collision). Walls start intact; trebuchets crumble
+// sections into breaches. Towers & keep are indestructible. ----
+export type SegKind = 'wall' | 'gate' | 'tower' | 'keep';
+export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; }
+
+const HALF = 28, T = 3.5, WH = 7, SEG = 7;
+function buildCastle(): Seg[] {
+  const segs: Seg[] = [];
+  const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind) => {
+    const hp = kind === 'gate' ? 480 : 820;
+    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? 6 : WH, kind, hp, maxhp: hp, dead: false });
+  };
+  // South wall (nearest the attackers) — a wooden GATE in the centre
+  for (let x = -HALF; x < HALF - 0.1; x += SEG) {
+    const x1 = Math.min(x + SEG, HALF); const cx = (x + x1) / 2;
+    wall(x, x1, HALF - T, HALF, Math.abs(cx) < 7 ? 'gate' : 'wall');
+  }
+  // North wall
+  for (let x = -HALF; x < HALF - 0.1; x += SEG) wall(x, Math.min(x + SEG, HALF), -HALF, -HALF + T, 'wall');
   // West & East walls
-  { x0: -HALF, x1: -HALF + T, z0: -HALF, z1: HALF, h: 6, kind: 'wall' },
-  { x0: HALF - T, x1: HALF, z0: -HALF, z1: HALF, h: 6, kind: 'wall' },
-  // Corner towers
-  { x0: -HALF - 1, x1: -HALF + 5, z0: -HALF - 1, z1: -HALF + 5, h: 10, kind: 'tower' },
-  { x0: HALF - 5, x1: HALF + 1, z0: -HALF - 1, z1: -HALF + 5, h: 10, kind: 'tower' },
-  { x0: -HALF - 1, x1: -HALF + 5, z0: HALF - 5, z1: HALF + 1, h: 10, kind: 'tower' },
-  { x0: HALF - 5, x1: HALF + 1, z0: HALF - 5, z1: HALF + 1, h: 10, kind: 'tower' },
-  // Keep
-  { x0: -9, x1: 9, z0: -9, z1: 9, h: 13, kind: 'keep' },
-];
+  for (let z = -HALF; z < HALF - 0.1; z += SEG) {
+    const z1 = Math.min(z + SEG, HALF);
+    wall(-HALF, -HALF + T, z, z1, 'wall'); wall(HALF - T, HALF, z, z1, 'wall');
+  }
+  // Corner towers (indestructible)
+  for (const [tx, tz] of [[-HALF, -HALF], [HALF, -HALF], [-HALF, HALF], [HALF, HALF]] as const)
+    segs.push({ x0: tx - 3.5, x1: tx + 3.5, z0: tz - 3.5, z1: tz + 3.5, h: 11, kind: 'tower', hp: Infinity, maxhp: Infinity, dead: false });
+  // Keep (smaller footprint so it doesn't dominate the yard)
+  segs.push({ x0: -7, x1: 7, z0: -7, z1: 7, h: 13, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+  return segs;
+}
+export const CASTLE: Seg[] = buildCastle();
 
 function blockedAt(x: number, z: number): boolean {
   for (let i = 0; i < CASTLE.length; i++) {
     const b = CASTLE[i];
-    if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) return true;
+    if (!b.dead && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) return true;
   }
   return false;
 }
@@ -75,11 +85,26 @@ function cellCenter(idx: number): [number, number] {
   return [WORLD.minX + (c + 0.5) * CELL, WORLD.minZ + (r + 0.5) * CELL];
 }
 
-// Precompute which cells are blocked.
+// Which cells are blocked — recomputed whenever a wall section is destroyed.
 const BLOCKED = new Uint8Array(NCELLS);
-for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-  const [x, z] = cellCenter(r * COLS + c);
-  BLOCKED[r * COLS + c] = blockedAt(x, z) ? 1 : 0;
+function rebuildBlocked() {
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const [x, z] = cellCenter(r * COLS + c);
+    BLOCKED[r * COLS + c] = blockedAt(x, z) ? 1 : 0;
+  }
+}
+rebuildBlocked();
+
+// Is the straight segment a->b obstructed by a (live) wall? Used so troops only
+// fall back to flow-field routing when a wall is actually in the way — otherwise
+// they steer straight to their formation slot (no clumping at a single cell).
+function pathBlocked(x0: number, z0: number, x1: number, z1: number): boolean {
+  const steps = Math.max(2, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 3));
+  for (let s = 1; s < steps; s++) {
+    const t = s / steps;
+    if (blockedAt(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t)) return true;
+  }
+  return false;
 }
 
 // ---- Flow field via Dijkstra (8-neighbour) ----
@@ -152,10 +177,15 @@ export interface Unit {
 }
 
 // per-type formation spacing
-const SPACING = [1.5, 1.3, 1.4, 2.1];
+const SPACING = [1.5, 1.3, 1.4, 2.1, 4.5];
 const ENGAGE = 9; // range at which troops break formation to fight
 
-export interface Projectile { active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number; tx: number; tz: number; dmg: number; fac: Faction; }
+export interface Projectile {
+  active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number;
+  tx: number; tz: number; dmg: number; fac: Faction;
+  wall: number;   // target wall-segment index for boulders, else -1
+  big: boolean;   // boulder vs arrow (render size)
+}
 
 export class Sim {
   // Must exceed the total soldier count (currently ~2,220). If it's too small,
@@ -250,20 +280,23 @@ export class Sim {
     this.addUnit(Faction.Attacker, UType.Light, 320, block(0, 70, 40, 1.3), { name: 'Skirmishers', cols: 40 });
     this.addUnit(Faction.Attacker, UType.Archer, 260, block(0, 80, 44, 1.4), { name: 'Longbows', cols: 44 });
     this.addUnit(Faction.Attacker, UType.Cavalry, 160, block(-64, 66, 26, 2.1), { name: 'Lancers', cols: 26 });
+    // Trebuchet battery — bombards the nearest wall to crumble a breach.
+    this.addUnit(Faction.Attacker, UType.Siege, 4, block(0, 92, 4, 10), { name: 'Trebuchets', cols: 4 });
 
     // ---------------- DEFENDERS (the castle, AI) ----------------
-    // Archers along the south wall tops (either side of the gate) + side walls.
+    // Archers standing ON the south wall-top (either side of the gate), y = wall height.
     this.addUnit(Faction.Defender, UType.Archer, 80, (i) => {
       const left = i < 40; const k = left ? i : i - 40;
-      const x = left ? -24 + (k % 8) * 2.0 : 9 + (k % 8) * 2.0;
-      const z = 23.0 + Math.floor(k / 8) * 1.2;
-      return [x, z, 6];
+      const x = left ? -25 + (k % 8) * 2.1 : 9 + (k % 8) * 2.1;
+      const z = 25.0 + Math.floor(k / 8) * 1.2;
+      return [x, z, WH];
     }, { hold: true, name: 'Wall Archers' });
+    // Archers on the east & west wall-tops.
     this.addUnit(Faction.Defender, UType.Archer, 50, (i) => {
       const east = i < 25; const k = east ? i : i - 25;
-      const z = -20 + (k % 5) * 8;
-      const x = east ? 24.0 + Math.floor(k / 5) * 1.2 : -25.2 - Math.floor(k / 5) * 1.2;
-      return [x, z, 6];
+      const z = -22 + (k % 5) * 9;
+      const x = east ? 25.5 + Math.floor(k / 5) * 1.2 : -26.5 - Math.floor(k / 5) * 1.2;
+      return [x, z, WH];
     }, { hold: true, name: 'Flank Archers' });
     // Garrison melee HOLD the south courtyard, right where the flood enters
     // (between the keep and the gate) so attackers meet them head-on and their
@@ -392,6 +425,12 @@ export class Sim {
         dx = (this.px[i] > 0 ? 0.4 : -0.4); dz = fz;
         if (this.px[i] < WORLD.minX + 3 || this.px[i] > WORLD.maxX - 3 ||
             this.pz[i] < WORLD.minZ + 3 || this.pz[i] > WORLD.maxZ - 3) { this.kill(i, u); continue; }
+      } else if (t === UType.Siege) {
+        // trebuchet: bombard the nearest standing wall in range; otherwise the
+        // crew hauls it toward its slot (player positions the battery).
+        const seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]);
+        if (seg >= 0 && this.cd[i] <= 0) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; }
+        if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
         const rng = RANGE[t];
@@ -399,31 +438,14 @@ export class Sim {
         const meleeing = t !== UType.Archer && nearest >= 0 && dist <= rng;
 
         if (shooting) {
-          // halt and volley
           if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; }
         } else if (meleeing) {
-          // strike, hold ground
           if (this.cd[i] <= 0) { this.hp[nearest] -= MELEE[t]; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
         } else if (t !== UType.Archer && nearest >= 0 && dist < ENGAGE && !u.hold) {
           // close enough to break formation and charge into contact
           const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
         } else if (!u.hold) {
-          // move in formation toward this soldier's slot; route via the flow
-          // field while still far from the anchor (so walls are handled)
-          const adx = u.ax - this.px[i], adz = u.az - this.pz[i];
-          if (adx * adx + adz * adz > 18 * 18 && u.goal >= 0) {
-            const f = this.field(u.goal); const ci = cellOf(this.px[i], this.pz[i]);
-            dx = f[ci * 2]; dz = f[ci * 2 + 1];
-          } else {
-            const sp = SPACING[t], cols = Math.max(1, u.cols), rows = Math.ceil(u.count / cols);
-            const k = i - u.s0, col = k % cols, row = (k - col) / cols;
-            const ffx = Math.sin(u.facing), ffz = Math.cos(u.facing);
-            const rrx = Math.cos(u.facing), rrz = -Math.sin(u.facing);
-            const lr = (col - (cols - 1) / 2) * sp, lf = ((rows - 1) / 2 - row) * sp;
-            const tx = u.ax + rrx * lr + ffx * lf - this.px[i], tz = u.az + rrz * lr + ffz * lf - this.pz[i];
-            const l = Math.hypot(tx, tz);
-            if (l > 0.4) { dx = tx / l; dz = tz / l; }
-          }
+          this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
         }
         // hold units with no enemy in range simply stay put
       }
@@ -436,11 +458,11 @@ export class Sim {
         for (let bi = 0; bi < b.length; bi++) {
           const j = b[bi]; if (j === i || this.fac[j] !== this.fac[i]) continue;
           const ex = this.px[i] - this.px[j], ez = this.pz[i] - this.pz[j];
-          const d2 = ex * ex + ez * ez; const rad = RADIUS[t] * 2.2;
+          const d2 = ex * ex + ez * ez; const rad = RADIUS[t] * 2.3;
           if (d2 > 0.0001 && d2 < rad * rad) { const d = Math.sqrt(d2); sx += ex / d * (1 - d / rad); sz += ez / d * (1 - d / rad); }
         }
       }
-      dx += sx * 0.55; dz += sz * 0.55;
+      dx += sx * 1.1; dz += sz * 1.1;
 
       // integrate with wall collision
       const dl = Math.hypot(dx, dz);
@@ -464,6 +486,27 @@ export class Sim {
 
   private kill(i: number, u: Unit) { this.alive[i] = 0; if (u) u.alive = Math.max(0, u.alive - 1); }
 
+  // Desired direction toward this soldier's formation slot, written to _dir.
+  // Routes via the flow field only when a wall actually blocks the straight
+  // path to the slot — otherwise steers directly (so ranks spread, no clumping).
+  private _dir = [0, 0];
+  private formMove(u: Unit, i: number) {
+    const t = this.typ[i] as UType;
+    const sp = SPACING[t], cols = Math.max(1, u.cols), rows = Math.ceil(u.count / cols);
+    const k = i - u.s0, col = k % cols, row = (k - col) / cols;
+    const ffx = Math.sin(u.facing), ffz = Math.cos(u.facing);
+    const rrx = Math.cos(u.facing), rrz = -Math.sin(u.facing);
+    const lr = (col - (cols - 1) / 2) * sp, lf = ((rows - 1) / 2 - row) * sp;
+    const slx = u.ax + rrx * lr + ffx * lf, slz = u.az + rrz * lr + ffz * lf;
+    const tx = slx - this.px[i], tz = slz - this.pz[i], l = Math.hypot(tx, tz);
+    if (l > 6 && u.goal >= 0 && pathBlocked(this.px[i], this.pz[i], slx, slz)) {
+      const f = this.field(u.goal), ci = cellOf(this.px[i], this.pz[i]);
+      this._dir[0] = f[ci * 2]; this._dir[1] = f[ci * 2 + 1];
+    } else if (l > 0.4) {
+      this._dir[0] = tx / l; this._dir[1] = tz / l;
+    } else { this._dir[0] = 0; this._dir[1] = 0; }
+  }
+
   private shoot(i: number, target: number) {
     const p = this.getProj();
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
@@ -471,12 +514,52 @@ export class Sim {
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / ARCHER_PROJ_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
-    p.dmg = ARCHER_PROJ_DMG;
+    p.dmg = ARCHER_PROJ_DMG; p.wall = -1; p.big = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * 18 * tof; // ballistic arc
   }
+
+  // Nearest still-standing wall/gate section within a trebuchet's range.
+  private nearestWall(x: number, z: number, range: number): number {
+    let best = -1, bd = range * range;
+    for (let s = 0; s < CASTLE.length; s++) {
+      const seg = CASTLE[s];
+      if (seg.dead || (seg.kind !== 'wall' && seg.kind !== 'gate')) continue;
+      const cx = (seg.x0 + seg.x1) / 2, cz = (seg.z0 + seg.z1) / 2;
+      const d2 = (cx - x) ** 2 + (cz - z) ** 2;
+      if (d2 < bd) { bd = d2; best = s; }
+    }
+    return best;
+  }
+
+  private lobBoulder(i: number, segIdx: number) {
+    const seg = CASTLE[segIdx];
+    const p = this.getProj();
+    const sx = this.px[i], sz = this.pz[i], sy = 3;
+    const tx = (seg.x0 + seg.x1) / 2, tz = (seg.z0 + seg.z1) / 2;
+    const d = Math.hypot(tx - sx, tz - sz) || 1;
+    const tof = d / BOULDER_SPEED;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
+    p.dmg = BOULDER_DMG; p.wall = segIdx; p.big = true;
+    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * 18 * tof;
+  }
+
+  private breach(segIdx: number) {
+    const seg = CASTLE[segIdx];
+    if (seg.dead) return;
+    seg.dead = true;
+    rebuildBlocked();
+    this.fields.clear(); // passability changed — recompute flow fields on demand
+    // archers standing on this section fall with it
+    for (let i = 0; i < this.n; i++) {
+      if (!this.alive[i] || this.py[i] < 1) continue;
+      if (this.px[i] >= seg.x0 - 1.5 && this.px[i] <= seg.x1 + 1.5 && this.pz[i] >= seg.z0 - 1.5 && this.pz[i] <= seg.z1 + 1.5)
+        this.kill(i, this.units[this.unit[i]]);
+    }
+  }
+
   private getProj(): Projectile {
     for (const p of this.projectiles) if (!p.active) return p;
-    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, dmg: 0, fac: 0 };
+    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, dmg: 0, fac: 0, wall: -1, big: false };
     this.projectiles.push(p); return p;
   }
   private stepProjectiles(dt: number) {
@@ -485,16 +568,22 @@ export class Sim {
       p.vy -= 18 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
       const dxz = Math.hypot(p.x - p.tx, p.z - p.tz);
       if (p.y <= 0 || dxz < 1.4) {
-        // area hit: damage nearest enemy soldier to impact
-        let best = -1, bd2 = 6.25;
-        const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((p.tx - WORLD.minX) / this.hCell)));
-        const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((p.tz - WORLD.minZ) / this.hCell)));
-        for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
-          if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-          const b = this.buckets[rr * this.hCols + cc];
-          for (const j of b) { if (this.fac[j] === p.fac) continue; const d2 = (this.px[j] - p.tx) ** 2 + (this.pz[j] - p.tz) ** 2; if (d2 < bd2) { bd2 = d2; best = j; } }
+        if (p.wall >= 0) {
+          // boulder: damage the wall section; crumble it into a breach at 0 hp
+          const seg = CASTLE[p.wall];
+          if (!seg.dead) { seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(p.wall); }
+        } else {
+          // arrow: damage nearest enemy soldier to the impact point
+          let best = -1, bd2 = 6.25;
+          const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((p.tx - WORLD.minX) / this.hCell)));
+          const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((p.tz - WORLD.minZ) / this.hCell)));
+          for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
+            if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
+            const b = this.buckets[rr * this.hCols + cc];
+            for (const j of b) { if (this.fac[j] === p.fac) continue; const d2 = (this.px[j] - p.tx) ** 2 + (this.pz[j] - p.tz) ** 2; if (d2 < bd2) { bd2 = d2; best = j; } }
+          }
+          if (best >= 0) { this.hp[best] -= p.dmg; if (this.hp[best] <= 0) this.kill(best, this.units[this.unit[best]]); }
         }
-        if (best >= 0) { this.hp[best] -= p.dmg; if (this.hp[best] <= 0) this.kill(best, this.units[this.unit[best]]); }
         p.active = false;
       }
     }
