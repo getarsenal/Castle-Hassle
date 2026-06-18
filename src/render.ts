@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT } from './sim';
 import { makeSoldierTexture, makeArrowTexture, SpriteKind } from './sprites';
 import { stoneTexture, roofTexture, grassTexture, plasterTexture } from './textures';
@@ -54,9 +55,11 @@ export class Renderer {
   camDist = 165; camYaw = 0; camPitch = 0.92;
 
   constructor(private sim: Sim, canvasParent: HTMLElement) {
-    this.gl = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // Mobile is fill-rate + draw-call bound. Render at device-pixel 1 (the HUD
+    // is DOM so text stays crisp) and skip MSAA — the chunky art doesn't need it.
+    this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.gl.setSize(window.innerWidth, window.innerHeight);
-    this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.gl.setPixelRatio(1);
     // Filmic tone mapping — the single biggest "real game" upgrade: warm highlight
     // rolloff + richer contrast, matching the icon's golden, punchy look.
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -152,22 +155,26 @@ export class Renderer {
   // shared stone materials (slight tone variation for richness)
   private stone(hex: string, v = 0) { const c = new THREE.Color(hex); if (v) c.offsetHSL(0, 0, v); return new THREE.MeshLambertMaterial({ color: c }); }
 
+  // a UV'd box geometry baked into local space (optionally Y-rotated first)
+  private boxG(w: number, h: number, d: number, x: number, y: number, z: number, ry = 0): THREE.BoxGeometry {
+    const g = new THREE.BoxGeometry(w, h, d); if (ry) g.rotateY(ry); g.translate(x, y, z); return g;
+  }
+  // stamp a flat vertex colour onto a geometry (so many tinted pieces can merge
+  // into ONE mesh and still vary per-piece)
+  private paint(g: THREE.BufferGeometry, c: THREE.Color): THREE.BufferGeometry {
+    const n = g.attributes.position.count, a = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(a, 3)); return g;
+  }
+
   private buildCastle() {
-    const wallMat = this.stone('#e6d6af'); wallMat.map = this.texStone;
-    const towerMat = this.stone('#dfcca2'); towerMat.map = this.texStone;
-    const keepMat = this.stone('#d6c499'); keepMat.map = this.texStone;
-    const crenMat = this.stone('#ecdcb6'); crenMat.map = this.texStone;
-    const roofMat = this.stone('#d06a40');
     const coneRoofTex = this.texRoof.clone(); coneRoofTex.wrapS = coneRoofTex.wrapT = THREE.RepeatWrapping; coneRoofTex.repeat.set(5, 3); coneRoofTex.needsUpdate = true;
-    roofMat.map = coneRoofTex;
+    const roofMat = this.stone('#d06a40'); roofMat.map = coneRoofTex;
     const timber = this.stone('#7a4f2c');
-    const walkMat = this.stone('#c9b887'); walkMat.map = this.texStone;
-    // a small arrow-loop window (recessed dark slit) added to a wall/tower face
-    const loopMat = new THREE.MeshLambertMaterial({ color: '#2a2118' });
-    const addLoop = (x: number, y: number, z: number, fz: boolean) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(fz ? 0.6 : 0.5, 1.7, fz ? 0.5 : 0.6), loopMat);
-      m.position.set(x, y, z); this.scene.add(m); return m;
-    };
+    const stoneCol = (hex: string) => new THREE.Color(hex);
+    // STATIC batches (buildings + keep never crumble) — merged into a few meshes
+    const bodyGeos: THREE.BufferGeometry[] = [], houseRoofGeos: THREE.BufferGeometry[] = [];
+    const doorGeos: THREE.BufferGeometry[] = [], keepStoneGeos: THREE.BufferGeometry[] = [], keepTimberGeos: THREE.BufferGeometry[] = [];
 
     for (let s = 0; s < CASTLE.length; s++) {
       const b = CASTLE[s];
@@ -175,114 +182,93 @@ export class Renderer {
       const extras: THREE.Object3D[] = [];
 
       if (b.kind === 'wall' || b.kind === 'gate') {
-        const mat = (b.kind === 'gate' ? timber : wallMat).clone(); // own material → can darken with damage
-        const box = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), mat);
-        box.position.set(cx, b.h / 2, cz); this.scene.add(box);
-
+        // every part of the section merges into ONE mesh (origin at ground)
+        const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
+        const isStone = b.kind === 'wall';
         if (b.kind === 'wall') {
           const horiz = w > d, len = horiz ? w : d;
           const outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
-          // worn walkway floor — the DEFINED area units stand within
-          const wf = new THREE.Mesh(new THREE.BoxGeometry(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d), walkMat);
-          wf.position.set(cx, b.h + 0.25, cz); this.scene.add(wf); extras.push(wf);
-          // LOW crenellated parapet on the OUTER edge only
+          parts.push(this.boxG(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d, 0, b.h + 0.25, 0)); // walkway
           const n = Math.floor(len / 1.7);
           for (let k = 0; k <= n; k++) {
             if (k % 2) continue;
-            const m = new THREE.Mesh(new THREE.BoxGeometry(horiz ? 1.0 : 0.7, 1.7, horiz ? 0.7 : 1.0), crenMat);
-            if (horiz) m.position.set(b.x0 + 0.85 + k * 1.7, b.h + 0.85, cz + outer * (d / 2 - 0.35));
-            else m.position.set(cx + outer * (w / 2 - 0.35), b.h + 0.85, b.z0 + 0.85 + k * 1.7);
-            this.scene.add(m); extras.push(m);
+            if (horiz) parts.push(this.boxG(1.0, 1.7, 0.7, b.x0 + 0.85 + k * 1.7 - cx, b.h + 0.85, outer * (d / 2 - 0.35)));
+            else parts.push(this.boxG(0.7, 1.7, 1.0, outer * (w / 2 - 0.35), b.h + 0.85, b.z0 + 0.85 + k * 1.7 - cz));
           }
-          // low inner rail so the walkway reads as an enclosed walk
-          const rail = new THREE.Mesh(new THREE.BoxGeometry(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d), crenMat);
-          rail.position.set(horiz ? cx : cx - outer * (w / 2 - 0.25), b.h + 0.35, horiz ? cz - outer * (d / 2 - 0.25) : cz);
-          this.scene.add(rail); extras.push(rail);
-          // an arrow-loop on the outer face of the segment
-          if (len > 5) {
-            const ly = b.h * 0.52;
-            const loop = horiz
-              ? addLoop(cx, ly, cz + outer * (d / 2 + 0.05), true)
-              : addLoop(cx + outer * (w / 2 + 0.05), ly, cz, false);
-            extras.push(loop);
-          }
+          parts.push(this.boxG(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d, horiz ? 0 : -outer * (w / 2 - 0.25), b.h + 0.35, horiz ? -outer * (d / 2 - 0.25) : 0)); // inner rail
         } else {
-          // gate: two timber doors + stone arch
-          for (const sx of [-1, 1]) {
-            const door = new THREE.Mesh(new THREE.BoxGeometry(w / 2 - 0.3, b.h - 1.2, 0.6), timber);
-            door.position.set(cx + sx * w / 4, (b.h - 1.2) / 2, b.z1); this.scene.add(door); extras.push(door);
-          }
-          const arch = new THREE.Mesh(new THREE.BoxGeometry(w + 2, 1.6, d + 1), wallMat);
-          arch.position.set(cx, b.h + 0.4, cz); this.scene.add(arch); extras.push(arch);
+          for (const sx of [-1, 1]) parts.push(this.boxG(w / 2 - 0.3, b.h - 1.2, 0.6, sx * w / 4, (b.h - 1.2) / 2, d / 2)); // doors
+          parts.push(this.boxG(w + 2, 1.6, d + 1, 0, b.h + 0.4, 0)); // arch
         }
+        const mat = (isStone ? this.stone('#e6d6af') : timber.clone());
+        if (isStone) mat.map = this.texStone;
+        const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
+        box.position.set(cx, 0, cz); this.scene.add(box);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
-        const tmat = towerMat.clone(); // own material → darkens with damage
-        const box = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), tmat);
-        box.position.set(cx, b.h / 2, cz); this.scene.add(box);
-        for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const) {
-          const m = new THREE.Mesh(new THREE.BoxGeometry(ew, 1.3, ed), crenMat); m.position.set(cx + ex, b.h + 0.6, cz + ez); this.scene.add(m); extras.push(m);
-        }
-        // small windows on each face
-        const wy = b.h * 0.5;
-        for (const [lx, lz, fz] of [[0, d / 2 + 0.05, true], [0, -d / 2 - 0.05, true], [w / 2 + 0.05, 0, false], [-w / 2 - 0.05, 0, false]] as const)
-          extras.push(addLoop(cx + lx, wy, cz + lz, fz));
+        const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
+        for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const)
+          parts.push(this.boxG(ew, 1.3, ed, ex, b.h + 0.6, ez));
+        const mat = this.stone('#dfcca2'); mat.map = this.texStone;
+        const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
+        box.position.set(cx, 0, cz); this.scene.add(box);
+        // roof + pole + flag stay separate (different materials) and hide on crumble
         const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.82, 6.5, 12), roofMat);
         roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.7, cz); this.scene.add(roof); extras.push(roof);
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole); extras.push(pole);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide }));
         flag.position.set(cx + 1.2, b.h + 8, cz); this.scene.add(flag); extras.push(flag);
-        this.segVis[s] = { box, mat: tmat, base: tmat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
+        this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'keep') {
-        const base = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), keepMat); base.position.set(cx, b.h / 2, cz); this.scene.add(base);
-        const upper = new THREE.Mesh(new THREE.BoxGeometry(w - 5, 5, d - 5), keepMat); upper.position.set(cx, b.h + 2.5, cz); this.scene.add(upper);
-        // battlements on the base
-        for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.4, 1), crenMat); m.position.set(cx + Math.sin(a) * (d / 2), b.h + 0.7, cz + Math.cos(a) * (d / 2)); m.rotation.y = a; this.scene.add(m); }
+        keepStoneGeos.push(this.boxG(w, b.h, d, cx, b.h / 2, cz), this.boxG(w - 5, 5, d - 5, cx, b.h + 2.5, cz));
+        for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; keepStoneGeos.push(this.boxG(w, 1.4, 1, cx + Math.sin(a) * (d / 2), b.h + 0.7, cz + Math.cos(a) * (d / 2), a)); }
         const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.8, 9, 14), roofMat); roof.position.set(cx, b.h + 9.5, cz); this.scene.add(roof);
-        const door = new THREE.Mesh(new THREE.BoxGeometry(2.6, 4, 0.4), timber); door.position.set(cx, 2, b.z1); this.scene.add(door);
-        for (const [wx, wy] of [[-3, 8], [3, 8], [-3, 13], [3, 13]] as const) { const win = new THREE.Mesh(new THREE.BoxGeometry(1, 1.6, 0.3), timber); win.position.set(cx + wx, wy, b.z1); this.scene.add(win); }
+        keepTimberGeos.push(this.boxG(2.6, 4, 0.4, cx, 2, b.z1));
+        for (const [wx, wy] of [[-3, 8], [3, 8], [-3, 13], [3, 13]] as const) keepTimberGeos.push(this.boxG(1, 1.6, 0.3, cx + wx, wy, b.z1));
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6), timber); pole.position.set(cx, b.h + 15, cz); this.scene.add(pole);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(4, 2.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide })); flag.position.set(cx + 2, b.h + 16, cz); this.scene.add(flag);
       } else if (b.kind === 'building') {
-        // a town house: half-timbered plaster walls + a tiled gabled roof
+        // half-timbered plaster house + tiled gabled roof — colour baked into
+        // vertex colours so every house merges into one mesh yet varies.
         const tone = 0.84 + jit(s, 7) * 0.26;
-        const wm = new THREE.MeshLambertMaterial({ map: this.texPlaster, color: new THREE.Color('#d8c39a').multiplyScalar(tone) });
-        const rm = new THREE.MeshLambertMaterial({ map: this.texRoof, side: THREE.DoubleSide, color: (jit(s, 9) > 0.5 ? new THREE.Color('#c06a3a') : new THREE.Color('#a98a52')).multiplyScalar(tone) });
-        const body = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), wm); body.position.set(cx, b.h / 2, cz); this.scene.add(body);
-        // a little door on the side facing the gate (south, +z)
-        const door = new THREE.Mesh(new THREE.BoxGeometry(1.4, Math.min(2.6, b.h - 1), 0.2), timber);
-        door.position.set(cx, Math.min(2.6, b.h - 1) / 2, b.z1 + 0.06); this.scene.add(door);
-        const long = w >= d;
-        // gabled roof: a triangular prism whose ridge runs along the LONG axis,
-        // with flat eaves overhanging the walls a touch. UVs so the tile texture
-        // runs along the slope.
-        const span = long ? d : w, runL = long ? w : d;
+        bodyGeos.push(this.paint(this.boxG(w, b.h, d, cx, b.h / 2, cz), new THREE.Color('#d8c39a').multiplyScalar(tone)));
+        doorGeos.push(this.boxG(1.4, Math.min(2.6, b.h - 1), 0.2, cx, Math.min(2.6, b.h - 1) / 2, b.z1 + 0.06));
+        const long = w >= d, span = long ? d : w, runL = long ? w : d;
         const rh = span * 0.42 + 0.6, half = span / 2 + 0.5;
         const x0 = -runL / 2 - 0.4, x1 = runL / 2 + 0.4, ey = b.h - 0.2, ry = b.h + rh;
-        const ur = runL / 4;                          // tile repeats along the ridge
-        const vr = Math.hypot(half, rh) / 2.6;        // tile repeats up the slope
-        // each named point carries a uv (u = along ridge, v = eave->ridge)
+        const ur = runL / 4, vr = Math.hypot(half, rh) / 2.6;
         const P: Record<string, [number[], number[]]> = {
           a0: [[x0, ry, 0], [0, vr]], a1: [[x1, ry, 0], [ur, vr]],
           e0L: [[x0, ey, -half], [0, 0]], e0R: [[x0, ey, half], [0, 0]],
           e1L: [[x1, ey, -half], [ur, 0]], e1R: [[x1, ey, half], [ur, 0]],
         };
-        const v: number[] = [], uv: number[] = [];
-        const tri = (...names: string[]) => names.forEach(n => { const [p, u] = P[n]; v.push(p[0], p[1], p[2]); uv.push(u[0], u[1]); });
-        tri('e0L', 'e1L', 'a1', 'e0L', 'a1', 'a0');     // back slope
-        tri('e1R', 'e0R', 'a0', 'e1R', 'a0', 'a1');     // front slope
-        tri('e0R', 'e0L', 'a0');                        // gable end
-        tri('e1L', 'e1R', 'a1');                        // gable end
+        const vv: number[] = [], uv: number[] = [];
+        const tri = (...names: string[]) => names.forEach(nm => { const [p, u] = P[nm]; vv.push(p[0], p[1], p[2]); uv.push(u[0], u[1]); });
+        tri('e0L', 'e1L', 'a1', 'e0L', 'a1', 'a0');
+        tri('e1R', 'e0R', 'a0', 'e1R', 'a0', 'a1');
+        tri('e0R', 'e0L', 'a0'); tri('e1L', 'e1R', 'a1');
         const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(vv, 3));
         geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-        geo.computeVertexNormals();
-        const roof = new THREE.Mesh(geo, rm);
-        roof.position.set(cx, 0, cz);
-        if (!long) roof.rotation.y = Math.PI / 2;
-        this.scene.add(roof);
+        if (!long) geo.rotateY(Math.PI / 2);
+        geo.translate(cx, 0, cz); geo.computeVertexNormals();
+        this.paint(geo, (jit(s, 9) > 0.5 ? new THREE.Color('#c06a3a') : new THREE.Color('#a98a52')).multiplyScalar(tone));
+        houseRoofGeos.push(geo);
       }
     }
+
+    // ---- collapse the static batches into a handful of draw calls ----
+    if (bodyGeos.length) {
+      const m = new THREE.Mesh(mergeGeometries(bodyGeos, false), new THREE.MeshLambertMaterial({ map: this.texPlaster, vertexColors: true }));
+      this.scene.add(m);
+    }
+    if (houseRoofGeos.length) {
+      const m = new THREE.Mesh(mergeGeometries(houseRoofGeos, false), new THREE.MeshLambertMaterial({ map: this.texRoof, vertexColors: true, side: THREE.DoubleSide }));
+      this.scene.add(m);
+    }
+    if (doorGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(doorGeos, false), timber));
+    if (keepStoneGeos.length) { const km = this.stone('#d6c499'); km.map = this.texStone; this.scene.add(new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km)); }
+    if (keepTimberGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(keepTimberGeos, false), timber));
   }
 
   private buildTrees() {
@@ -290,7 +276,7 @@ export class Renderer {
     // rejection-sample positions: outside the castle, clear of the south army lane
     const pts: [number, number, number][] = [];
     let guard = 0;
-    while (pts.length < 64 && guard++ < 2000) {
+    while (pts.length < 40 && guard++ < 2000) {
       const x = WORLD.minX + 8 + Math.random() * (WORLD.maxX - WORLD.minX - 16);
       const z = WORLD.minZ + 8 + Math.random() * (WORLD.maxZ - WORLD.minZ - 16);
       if (Math.abs(x) < W + 16 && Math.abs(z) < D + 16) continue;          // not on the castle
@@ -483,7 +469,9 @@ export class Renderer {
       if (v.crumbling > 0 && v.crumbling < 1) {
         v.crumbling = Math.min(1, v.crumbling + dt / 0.7);
         const e = v.crumbling, k = 1 - 0.72 * e;
-        v.box.scale.y = k; v.box.position.y = (v.h / 2) * k - 0.4 * e; v.box.rotation.z = e * 0.12 * (s % 2 ? 1 : -1);
+        // merged section meshes have their origin at the ground, so collapse =
+        // squash toward y=0 plus a small sink.
+        v.box.scale.y = k; v.box.position.y = -0.5 * e; v.box.rotation.z = e * 0.12 * (s % 2 ? 1 : -1);
         if (e >= 1) v.box.material = this.rubbleMat;
       }
     }
