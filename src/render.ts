@@ -205,12 +205,31 @@ export class Renderer {
         // a town house: plastered walls, timber framing, pitched thatch/tile roof
         const tone = 0.78 + jit(s, 7) * 0.34;
         const wm = this.stone('#cbb083'); wm.color.multiplyScalar(tone);
-        const rm = jit(s, 9) > 0.5 ? this.stone('#9a6b3f') : this.stone('#7d5a37'); rm.color.multiplyScalar(tone);
+        const rm = jit(s, 9) > 0.5 ? this.stone('#9a6b3f') : this.stone('#7d5a37'); rm.color.multiplyScalar(tone); rm.side = THREE.DoubleSide;
         const body = new THREE.Mesh(new THREE.BoxGeometry(w, b.h, d), wm); body.position.set(cx, b.h / 2, cz); this.scene.add(body);
         const long = w >= d;
-        const roof = new THREE.Mesh(new THREE.CylinderGeometry((long ? d : w) * 0.62, (long ? d : w) * 0.62, (long ? w : d) * 1.04, 3), rm);
-        roof.rotation.z = Math.PI / 2; if (!long) roof.rotation.y = Math.PI / 2;
-        roof.position.set(cx, b.h + (long ? d : w) * 0.31, cz); this.scene.add(roof);
+        // proper gabled roof: a triangular prism whose ridge runs along the
+        // building's LONG axis, with flat eaves overhanging the walls a touch.
+        const span = long ? d : w, runL = long ? w : d;
+        const rh = span * 0.42 + 0.6;                  // ridge height above the eaves
+        const half = span / 2 + 0.5;                   // half-span incl. small eave
+        const x0 = -runL / 2 - 0.4, x1 = runL / 2 + 0.4, ey = b.h - 0.2, ry = b.h + rh;
+        const apex0 = [x0, ry, 0], apex1 = [x1, ry, 0];
+        const e0L = [x0, ey, -half], e0R = [x0, ey, half];
+        const e1L = [x1, ey, -half], e1R = [x1, ey, half];
+        const v: number[] = [];
+        const tri = (...p: number[][]) => p.forEach(q => v.push(q[0], q[1], q[2]));
+        tri(e0L, e1L, apex1, e0L, apex1, apex0);       // back slope
+        tri(e1R, e0R, apex0, e1R, apex0, apex1);       // front slope
+        tri(e0R, e0L, apex0);                          // gable end
+        tri(e1L, e1R, apex1);                          // gable end
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+        geo.computeVertexNormals();
+        const roof = new THREE.Mesh(geo, rm);
+        roof.position.set(cx, 0, cz);
+        if (!long) roof.rotation.y = Math.PI / 2;       // ridge along the depth axis
+        this.scene.add(roof);
       }
     }
   }
