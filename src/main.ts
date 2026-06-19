@@ -250,19 +250,23 @@ $('startGameBtn')?.addEventListener('click', () => openMap());
 function startIntro() {
   show('intro', true);
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
+  const card = document.getElementById('introCard');
+  if (card) card.style.display = 'none';          // the styled card is a fallback only
   let advanced = false;
-  const go = () => { if (advanced) return; advanced = true; if (vid) { vid.pause?.(); } show('intro', false); show('titleScreen', true); };
+  const go = () => { if (advanced) return; advanced = true; vid?.pause?.(); show('intro', false); show('titleScreen', true); };
   if (vid) {
     vid.src = './intro.mp4'; vid.style.display = 'block';
     vid.addEventListener('ended', go);
-    vid.addEventListener('error', () => setTimeout(go, 1200)); // missing/unsupported → brief card then on
-    // Try WITH audio first; browsers that block unmuted autoplay fall back to a
-    // silent play so the splash still shows.
+    vid.addEventListener('error', () => { if (card) card.style.display = 'flex'; setTimeout(go, 1800); });
+    // Try with audio; if the browser blocks unmuted autoplay, play muted so the
+    // splash still shows. (Audio works in the native app / after a tap.)
     vid.muted = false;
-    vid.play().catch(() => { vid.muted = true; vid.play().catch(() => setTimeout(go, 1500)); });
+    vid.play().catch(() => { vid.muted = true; vid.play().catch(() => { if (card) card.style.display = 'flex'; }); });
+    // a tap unmutes (gesture) AND/OR skips after the first second
+    let t0 = performance.now();
+    document.getElementById('intro')?.addEventListener('pointerdown', () => { if (vid.muted) vid.muted = false; if (performance.now() - t0 > 900) go(); });
     setTimeout(go, 6000); // safety so the splash can never hang the boot
   } else setTimeout(go, 3000);
-  document.getElementById('intro')?.addEventListener('click', go); // tap to skip
 }
 
 (window as any).__campaignWin = () => {}; // (placeholder hook)

@@ -127,14 +127,14 @@
     #introSub { font: 600 18px Georgia, serif; letter-spacing: 12px; color: #9fb0c4; margin-top: 6px; }
     @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 
-    #titleScreen { flex-direction: column; align-items: center; justify-content: center; gap: 22px;
-      background: radial-gradient(120% 80% at 50% 20%, #2a3b54, #0e1622 70%); animation: fadein 0.6s ease; }
-    #titleIcon { width: 168px; height: 168px; border-radius: 36px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
-    #startGameBtn { pointer-events: auto; border: none; cursor: pointer;
-      font: 800 20px Georgia, serif; letter-spacing: 1px; color: #3a2a08; background: linear-gradient(#ffd86b, #e9a72c);
-      padding: 14px 42px; border-radius: 14px; box-shadow: 0 5px 0 #b9851c; }
-    #startGameBtn:active { transform: translateY(2px); box-shadow: 0 3px 0 #b9851c; }
-    #titleHint { color: #9fb0c4; font: 600 13px Georgia, serif; letter-spacing: 2px; }
+    #titleScreen { flex-direction: column; align-items: center; justify-content: space-between;
+      padding: 9vh 16px calc(var(--safe-bottom) + 7vh);
+      background: radial-gradient(120% 80% at 50% 18%, #2a3b54, #0e1622 70%); animation: fadein 0.6s ease; }
+    #titleIcon { width: min(86vw, 480px); height: auto; border-radius: 14%; box-shadow: 0 16px 50px rgba(0,0,0,0.65); margin-top: 4vh; }
+    #startGameBtn { pointer-events: auto; border: none; cursor: pointer; width: min(86vw, 480px);
+      font: 800 24px Georgia, serif; letter-spacing: 1px; color: #3a2a08; background: linear-gradient(#ffd86b, #e9a72c);
+      padding: 18px 0; border-radius: 16px; box-shadow: 0 6px 0 #b9851c; }
+    #startGameBtn:active { transform: translateY(2px); box-shadow: 0 4px 0 #b9851c; }
 
     #map { background: #cfe3f2; }
     #mapCanvas { width: 100%; height: 100%; display: block; touch-action: none; }
@@ -268,7 +268,6 @@
   <div id="titleScreen">
     <img id="titleIcon" src="https://getarsenal.app/Castle-Hassle/icon.png" alt="Castle Hassle" />
     <button id="startGameBtn">Start Game</button>
-    <div id="titleHint">A medieval siege conquest</div>
   </div>
 
   <div id="map">

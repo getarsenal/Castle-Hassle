@@ -611,12 +611,13 @@ export class Sim {
       if (!deploy && !u.routing && u.faction === Faction.Defender && this.py[i] > 2 && this.climbState[i] === 0
           && (this.attInsideCount > 40 || (t === UType.Archer && this.ammo[i] <= 0))) {
         this.py[i] = Math.max(0, this.py[i] - 7 * dt);
-        // head down toward the nearest enemy (falls back to interior); works for
-        // the offset citadel too, unlike steering at the world origin.
-        let dxg: number, dzg: number;
-        if (nearest >= 0) { dxg = this.px[nearest] - this.px[i]; dzg = this.pz[nearest] - this.pz[i]; }
-        else { dxg = -this.px[i]; dzg = -this.pz[i]; }
-        const il = Math.hypot(dxg, dzg) || 1;
+        // Always come down on the INSIDE — toward the citadel centre if standing
+        // on the citadel, else the keep/courtyard centre. Never chase an enemy
+        // that's outside the wall (that bug let archers walk down the outer face).
+        const cit = LAYOUT.citadel;
+        let tx = 0, tz = 0;
+        if (cit && this.px[i] > cit.x0 - 4 && this.px[i] < cit.x1 + 4 && this.pz[i] > cit.z0 - 4 && this.pz[i] < cit.z1 + 4) { tx = cit.cx; tz = cit.cz; }
+        const dxg = tx - this.px[i], dzg = tz - this.pz[i], il = Math.hypot(dxg, dzg) || 1;
         this.px[i] += dxg / il * 3.5 * dt; this.pz[i] += dzg / il * 3.5 * dt;
         continue;
       }

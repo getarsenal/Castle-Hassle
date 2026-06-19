@@ -1,6 +1,7 @@
 // Campaign layer: real castles on a real, projected map of Europe & the Near
 // East (public-domain Natural Earth coastlines). Progress is saved locally.
 import { REAL_CASTLES } from './castles';
+import { RIVERS, RANGES, FORESTS, BORDERS, REALMS } from './mapfeatures';
 
 export interface CampaignCastle { id: number; name: string; region: string; lat: number; lon: number; seed: number; tier: number; }
 
@@ -126,20 +127,30 @@ export class CampaignMap {
     for (let lon = -15; lon <= 45; lon += 5) { const x = this.sx(lon); if (x > -2 && x < W + 2) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); } }
     for (let lat = 25; lat <= 62; lat += 5) { const y = this.sy(lat); if (y > -2 && y < H + 2) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); } }
 
-    // land
+    // ---- land: parchment relief + rivers, forests, mountains (clipped) ----
     if (this.ready) {
       ctx.lineJoin = 'round';
+      const land = new Path2D();
       for (const r of this.rings) {
-        // bbox cull
-        let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
-        for (let i = 0; i < r.length; i += 2) { const x = this.sx(r[i]), y = this.sy(r[i + 1]); if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
-        if (maxX < -20 || minX > W + 20 || maxY < -20 || minY > H + 20) continue;
-        ctx.beginPath();
-        for (let i = 0; i < r.length; i += 2) { const x = this.sx(r[i]), y = this.sy(r[i + 1]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
-        ctx.closePath();
-        ctx.fillStyle = '#d8c49b'; ctx.fill();
-        ctx.strokeStyle = 'rgba(120,95,55,0.7)'; ctx.lineWidth = 1.4; ctx.stroke();
+        let on = false;
+        for (let i = 0; i < r.length; i += 2) { const x = this.sx(r[i]), y = this.sy(r[i + 1]); if (x > -40 && x < W + 40 && y > -40 && y < H + 40) { on = true; break; } }
+        if (!on) continue;
+        for (let i = 0; i < r.length; i += 2) { const x = this.sx(r[i]), y = this.sy(r[i + 1]); if (i === 0) land.moveTo(x, y); else land.lineTo(x, y); }
+        land.closePath();
       }
+      ctx.fillStyle = '#dcc89e'; ctx.fill(land);
+      ctx.save(); ctx.clip(land);
+      // latitude wash: cooler green in the north → warm tan in the south
+      const g = ctx.createLinearGradient(0, this.sy(60), 0, this.sy(28));
+      g.addColorStop(0, 'rgba(150,162,98,0.55)'); g.addColorStop(0.45, 'rgba(206,186,128,0.18)'); g.addColorStop(1, 'rgba(214,182,120,0.6)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      this.drawForests(ctx); this.drawRivers(ctx); this.drawRanges(ctx);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(105,80,48,0.85)'; ctx.lineWidth = 1.3; ctx.stroke(land);
+      // circa-1200 frontiers
+      ctx.setLineDash([5, 5]); ctx.strokeStyle = 'rgba(120,40,40,0.5)'; ctx.lineWidth = 1.6;
+      for (const b of BORDERS) { ctx.beginPath(); b.forEach(([lat, lon], i) => { const x = this.sx(lon), y = this.sy(lat); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
+      ctx.setLineDash([]);
     }
 
     // route
@@ -150,24 +161,19 @@ export class CampaignMap {
       if ((ax < -40 && bx < -40) || (ax > W + 40 && bx > W + 40)) continue;
       const reached = i <= this.prog.unlocked;
       ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-      if (this.seaLeg[i]) { ctx.setLineDash([2, 7]); ctx.strokeStyle = reached ? 'rgba(60,80,110,0.8)' : 'rgba(60,80,110,0.35)'; ctx.lineWidth = 2.5; }
-      else { ctx.setLineDash([]); ctx.strokeStyle = reached ? 'rgba(90,60,30,0.85)' : 'rgba(90,60,30,0.3)'; ctx.lineWidth = reached ? 3 : 2; }
+      if (this.seaLeg[i]) { ctx.setLineDash([2, 7]); ctx.strokeStyle = reached ? 'rgba(60,80,110,0.85)' : 'rgba(60,80,110,0.35)'; ctx.lineWidth = 2.5; }
+      else { ctx.setLineDash([]); ctx.strokeStyle = reached ? 'rgba(120,70,30,0.9)' : 'rgba(110,80,45,0.3)'; ctx.lineWidth = reached ? 3 : 2; }
       ctx.stroke();
     }
     ctx.setLineDash([]);
 
-    // region labels (at each region's mean position)
-    const seen = new Set<string>();
-    for (const c of this.nodes) {
-      if (seen.has(c.region)) continue; seen.add(c.region);
-      const grp = this.nodes.filter(n => n.region === c.region);
-      const mLon = grp.reduce((s, n) => s + n.lon, 0) / grp.length, mLat = grp.reduce((s, n) => s + n.lat, 0) / grp.length;
-      const x = this.sx(mLon), y = this.sy(mLat) - 26;
-      if (x > -120 && x < W + 120) {
-        ctx.font = '700 16px Georgia, serif'; ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(60,42,20,0.45)'; ctx.fillText(c.region.toUpperCase(), x + 1, y + 1);
-        ctx.fillStyle = 'rgba(90,62,28,0.9)'; ctx.fillText(c.region.toUpperCase(), x, y);
-      }
+    // realm labels (period polities)
+    for (const [name, lat, lon] of REALMS) {
+      const x = this.sx(lon), y = this.sy(lat);
+      if (x < -160 || x > W + 160 || y < -20 || y > H + 20) continue;
+      ctx.font = `700 ${Math.max(11, Math.min(17, this.scale * 0.7))}px Georgia, serif`; ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(70,48,22,0.32)'; ctx.fillText(name, x + 1, y + 1);
+      ctx.fillStyle = 'rgba(86,58,26,0.72)'; ctx.fillText(name, x, y);
     }
 
     // castles
@@ -183,6 +189,49 @@ export class CampaignMap {
     ctx.font = '700 12px Georgia, serif'; ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(20,28,42,0.55)'; ctx.fillRect(8, H - 30, 220, 22);
     ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillText(`${this.prog.completed.length} / ${this.nodes.length} castles taken`, 16, H - 15);
+  }
+
+  private drawRivers(ctx: CanvasRenderingContext2D) {
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const w = Math.max(1, this.scale * 0.1);
+    for (const riv of RIVERS) {
+      ctx.beginPath();
+      riv.forEach(([lat, lon], i) => { const x = this.sx(lon), y = this.sy(lat); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.strokeStyle = '#7fa9c4'; ctx.lineWidth = w + 1.2; ctx.stroke();
+      ctx.strokeStyle = '#a9cee0'; ctx.lineWidth = w; ctx.stroke();
+    }
+  }
+  private drawForests(ctx: CanvasRenderingContext2D) {
+    for (const [lat, lon, rad] of FORESTS) {
+      const cx = this.sx(lon), cy = this.sy(lat), R = rad * this.scale;
+      if (cx < -R || cx > this.cssW() + R || cy < -R || cy > this.cssH() + R) continue;
+      for (let k = 0; k < 14; k++) {
+        const a = frand(lat * 7 + k) * 6.28, d = frand(lon * 5 + k) * R;
+        const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d, s = R * 0.18 + 1.5;
+        ctx.fillStyle = 'rgba(58,92,46,0.7)';
+        ctx.beginPath(); ctx.moveTo(x, y - s * 1.6); ctx.lineTo(x + s, y + s * 0.6); ctx.lineTo(x - s, y + s * 0.6); ctx.closePath(); ctx.fill();
+      }
+    }
+  }
+  private drawRanges(ctx: CanvasRenderingContext2D) {
+    const pk = Math.max(5, Math.min(22, this.scale * 0.62));
+    for (const ridge of RANGES) {
+      // walk the ridge, studding peaks at a roughly even spacing
+      for (let s = 0; s < ridge.length - 1; s++) {
+        const [la0, lo0] = ridge[s], [la1, lo1] = ridge[s + 1];
+        const segDeg = Math.hypot(la1 - la0, lo1 - lo0), steps = Math.max(1, Math.round(segDeg / 0.55));
+        for (let t = 0; t < steps; t++) {
+          const f = t / steps, lat = la0 + (la1 - la0) * f, lon = lo0 + (lo1 - lo0) * f;
+          const x = this.sx(lon), y = this.sy(lat);
+          if (x < -30 || x > this.cssW() + 30 || y < -30 || y > this.cssH() + 30) continue;
+          const h = pk * (0.8 + frand(lat * 9 + lon) * 0.5), w = h * 0.95;
+          ctx.fillStyle = 'rgba(60,45,30,0.22)'; ctx.beginPath(); ctx.ellipse(x + h * 0.18, y + 1, w * 0.7, h * 0.16, 0, 0, 7); ctx.fill(); // shadow
+          ctx.fillStyle = '#a99877'; ctx.beginPath(); ctx.moveTo(x, y - h); ctx.lineTo(x + w, y); ctx.lineTo(x - w, y); ctx.closePath(); ctx.fill(); // lit body
+          ctx.fillStyle = 'rgba(70,55,38,0.55)'; ctx.beginPath(); ctx.moveTo(x, y - h); ctx.lineTo(x + w, y); ctx.lineTo(x, y); ctx.closePath(); ctx.fill(); // shaded right face
+          if (h > pk * 0.95) { ctx.fillStyle = '#f3efe6'; ctx.beginPath(); ctx.moveTo(x, y - h); ctx.lineTo(x + w * 0.28, y - h * 0.66); ctx.lineTo(x - w * 0.28, y - h * 0.66); ctx.closePath(); ctx.fill(); } // snow cap
+        }
+      }
+    }
   }
 
   private drawCastle(ctx: CanvasRenderingContext2D, x: number, y: number, done: boolean, current: boolean, locked: boolean) {
@@ -201,3 +250,5 @@ export class CampaignMap {
     ctx.restore();
   }
 }
+
+function frand(n: number) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5; return x - Math.floor(x); }
