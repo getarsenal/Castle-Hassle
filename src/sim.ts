@@ -246,6 +246,7 @@ export interface Unit {
   ammo: number; ammoMax: number; // live + starting ammunition (ranged units)
   focusX: number; focusZ: number; hasFocus: boolean; // archer aim point (focus fire)
   fireArrows: boolean; // tower archers loose flaming arrows
+  holdFire: boolean;   // ceasefire — ranged unit won't auto-loose (saves ammo)
   name: string;
 }
 
@@ -325,6 +326,7 @@ export class Sim {
       cx: ax, cz: az, siegeTargetSeg: -1,
       ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
       focusX: 0, focusZ: 0, hasFocus: false, fireArrows: !!opts.fireArrows,
+      holdFire: false,
       name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
@@ -473,7 +475,14 @@ export class Sim {
   }
   setSiegeTarget(unitId: number, segIdx: number) {
     const u = this.units[unitId];
-    if (u && u.type === UType.Siege) u.siegeTargetSeg = segIdx;
+    if (u && u.type === UType.Siege) { u.siegeTargetSeg = segIdx; u.holdFire = false; } // aiming resumes fire
+  }
+  // ceasefire toggle for a ranged unit (archers / trebuchets) so a distracted
+  // player doesn't burn all their ammo. Returns the new state.
+  toggleHoldFire(unitId: number): boolean {
+    const u = this.units[unitId];
+    if (!u) return false;
+    u.holdFire = !u.holdFire; return u.holdFire;
   }
   segCenter(s: number): [number, number] { const g = CASTLE[s]; return [(g.x0 + g.x1) / 2, (g.z0 + g.z1) / 2]; }
   hasSiegeUnit(): boolean { return this.units.some(u => u.faction === Faction.Attacker && u.type === UType.Siege); }
@@ -513,16 +522,21 @@ export class Sim {
       if (!deploy && !u.routing && a > 0 && a / u.count < ROUT_FRAC) u.routing = true;
     }
     if (!deploy) {
-      // Walls are overrun once the GROUND garrison is broken — OR once the
-      // attackers control the courtyard and vastly outnumber the defenders.
-      // Then every defender's morale collapses and they abandon the walls.
-      let defGround = 0, attInside = 0;
+      // The defense only collapses once it's genuinely beaten — NOT the moment a
+      // few attackers stand in the bailey. Either the ground garrison (incl. the
+      // citadel guard) is broken, OR the defenders have been ground down to a
+      // remnant AND the attackers overwhelmingly hold the courtyard. This stops
+      // the castle "falling" with most of the garrison still alive.
+      let defGround = 0, defAlive = 0, attInside = 0;
       for (let i = 0; i < this.n; i++) {
-        if (!this.alive[i] || this.climbState[i] > 0 || this.py[i] >= 2) continue;
-        if (this.fac[i] === Faction.Defender) { if (this.typ[i] === UType.Heavy || this.typ[i] === UType.Light) defGround++; }
-        else if (Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1 && this.typ[i] !== UType.Siege) attInside++;
+        if (!this.alive[i]) continue;
+        if (this.fac[i] === Faction.Defender) {
+          defAlive++;
+          if ((this.typ[i] === UType.Heavy || this.typ[i] === UType.Light) && this.climbState[i] === 0 && this.py[i] < 2) defGround++;
+        } else if (this.climbState[i] === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1 && this.typ[i] !== UType.Siege) attInside++;
       }
-      if (defGround < 25 || (defGround > 0 && attInside > 60 && attInside > 3 * defGround))
+      const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
+      if (defGround < 25 || (defFrac < 0.5 && attInside > 80 && attInside > 2.5 * defGround))
         for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
 
@@ -574,13 +588,13 @@ export class Sim {
         let seg = u.siegeTargetSeg;
         if (seg < 0 || CASTLE[seg].dead) { seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]); if (u.siegeTargetSeg >= 0 && CASTLE[u.siegeTargetSeg].dead) u.siegeTargetSeg = -1; }
         else if (((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + ((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2 > RANGE[t] * RANGE[t]) seg = -1;
-        if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
+        if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0 && !u.holdFire) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
         if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
         if (t === UType.Archer && this.ammo[i] > 0) {
           // active archer: volley enemies in range (within the focus area if set)
-          if (nearest >= 0 && dist <= RANGE[t] && this.focusOk(u, nearest)) {
+          if (nearest >= 0 && dist <= RANGE[t] && !u.holdFire && this.focusOk(u, nearest)) {
             if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
           } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.scaleWall(i); dx = this._dir[0]; dz = this._dir[1]; } }
         } else {

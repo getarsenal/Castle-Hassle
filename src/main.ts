@@ -111,6 +111,11 @@ function updateTools() {
   const rb = document.createElement('button'); rb.className = 'tool' + (showRange ? ' on' : ''); rb.textContent = '◎ Range';
   rb.addEventListener('click', () => { showRange = !showRange; updateTools(); });
   toolsEl.appendChild(rb);
+  // ceasefire toggle — stops auto-loosing so a distracted player keeps ammo
+  const hb = document.createElement('button'); hb.className = 'tool' + (u!.holdFire ? ' on' : '');
+  hb.textContent = u!.holdFire ? '✋ Hold Fire' : '🔥 Firing';
+  hb.addEventListener('click', () => { sim.toggleHoldFire(u!.id); updateTools(); });
+  toolsEl.appendChild(hb);
   if (u!.type === UType.Archer && u!.hasFocus) {
     const cb = document.createElement('button'); cb.className = 'tool'; cb.textContent = '✕ Clear Aim';
     cb.addEventListener('click', () => { sim.clearFocus(u!.id); updateTools(); });

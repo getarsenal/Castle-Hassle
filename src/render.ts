@@ -15,7 +15,7 @@ const COL_DEFEND = new THREE.Color('#3f86d8');
 function jit(i: number, s: number): number { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); }
 
 interface SegVis { box: THREE.Mesh; mat: THREE.MeshLambertMaterial; base: THREE.Color; extras: THREE.Object3D[]; h: number; maxhp: number; prevHp: number; crumbling: number; }
-interface Treb { group: THREE.Group; arm: THREE.Group; idx: number; prevCd: number; ang: number; throwing: boolean; tp: number; }
+interface Treb { group: THREE.Group; arm: THREE.Group; rock: THREE.Mesh; idx: number; prevCd: number; ang: number; throwing: boolean; tp: number; }
 interface Debris { x: number; y: number; z: number; vx: number; vy: number; vz: number; rx: number; ry: number; rz: number; vr: number; active: boolean; }
 interface Dust { x: number; y: number; z: number; s: number; life: number; max: number; active: boolean; }
 
@@ -416,7 +416,12 @@ export class Renderer {
     this.fireMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.fireMesh.frustumCulled = false; this.scene.add(this.fireMesh);
   }
 
-  private makeTreb(): { group: THREE.Group; arm: THREE.Group } {
+  // Forward (toward the castle) is -Z. A real trebuchet: counterweight on the
+  // SHORT arm (front/target side), the sling + stone on the LONG arm at the
+  // REAR. Loaded, the weight is up at the front and the long arm is down at the
+  // back with the stone near the ground; on release the weight drops and the
+  // long arm whips up and over the top, slinging the stone forward.
+  private makeTreb(): { group: THREE.Group; arm: THREE.Group; rock: THREE.Mesh } {
     const timber = this.stone('#8a6a42'); const dark = this.stone('#6a4f30');
     const g = new THREE.Group();
     // static frame (sled + A-frame) merged into ONE mesh
@@ -429,22 +434,26 @@ export class Renderer {
     }
     g.add(new THREE.Mesh(mergeGeometries(frame, false), timber));
     const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 4), dark); axle.rotation.z = Math.PI / 2; axle.position.y = 6.4; g.add(axle);
-    // arm pivot group (animates): merge the two beams, keep counterweight + rock
+    // arm pivot group (animates): long arm to +Z (rear), short arm to -Z (front)
     const arm = new THREE.Group(); arm.position.set(0, 6.4, 0); g.add(arm);
-    const beams = mergeGeometries([new THREE.BoxGeometry(0.5, 0.5, 11).translate(0, 0, -3.2), new THREE.BoxGeometry(0.5, 0.5, 4).translate(0, 0, 3.2)], false);
+    const beams = mergeGeometries([
+      new THREE.BoxGeometry(0.5, 0.5, 12).translate(0, 0, 3.6),  // long arm, rear
+      new THREE.BoxGeometry(0.5, 0.5, 4).translate(0, 0, -3.0),  // short arm, front
+    ], false);
     arm.add(new THREE.Mesh(beams, timber));
-    const cw = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 2.2), dark); cw.position.set(0, -0.6, 5.4); arm.add(cw);
-    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 0), new THREE.MeshLambertMaterial({ color: '#6f655a', flatShading: true })); rock.position.set(0, -1.2, -8.4); arm.add(rock);
-    arm.rotation.x = -1.0; // cocked
-    return { group: g, arm };
+    const cw = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.6, 2.4), dark); cw.position.set(0, -0.8, -5.2); arm.add(cw); // counterweight (front)
+    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 0), new THREE.MeshLambertMaterial({ color: '#6f655a', flatShading: true }));
+    rock.position.set(0, -1.2, 8.8); arm.add(rock); // stone in the sling at the long-arm tip (rear)
+    arm.rotation.x = 0.75; // cocked: long arm down (stone near the ground, rear), weight up at the front
+    return { group: g, arm, rock };
   }
 
   private buildTrebuchets() {
     for (let i = 0; i < this.sim.n; i++) {
       if (this.sim.typ[i] !== 4) continue;
-      const { group, arm } = this.makeTreb();
+      const { group, arm, rock } = this.makeTreb();
       this.scene.add(group);
-      this.trebs.push({ group, arm, idx: i, prevCd: 0, ang: -1.0, throwing: false, tp: 0 });
+      this.trebs.push({ group, arm, rock, idx: i, prevCd: 0, ang: 0.75, throwing: false, tp: 0 });
     }
   }
 
@@ -553,9 +562,15 @@ export class Renderer {
       const cd = sim.cd[tr.idx];
       if (cd > tr.prevCd + 1) { tr.throwing = true; tr.tp = 0; } // just fired
       tr.prevCd = cd;
-      if (tr.throwing) { tr.tp += dt / 0.35; const e = 1 - Math.pow(1 - Math.min(1, tr.tp), 2); tr.ang = -1.0 + e * 2.4; if (tr.tp >= 1) tr.throwing = false; }
-      else tr.ang += (-1.0 - tr.ang) * Math.min(1, dt * 1.5); // slow re-cock
+      if (tr.throwing) {
+        tr.tp += dt / 0.35; const e = 1 - Math.pow(1 - Math.min(1, tr.tp), 2);
+        tr.ang = 0.75 - e * 2.2;         // whip up and over the top toward the castle
+        if (tr.tp >= 1) tr.throwing = false;
+      } else tr.ang += (0.75 - tr.ang) * Math.min(1, dt * 1.5); // slow re-cock to loaded
       tr.arm.rotation.x = tr.ang;
+      // the stone leaves the sling as the arm passes the top, then a fresh one is
+      // loaded as it re-cocks
+      tr.rock.visible = tr.ang > -0.4;
     }
 
     let ac = 0, bc = 0, fc = 0; const up = new THREE.Vector3(0, 1, 0); const v = new THREE.Vector3();
