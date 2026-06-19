@@ -1,4 +1,5 @@
 import { Sim, Faction, UType, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost, AtkBuff, NO_BUFF } from './sim';
+import './fonts.css';
 import { Renderer } from './render';
 import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward } from './campaign';
 import { WorldMap3D } from './worldmap3d';
@@ -6,6 +7,8 @@ import { computeBuffs, openUpgrades } from './upgrades';
 import * as THREE from 'three';
 
 (window as any).__started = true;
+// warm the bundled fonts so canvas-baked labels (map place names) get Cinzel
+try { (document as any).fonts?.load("600 30px 'Cinzel'"); (document as any).fonts?.load("400 20px 'EB Garamond'"); } catch { /* ignore */ }
 
 const app = document.getElementById('app')!;
 const loading = document.getElementById('loading')!;

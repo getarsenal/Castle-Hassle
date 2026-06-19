@@ -57,7 +57,7 @@ function injectStyles() {
   const s = document.createElement('style'); s.id = 'upg-styles';
   s.textContent = `
   .upgScreen{position:fixed;inset:0;z-index:50;background:linear-gradient(#1a130b,#0d0905);
-    color:#f2e6cf;font-family:Georgia,serif;display:flex;flex-direction:column;overflow:hidden}
+    color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;display:flex;flex-direction:column;overflow:hidden}
   .upgTop{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;border-bottom:1px solid #5a4424}
   .upgTop h2{margin:0;font-size:22px;color:#ffe6a6;letter-spacing:.5px}
   .upgGold{font-size:17px;color:#ffd24a;font-weight:700;white-space:nowrap}
@@ -69,7 +69,7 @@ function injectStyles() {
   .upgNode{flex:1;border:1px solid #5a4626;border-radius:11px;padding:9px 9px 10px;background:#241a0f;position:relative;text-align:center;min-width:0}
   .upgNode .nm{font-size:12.5px;color:#ffe6a6;font-weight:600;line-height:1.15}
   .upgNode .ds{font-size:11px;color:#cbb78f;margin:4px 0 8px;line-height:1.25;min-height:28px}
-  .upgNode .buy{border:none;border-radius:7px;padding:7px 4px;font:600 12px Georgia,serif;width:100%;cursor:pointer}
+  .upgNode .buy{border:none;border-radius:7px;padding:7px 4px;font:600 12px 'EB Garamond',Georgia,serif;width:100%;cursor:pointer}
   .upgNode.bought{border-color:#3f7a3a;background:#1c2c18}
   .upgNode.bought .buy{background:#2f5a2a;color:#bfe6b4}
   .upgNode.canbuy .buy{background:linear-gradient(#caa33a,#9c7a22);color:#241600}
@@ -77,7 +77,7 @@ function injectStyles() {
   .upgNode.locked .buy{background:#3a2e1e;color:#9a896c}
   .upgConn{position:absolute;left:-9px;top:50%;width:9px;height:2px;background:#5a4626}
   .upgDone{position:absolute;top:6px;right:8px;color:#7fd06a;font-size:13px;font-weight:700}
-  .upgClose{border:none;border-radius:9px;padding:9px 18px;background:#3a2e1e;color:#ffe6a6;font:600 15px Georgia,serif;cursor:pointer}
+  .upgClose{border:none;border-radius:9px;padding:9px 18px;background:#3a2e1e;color:#ffe6a6;font:600 15px 'EB Garamond',Georgia,serif;cursor:pointer}
   .upgHint{font-size:11.5px;color:#a08c66;padding:0 18px 12px}`;
   document.head.appendChild(s);
 }

@@ -277,7 +277,7 @@ export class WorldMap3D {
 
   private addLabel(node: CampaignCastle, x: number, y: number, z: number, current: boolean) {
     const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const ctx = cv.getContext('2d')!;
-    ctx.font = '700 30px Georgia, serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = "700 30px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(20,14,6,0.85)'; ctx.strokeText(node.name, 128, 34);
     ctx.fillStyle = current ? '#ffe27a' : '#fff4e2'; ctx.fillText(node.name, 128, 34);
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
@@ -289,7 +289,7 @@ export class WorldMap3D {
   private buildRealmLabels() {
     for (const [name, lat, lon] of REALMS) {
       const cv = document.createElement('canvas'); cv.width = 512; cv.height = 80; const ctx = cv.getContext('2d')!;
-      ctx.font = '700 38px Georgia, serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = "700 38px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = 'rgba(60,44,20,0.72)'; ctx.fillText(name, 256, 44);
       const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.5, depthTest: true, depthWrite: false }));
@@ -352,7 +352,7 @@ export class WorldMap3D {
     s.textContent = `
     .mapCompass{position:absolute;top:84px;right:14px;width:62px;height:62px;border-radius:50%;
       background:radial-gradient(circle at 50% 38%,#f6ecd2,#d8c69a);border:2px solid #6b5126;
-      box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:6;font:700 12px Georgia,serif;color:#4a3514;cursor:pointer}
+      box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:6;font:700 12px 'EB Garamond',Georgia,serif;color:#4a3514;cursor:pointer}
     .mapCompass .rose{position:absolute;inset:0;transform-origin:50% 50%}
     .mapCompass span{position:absolute;left:0;right:0;text-align:center}
     .mapCompass .n{top:3px;color:#a6301f}.mapCompass .s{bottom:3px}.mapCompass .e{top:24px;right:5px;left:auto}.mapCompass .w{top:24px;left:5px;right:auto}
@@ -361,7 +361,7 @@ export class WorldMap3D {
     .mapCompass .needle.s{transform:translate(-50%,0);border-bottom:none;border-top:22px solid #3a4a66}
     .castlePanel{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(88vw,400px);
       background:linear-gradient(#241a10f2,#160f08f2);border:1px solid #7a5e2e;border-radius:16px;
-      padding:20px 20px 18px;color:#f3e6cf;z-index:7;box-shadow:0 6px 22px rgba(0,0,0,.55);display:none;font-family:Georgia,serif;text-align:center}
+      padding:20px 20px 18px;color:#f3e6cf;z-index:7;box-shadow:0 6px 22px rgba(0,0,0,.55);display:none;font-family:'EB Garamond',Georgia,serif;text-align:center}
     .castlePanel.show{display:block;animation:cpIn .18s ease-out}
     @keyframes cpIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
     .castlePanel h3{margin:0 0 4px;font-size:23px;color:#ffe6a6;letter-spacing:.4px;line-height:1.1}
@@ -373,11 +373,11 @@ export class WorldMap3D {
     .castlePanel .stat span{color:#bda981;white-space:nowrap}
     .castlePanel .stat b{color:#ffd98a;font-weight:600;text-align:right}
     .castlePanel .row{display:flex;gap:11px}
-    .castlePanel button{flex:1;border:none;border-radius:10px;padding:12px 10px;font:600 15px Georgia,serif;cursor:pointer;line-height:1.15}
+    .castlePanel button{flex:1;border:none;border-radius:10px;padding:12px 10px;font:600 15px 'EB Garamond',Georgia,serif;cursor:pointer;line-height:1.15}
     .castlePanel .go{background:linear-gradient(#b5402f,#8c2b20);color:#fff}
     .castlePanel .close{background:#3a2e1e;color:#d9c8a8}
     .marchHint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:7;
-      background:#000a;color:#f3e6cf;padding:7px 14px;border-radius:20px;font:600 13px Georgia,serif;display:none}
+      background:#000a;color:#f3e6cf;padding:7px 14px;border-radius:20px;font:600 13px 'EB Garamond',Georgia,serif;display:none}
     .marchHint.show{display:block}`;
     document.head.appendChild(s); this.styleEl = s;
   }
