@@ -273,7 +273,18 @@ function startIntro() {
     // splash always plays), and on the first touch unmute + replay from the top
     // so the player hears it. (The native app can autoplay with audio.)
     let heard = false; const hint = document.getElementById('introHint');
-    vid.muted = true; vid.play().catch(() => { if (card) card.style.display = 'flex'; });
+    const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
+    const playMuted = () => { vid.muted = true; vid.play().catch(() => { if (card) card.style.display = 'flex'; }); };
+    if (isNative) {
+      // Capacitor's WKWebView doesn't require a gesture for media, so the splash
+      // can play with sound straight away; fall back to muted if it's blocked.
+      vid.muted = false;
+      vid.play().then(() => { heard = true; if (hint) hint.style.display = 'none'; }).catch(playMuted);
+    } else {
+      // Browsers block autoplay-with-sound on cold load: start muted so the splash
+      // always plays, and unmute + replay on first touch so the player hears it.
+      playMuted();
+    }
     const hear = () => { if (heard) return; heard = true; if (hint) hint.style.display = 'none'; try { vid.muted = false; vid.currentTime = 0; vid.play(); } catch { /* ignore */ } };
     document.getElementById('intro')?.addEventListener('pointerdown', hear, { once: true });
     setTimeout(() => { if (hint && !heard) hint.style.display = 'none'; }, 2600);
