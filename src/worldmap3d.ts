@@ -78,15 +78,15 @@ export class WorldMap3D {
       for (let gx = 0; gx < GW; gx++) {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx; const land = mask[i];
         let y: number;
-        if (!land) y = -2.6; else { const cd = cdist[i]; y = 0.4 + Math.min(cd * 0.9, 3.2) + this.mountain(lon, lat) + (cd > 2 ? this.hill(lon, lat) : this.hill(lon, lat) * 0.3); }
+        if (!land) y = -4; else { const cd = cdist[i]; y = 2.4 + Math.min(cd * 1.5, 9) + this.mountain(lon, lat) * 1.7 + (cd > 2 ? this.hill(lon, lat) : this.hill(lon, lat) * 0.3); }
         this.heights[i] = y; pos.push(this.wX(lon), y, this.wZ(lat));
         const latT = (bb.n - lat) / (bb.n - bb.s);
         if (!land || y < 0.05) c.setRGB(0.30, 0.44, 0.5);
-        else if (y < 1.4) c.set('#d8c490');
-        else if (y < 9) c.copy(green).lerp(tan, Math.min(1, latT * 1.1));
-        else if (y < 19) c.set('#6f6a48');
-        else if (y < 31) c.set('#8a7c68');
-        else c.set('#efeae0');
+        else if (y < 3.8) c.set('#d8c490');                                  // beach
+        else if (y < 18) c.copy(green).lerp(tan, Math.min(1, latT * 1.1));   // lowland
+        else if (y < 32) c.set('#6f6a48');                                   // upland
+        else if (y < 50) c.set('#8a7c68');                                   // mountain
+        else c.set('#efeae0');                                               // snow
         col.push(c.r, c.g, c.b);
       }
     }
@@ -98,8 +98,8 @@ export class WorldMap3D {
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true })));
 
     // sea
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(2000, 1400).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#3f72a0', transparent: true, opacity: 0.9 }));
-    water.position.y = 0; this.scene.add(water);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1700).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#42759f', transparent: true, opacity: 0.82 }));
+    water.position.y = 0.2; this.scene.add(water);
 
     this.buildTrees(mask);
     this.buildSettlements();
@@ -108,7 +108,7 @@ export class WorldMap3D {
     // frame on the current objective
     const cur = this.nodes[Math.min(this.prog.unlocked, this.nodes.length - 1)];
     this.target.set(this.wX(cur.lon), this.terrainY(cur.lon, cur.lat), this.wZ(cur.lat));
-    this.dist = 150;
+    this.dist = 215;
     this.ready = true;
   }
 
@@ -119,7 +119,7 @@ export class WorldMap3D {
     const treeGeo = mergeGeometries([trunk, fol], false)!;
     const places: number[] = [];
     for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
-      const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 1.6 || y > 13) continue;
+      const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 4 || y > 26) continue;
       const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)), lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       let dens = 0.05; for (const f of FORESTS) if (Math.hypot(lon - f[1], lat - f[0]) < f[2]) dens = 0.5;
       if ((bb.n - lat) / (bb.n - bb.s) > 0.7) dens *= 0.3;

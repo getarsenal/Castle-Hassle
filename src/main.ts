@@ -256,17 +256,18 @@ function startIntro() {
   let advanced = false;
   const go = () => { if (advanced) return; advanced = true; vid?.pause?.(); show('intro', false); show('titleScreen', true); };
   if (vid) {
-    vid.src = './intro.mp4'; vid.style.display = 'block';
+    vid.src = './intro.mp4'; vid.style.display = 'block'; vid.playsInline = true;
     vid.addEventListener('ended', go);
     vid.addEventListener('error', () => { if (card) card.style.display = 'flex'; setTimeout(go, 1800); });
-    // Try with audio; if the browser blocks unmuted autoplay, play muted so the
-    // splash still shows. (Audio works in the native app / after a tap.)
-    vid.muted = false;
-    vid.play().catch(() => { vid.muted = true; vid.play().catch(() => { if (card) card.style.display = 'flex'; }); });
-    // a tap unmutes (gesture) AND/OR skips after the first second
-    let t0 = performance.now();
-    document.getElementById('intro')?.addEventListener('pointerdown', () => { if (vid.muted) vid.muted = false; if (performance.now() - t0 > 900) go(); });
-    setTimeout(go, 6000); // safety so the splash can never hang the boot
+    // Browsers block autoplay-with-sound on cold load, so start muted (so the
+    // splash always plays), and on the first touch unmute + replay from the top
+    // so the player hears it. (The native app can autoplay with audio.)
+    let heard = false; const hint = document.getElementById('introHint');
+    vid.muted = true; vid.play().catch(() => { if (card) card.style.display = 'flex'; });
+    const hear = () => { if (heard) return; heard = true; if (hint) hint.style.display = 'none'; try { vid.muted = false; vid.currentTime = 0; vid.play(); } catch { /* ignore */ } };
+    document.getElementById('intro')?.addEventListener('pointerdown', hear, { once: true });
+    setTimeout(() => { if (hint && !heard) hint.style.display = 'none'; }, 2600);
+    setTimeout(go, 9000); // safety so the splash can never hang the boot
   } else setTimeout(go, 3000);
 }
 
