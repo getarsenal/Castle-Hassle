@@ -62,9 +62,10 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 // ---------------- New game ----------------
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let currentDifficulty = 1;
+let currentStyle: import('./sim').CastleStyle | undefined;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
-  sim = new Sim(currentSeed, { ...comp }, currentDifficulty);
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle);
   renderer = new Renderer(sim, app);
   bindInput();
   selected = -1; showRange = true;
@@ -233,7 +234,7 @@ function openMap() {
 
 function enterCastle(c: CampaignCastle) {
   activeCastle = c;
-  currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8;
+  currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
   budget = Math.round(BUDGET * (1 + c.tier * 0.7));
   // a sensible default army scaled to the budget
   const k = budget / BUDGET;

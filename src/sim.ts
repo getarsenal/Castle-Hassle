@@ -56,6 +56,18 @@ export interface CastleLayout {
   W: number; D: number; gate: { x: number; z: number };
   wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
   buildings: { x: number; z: number; w: number; d: number }[]; citadel: Citadel | null;
+  round: boolean; concentric: boolean;
+}
+// Per-castle architectural style. Drives generateCastle so each real castle in
+// the campaign has a distinguishable shape/silhouette (concentric double walls,
+// round drum towers, wide walled town, lone keep, …) rather than one stamp.
+export interface CastleStyle {
+  scale: number;       // overall footprint multiplier (~0.8..1.4)
+  aspect: number;      // W/D ratio (1 = square, >1 = wide town)
+  concentric: boolean; // second, taller inner curtain wall that must also fall
+  round: boolean;      // round drum towers instead of square ones
+  strongKeep: boolean; // force a substantial inner citadel/keep
+  town: number;        // building density 0..1 (higher = denser bailey)
 }
 
 export const T = 4, WH = 9, SEG = 8;
@@ -65,11 +77,17 @@ export let LAYOUT: CastleLayout = null as any;
 
 function genRng(seed: number) { let s = (seed >>> 0) || 1; return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-export function generateCastle(seed: number) {
+export function generateCastle(seed: number, style?: CastleStyle) {
   CASTLE = []; TOWERS.length = 0;
   const segs = CASTLE;
   const R = genRng(Math.imul(seed >>> 0, 2654435761) >>> 0);
   const rr = (a: number, b: number) => a + R() * (b - a);
+  // Without an explicit campaign style (e.g. the menu backdrop), roll a random
+  // one so the placeholder still varies seed-to-seed.
+  const st: CastleStyle = style || {
+    scale: rr(0.85, 1.25), aspect: rr(0.9, 1.5), concentric: R() < 0.4,
+    round: R() < 0.5, strongKeep: R() < 0.6, town: rr(0.45, 0.75),
+  };
   const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind = 'wall', h = WH) => {
     if (x1 - x0 < 0.3 || z1 - z0 < 0.3) return;
     const hp = kind === 'gate' ? 1100 : kind === 'building' ? 1e9 : 1700;
@@ -81,11 +99,11 @@ export function generateCastle(seed: number) {
     TOWERS.push({ x, z, big }); if (list) list.push({ x, z, big });
   };
   // a four-walled compound with a south gate; returns its wall-lines + towers
-  const compound = (x0: number, x1: number, z0: number, z1: number, gateX: number, gh: number, gateOnSouth: boolean, tw?: { x: number; z: number; big: boolean }[]) => {
+  const compound = (x0: number, x1: number, z0: number, z1: number, gateX: number, gh: number, gateOnSouth: boolean, tw?: { x: number; z: number; big: boolean }[], wh = WH) => {
     const lines: WallLine[] = [];
-    for (let x = x0; x < x1 - 0.1; x += SEG) { const e = Math.min(x + SEG, x1), c = (x + e) / 2; wall(x, e, z1 - T, z1, gateOnSouth && Math.abs(c - gateX) < gh ? 'gate' : 'wall'); } // south
-    for (let x = x0; x < x1 - 0.1; x += SEG) wall(x, Math.min(x + SEG, x1), z0, z0 + T, 'wall'); // north
-    for (let z = z0; z < z1 - 0.1; z += SEG) { const e = Math.min(z + SEG, z1); wall(x0, x0 + T, z, e, 'wall'); wall(x1 - T, x1, z, e, 'wall'); } // w/e
+    for (let x = x0; x < x1 - 0.1; x += SEG) { const e = Math.min(x + SEG, x1), c = (x + e) / 2; wall(x, e, z1 - T, z1, gateOnSouth && Math.abs(c - gateX) < gh ? 'gate' : 'wall', wh); } // south
+    for (let x = x0; x < x1 - 0.1; x += SEG) wall(x, Math.min(x + SEG, x1), z0, z0 + T, 'wall', wh); // north
+    for (let z = z0; z < z1 - 0.1; z += SEG) { const e = Math.min(z + SEG, z1); wall(x0, x0 + T, z, e, 'wall', wh); wall(x1 - T, x1, z, e, 'wall', wh); } // w/e
     lines.push({ x0, z0: z1 - T / 2, x1, z1: z1 - T / 2, horiz: true, outer: 1, gapC: gateOnSouth ? gateX : 1e9, gapH: gh });
     lines.push({ x0, z0: z0 + T / 2, x1, z1: z0 + T / 2, horiz: true, outer: -1, gapC: 1e9, gapH: 0 });
     lines.push({ x0: x0 + T / 2, z0, x1: x0 + T / 2, z1, horiz: false, outer: -1, gapC: 1e9, gapH: 0 });
@@ -94,32 +112,49 @@ export function generateCastle(seed: number) {
     return lines;
   };
 
-  // ----- outer compound (bigger & varied) -----
-  const W = Math.round(rr(52, 72) / 2) * 2, D = Math.round(rr(48, 62) / 2) * 2;
+  // ----- outer compound (size & shape from the style) -----
+  const W = Math.max(40, Math.min(90, Math.round(rr(54, 64) * st.scale * Math.sqrt(st.aspect) / 2) * 2));
+  const D = Math.max(36, Math.min(78, Math.round(rr(48, 56) * st.scale / Math.sqrt(st.aspect) / 2) * 2));
   const GH = 9, gateX = Math.round(rr(-W * 0.22, W * 0.22) / SEG) * SEG;
-  const wallLines = compound(-W, W, -D, D, gateX, GH, true);
+  // Concentric castles get a lower outer curtain (the inner ring towers over it).
+  const outerWH = st.concentric ? WH - 2 : WH;
+  const wallLines = compound(-W, W, -D, D, gateX, GH, true, undefined, outerWH);
   // mid-wall towers
-  for (let x = -W + 28; x < W - 18; x += 28) { tower(x, -D, false); if (Math.abs(x - gateX) > GH + 7) tower(x, D, false); }
-  for (let z = -D + 28; z < D - 18; z += 28) { tower(-W, z, false); tower(W, z, false); }
+  const tSpace = st.round ? 26 : 28;
+  for (let x = -W + tSpace; x < W - 18; x += tSpace) { tower(x, -D, false); if (Math.abs(x - gateX) > GH + 7) tower(x, D, false); }
+  for (let z = -D + tSpace; z < D - 18; z += tSpace) { tower(-W, z, false); tower(W, z, false); }
   tower(gateX - GH - 3, D, true); tower(gateX + GH + 3, D, true); // gatehouse
 
-  // ----- citadel (inner keep complex) on larger castles -----
+  // ----- inner stronghold -----
   let citadel: Citadel | null = null;
-  if (W * D > 2900 || R() < 0.55) {
+  const cTowers: { x: number; z: number; big: boolean }[] = [];
+  if (st.concentric) {
+    // A full, taller inner ward concentric with the outer curtain — the attacker
+    // must breach two rings (Krak des Chevaliers, Dover, Caerphilly, Harlech).
+    const cw = Math.round(W * 0.52 / SEG) * SEG, cd = Math.round(D * 0.52 / SEG) * SEG;
+    const ccx = 0, ccz = -Math.round(D * 0.1);
+    const igX = Math.round(rr(-cw * 0.35, cw * 0.35) / SEG) * SEG; // inner gate offset from outer (bent entry)
+    const cLines = compound(ccx - cw, ccx + cw, ccz - cd, ccz + cd, ccx + igX, 6, true, cTowers, WH + 4);
+    tower(ccx, ccz, true, cTowers); // corner drums on the inner ward
+    segs.push({ x0: ccx - 8, x1: ccx + 8, z0: ccz - 7, z1: ccz + 7, h: 24, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+    citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx + igX, z: ccz + cd }, wallLines: cLines };
+  } else if (st.strongKeep || W * D > 3200 || R() < 0.45) {
+    // an offset inner bailey + keep
     const cw = 19, cd = 15, ccx = Math.round(rr(-W * 0.18, W * 0.18)), ccz = -Math.round(D * 0.34);
-    const cTowers: { x: number; z: number; big: boolean }[] = [];
     const cLines = compound(ccx - cw, ccx + cw, ccz - cd, ccz + cd, ccx, 6, true, cTowers);
-    segs.push({ x0: ccx - 7, x1: ccx + 7, z0: ccz - 6, z1: ccz + 6, h: 21, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+    segs.push({ x0: ccx - 7, x1: ccx + 7, z0: ccz - 6, z1: ccz + 6, h: st.strongKeep ? 24 : 21, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
     citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx, z: ccz + cd }, wallLines: cLines };
   } else {
-    segs.push({ x0: -8, x1: 8, z0: -8, z1: 8, h: 18, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+    // a lone great keep dominating an open bailey (early/simple castles)
+    segs.push({ x0: -9, x1: 9, z0: -9, z1: 9, h: 20, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
   }
 
   // ----- town buildings in the bailey (avoid walls, the gate avenue & citadel) -----
+  const keepProb = 1 - st.town; // chance a slot is left empty
   const buildings: { x: number; z: number; w: number; d: number }[] = [];
   for (let bx = -W + 14; bx < W - 14; bx += rr(13, 18)) {
     for (let bz = -D + 14; bz < D - 14; bz += rr(12, 17)) {
-      if (R() < 0.34) continue;
+      if (R() < keepProb) continue;
       const bw = rr(3.5, 6.5), bd = rr(3.5, 5.5), x = bx + rr(0, 4), z = bz + rr(0, 4);
       if (Math.abs(x - gateX) < 9 && z > -D * 0.1) continue;                 // keep the gate avenue clear
       if (citadel && x > citadel.x0 - 7 && x < citadel.x1 + 7 && z > citadel.z0 - 7 && z < citadel.z1 + 7) continue;
@@ -128,7 +163,7 @@ export function generateCastle(seed: number) {
     }
   }
 
-  LAYOUT = { W, D, gate: { x: gateX, z: D }, wallLines, towers: [...TOWERS], buildings, citadel };
+  LAYOUT = { W, D, gate: { x: gateX, z: D }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric };
   rebuildBlocked();
 }
 
@@ -304,7 +339,7 @@ export class Sim {
   attackerAliveStart = 0; defenderAliveStart = 0;
 
   private difficulty: number;
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; generateCastle(seed); this.setup(); }
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; generateCastle(seed, style); this.setup(); }
 
   private rnd() { // mulberry32
     this.seed |= 0; this.seed = (this.seed + 0x6D2B79F5) | 0;

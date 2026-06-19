@@ -235,14 +235,24 @@ export class Renderer {
         box.position.set(cx, 0, cz); this.scene.add(box);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
-        const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
-        for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const)
-          parts.push(this.boxG(ew, 1.3, ed, ex, b.h + 0.6, ez));
+        const round = LAYOUT.round;
+        const parts: THREE.BufferGeometry[] = [];
+        if (round) {
+          // drum tower — a stone cylinder with a crenellated parapet ring
+          const r = Math.max(w, d) / 2;
+          parts.push(new THREE.CylinderGeometry(r, r * 1.04, b.h, 14).translate(0, b.h / 2, 0));
+          const ring = new THREE.CylinderGeometry(r + 0.5, r + 0.5, 1.4, 14, 1, true).translate(0, b.h + 0.6, 0);
+          parts.push(ring);
+        } else {
+          parts.push(this.boxG(w, b.h, d, 0, b.h / 2, 0));
+          for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const)
+            parts.push(this.boxG(ew, 1.3, ed, ex, b.h + 0.6, ez));
+        }
         const mat = this.stone('#dfcca2'); mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); this.scene.add(box);
         // roof + pole + flag stay separate (different materials) and hide on crumble
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.82, 6.5, 12), roofMat);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * (round ? 0.74 : 0.82), round ? 7.5 : 6.5, round ? 14 : 12), roofMat);
         roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.7, cz); this.scene.add(roof); extras.push(roof);
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole); extras.push(pole);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide }));
