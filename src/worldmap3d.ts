@@ -31,7 +31,7 @@ export class WorldMap3D {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.08;
     this.scene.background = new THREE.Color('#cfe1ef');
     this.scene.fog = new THREE.Fog('#cfe1ef', 850, 2200);   // gentle haze far off only
-    this.camera = new THREE.PerspectiveCamera(44, 1, 1, 3000);
+    this.camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
     this.scene.add(new THREE.HemisphereLight('#eaf4ff', '#6a7340', 1.0));
     const sun = new THREE.DirectionalLight('#fff0d2', 1.7); sun.position.set(-150, 240, 120); this.scene.add(sun);
     this.scene.add(new THREE.AmbientLight('#fff4e0', 0.22));
@@ -105,10 +105,17 @@ export class WorldMap3D {
     this.buildSettlements();
     this.buildRoute();
 
-    // frame on the current objective
+    // Frame the whole region the objective sits in (not just the coastal castle),
+    // so land fills the tall portrait view instead of the surrounding sea.
     const cur = this.nodes[Math.min(this.prog.unlocked, this.nodes.length - 1)];
-    this.target.set(this.wX(cur.lon), this.terrainY(cur.lon, cur.lat), this.wZ(cur.lat));
-    this.dist = 300;
+    const region = this.nodes.filter(n => n.region === cur.region);
+    const mlon = region.reduce((s, n) => s + n.lon, 0) / region.length;
+    const mlat = region.reduce((s, n) => s + n.lat, 0) / region.length;
+    let ext = 0; for (const n of region) ext = Math.max(ext, Math.hypot(this.wX(n.lon) - this.wX(mlon), this.wZ(n.lat) - this.wZ(mlat)));
+    // bias the look-point a touch toward the actual objective
+    this.target.set((this.wX(mlon) * 2 + this.wX(cur.lon)) / 3, this.terrainY(mlon, mlat), (this.wZ(mlat) * 2 + this.wZ(cur.lon)) / 3);
+    this.target.z = (this.wZ(mlat) * 2 + this.wZ(cur.lat)) / 3;
+    this.dist = Math.max(220, Math.min(560, ext * 2.6 + 90));
     this.ready = true;
   }
 
