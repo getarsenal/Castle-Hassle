@@ -19,7 +19,7 @@ export class WorldMap3D {
   private raf = 0; private pulse = 0;
   private bb!: BB; private GW = 0; private GH = 0; private heights = new Float32Array(0);
   private readonly K = 11; private lonMid = 0; private myMid = 0;
-  private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private readonly pitch = 42 * Math.PI / 180;
+  private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private readonly pitch = 50 * Math.PI / 180;
   private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh }[] = [];
   private labels: THREE.Sprite[] = [];
   private dragging = false; private lastX = 0; private lastY = 0; private moved = 0; private downX = 0; private downY = 0; private downT = 0; private pinchD = 0;
@@ -29,8 +29,8 @@ export class WorldMap3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.08;
-    this.scene.background = new THREE.Color('#bcd6ec');
-    this.scene.fog = new THREE.Fog('#bcd6ec', 380, 1100);
+    this.scene.background = new THREE.Color('#cfe1ef');
+    this.scene.fog = new THREE.Fog('#cfe1ef', 850, 2200);   // gentle haze far off only
     this.camera = new THREE.PerspectiveCamera(44, 1, 1, 3000);
     this.scene.add(new THREE.HemisphereLight('#eaf4ff', '#6a7340', 1.0));
     const sun = new THREE.DirectionalLight('#fff0d2', 1.7); sun.position.set(-150, 240, 120); this.scene.add(sun);
@@ -61,7 +61,7 @@ export class WorldMap3D {
     for (let s = 0; s < r.length - 1; s++) { const a = r[s], b = r[s + 1]; const dx = b[1] - a[1], dy = b[0] - a[0]; const t = Math.max(0, Math.min(1, ((lon - a[1]) * dx + (lat - a[0]) * dy) / (dx * dx + dy * dy || 1))); const px = a[1] + dx * t, py = a[0] + dy * t; const d = Math.hypot(lon - px, lat - py); if (d < m) m = d; }
     return m;
   }
-  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const e = this.distRidge(lon, lat, r) / 0.5; h += 26 * Math.exp(-(e * e)); } return Math.min(h, 34); }
+  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const e = this.distRidge(lon, lat, r) / 0.8; h += 15 * Math.exp(-(e * e)); } return Math.min(h, 22); }
   private hill(lon: number, lat: number) { return (hash(lon * 1.7, lat * 1.7) * 0.6 + hash(lon * 0.7, lat * 0.7) * 0.4) * 4; }
 
   private build(d: { bb: BB; grid: { w: number; h: number; mask: string; cdist: string } }) {
@@ -78,14 +78,14 @@ export class WorldMap3D {
       for (let gx = 0; gx < GW; gx++) {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx; const land = mask[i];
         let y: number;
-        if (!land) y = -4; else { const cd = cdist[i]; y = 2.4 + Math.min(cd * 1.5, 9) + this.mountain(lon, lat) * 1.7 + (cd > 2 ? this.hill(lon, lat) : this.hill(lon, lat) * 0.3); }
+        if (!land) y = -4; else { const cd = cdist[i]; y = 3 + Math.min(cd * 1.4, 8) + this.mountain(lon, lat) + (cd > 2 ? this.hill(lon, lat) : this.hill(lon, lat) * 0.3); }
         this.heights[i] = y; pos.push(this.wX(lon), y, this.wZ(lat));
         const latT = (bb.n - lat) / (bb.n - bb.s);
-        if (!land || y < 0.05) c.setRGB(0.30, 0.44, 0.5);
-        else if (y < 3.8) c.set('#d8c490');                                  // beach
-        else if (y < 18) c.copy(green).lerp(tan, Math.min(1, latT * 1.1));   // lowland
-        else if (y < 32) c.set('#6f6a48');                                   // upland
-        else if (y < 50) c.set('#8a7c68');                                   // mountain
+        if (!land || y < 0.05) c.setRGB(0.28, 0.42, 0.5);
+        else if (y < 4.4) c.set('#d8c490');                                  // beach
+        else if (y < 15) c.copy(green).lerp(tan, Math.min(1, latT * 1.1));   // lowland
+        else if (y < 24) c.set('#71794a');                                   // upland
+        else if (y < 31) c.set('#8a7c68');                                   // mountain
         else c.set('#efeae0');                                               // snow
         col.push(c.r, c.g, c.b);
       }
@@ -98,8 +98,8 @@ export class WorldMap3D {
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true })));
 
     // sea
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1700).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#42759f', transparent: true, opacity: 0.82 }));
-    water.position.y = 0.2; this.scene.add(water);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(2600, 1900).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#3d6f9a' }));
+    water.position.y = 0.5; this.scene.add(water);
 
     this.buildTrees(mask);
     this.buildSettlements();
@@ -108,7 +108,7 @@ export class WorldMap3D {
     // frame on the current objective
     const cur = this.nodes[Math.min(this.prog.unlocked, this.nodes.length - 1)];
     this.target.set(this.wX(cur.lon), this.terrainY(cur.lon, cur.lat), this.wZ(cur.lat));
-    this.dist = 215;
+    this.dist = 300;
     this.ready = true;
   }
 
@@ -119,7 +119,7 @@ export class WorldMap3D {
     const treeGeo = mergeGeometries([trunk, fol], false)!;
     const places: number[] = [];
     for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
-      const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 4 || y > 26) continue;
+      const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 4.4 || y > 21) continue;
       const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)), lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       let dens = 0.05; for (const f of FORESTS) if (Math.hypot(lon - f[1], lat - f[0]) < f[2]) dens = 0.5;
       if ((bb.n - lat) / (bb.n - bb.s) > 0.7) dens *= 0.3;
