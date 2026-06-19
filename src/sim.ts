@@ -279,7 +279,7 @@ export class Sim {
   // overflow soldiers have no backing storage: typed-array writes are silently
   // dropped and reads return undefined, which crashed the renderer
   // (this.meshes[undefined].setMatrixAt). Keep generous headroom.
-  MAX = 3800;
+  MAX = 4800;
   px = new Float32Array(this.MAX); pz = new Float32Array(this.MAX); py = new Float32Array(this.MAX);
   vx = new Float32Array(this.MAX); vz = new Float32Array(this.MAX);
   hp = new Float32Array(this.MAX); cd = new Float32Array(this.MAX);
@@ -303,7 +303,8 @@ export class Sim {
   private comp: ArmyComp;
   attackerAliveStart = 0; defenderAliveStart = 0;
 
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP) { this.seed = seed >>> 0; this.comp = comp; generateCastle(seed); this.setup(); }
+  private difficulty: number;
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; generateCastle(seed); this.setup(); }
 
   private rnd() { // mulberry32
     this.seed |= 0; this.seed = (this.seed + 0x6D2B79F5) | 0;
@@ -417,7 +418,7 @@ export class Sim {
       }
       return [x, z, 0];
     };
-    const garr = Math.max(280, Math.min(560, Math.round(W * D / 14)));
+    const garr = Math.round(Math.max(280, Math.min(560, Math.round(W * D / 14))) * this.difficulty);
     this.addUnit(Faction.Defender, UType.Heavy, garr, openBailey, { hold: true, name: 'Garrison' });
     this.addUnit(Faction.Defender, UType.Light, Math.round(garr * 0.6), openBailey, { hold: true, name: 'Reserves' });
     // citadel garrison + its own wall archers (the last redoubt)
@@ -427,7 +428,7 @@ export class Sim {
         for (let t = 0; t < 40; t++) { x = R(cit.x0 + T + 1, cit.x1 - T - 1); z = R(cit.z0 + T + 1, cit.z1 - T - 1); if (!blockedAt(x, z)) return [x, z, 0]; }
         return [x, z, 0];
       };
-      this.addUnit(Faction.Defender, UType.Heavy, 220, inCit, { hold: true, name: 'Citadel Guard' });
+      this.addUnit(Faction.Defender, UType.Heavy, Math.round(220 * this.difficulty), inCit, { hold: true, name: 'Citadel Guard' });
       const cPts = archersOnLines(cit.wallLines, 2.4, 4);
       this.addUnit(Faction.Defender, UType.Archer, cPts.length, (i) => cPts[i], { hold: true, name: 'Citadel Archers' });
     }

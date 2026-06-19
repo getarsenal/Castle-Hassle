@@ -1,5 +1,6 @@
 import { Sim, Faction, UType, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost } from './sim';
 import { Renderer } from './render';
+import { generateCastles, loadProgress, saveProgress, CampaignMap, CampaignCastle, Progress } from './campaign';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -27,7 +28,8 @@ const ROSTER = [
   { key: 'cavalry', icon: '🐎', name: 'Cavalry', dsc: 'Shock charge, weak in a grind', step: 20 },
   { key: 'siege', icon: '🪨', name: 'Trebuchets', dsc: 'Smash walls, few boulders', step: 1 },
 ] as const;
-($('ptsMax')).textContent = String(BUDGET);
+let budget = BUDGET;       // per-battle muster budget (grows across the campaign)
+($('ptsMax')).textContent = String(budget);
 
 function buildMuster() {
   const rows = $('rosterRows'); rows.innerHTML = '';
@@ -39,7 +41,7 @@ function buildMuster() {
     row.querySelector('.minus')!.addEventListener('click', () => { (comp as any)[r.key] = Math.max(0, (comp as any)[r.key] - r.step); ct.textContent = String((comp as any)[r.key]); updateBudget(); });
     row.querySelector('.plus')!.addEventListener('click', () => {
       const next = { ...comp, [r.key]: (comp as any)[r.key] + r.step };
-      if (compCost(next) <= BUDGET) { (comp as any)[r.key] += r.step; ct.textContent = String((comp as any)[r.key]); updateBudget(); }
+      if (compCost(next) <= budget) { (comp as any)[r.key] += r.step; ct.textContent = String((comp as any)[r.key]); updateBudget(); }
     });
     rows.appendChild(row);
   }
@@ -48,17 +50,20 @@ function buildMuster() {
 function syncMusterCounts() { for (const el of Array.from(document.querySelectorAll('#rosterRows .ct')) as HTMLElement[]) el.textContent = String((comp as any)[el.dataset.k!]); }
 function updateBudget() {
   const used = Math.round(compCost(comp));
-  $('ptsUsed').textContent = String(used);
-  const bar = $('budgetBar'); (bar.firstElementChild as HTMLElement).style.width = `${Math.min(100, used / BUDGET * 100)}%`;
-  bar.classList.toggle('over', used > BUDGET);
-  ($('musterBtn') as HTMLButtonElement).disabled = used > BUDGET || (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
+  $('ptsUsed').textContent = String(used); ($('ptsMax')).textContent = String(budget);
+  const bar = $('budgetBar'); (bar.firstElementChild as HTMLElement).style.width = `${Math.min(100, used / budget * 100)}%`;
+  bar.classList.toggle('over', used > budget);
+  ($('musterBtn') as HTMLButtonElement).disabled = used > budget || (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
 }
 $('musterBtn').addEventListener('click', () => { $('muster').classList.remove('show'); newGame(); });
+document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
 // ---------------- New game ----------------
+let currentSeed = (Date.now() & 0xffff) >>> 0;
+let currentDifficulty = 1;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
-  sim = new Sim(Date.now() & 0xffff, { ...comp });
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty);
   renderer = new Renderer(sim, app);
   bindInput();
   selected = -1; showRange = true;
@@ -124,13 +129,19 @@ function updateTools() {
 }
 
 startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); });
-restartBtn.addEventListener('click', () => { banner.classList.remove('show'); buildMuster(); $('muster').classList.add('show'); });
+restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if (activeCastle) openMap(); else { buildMuster(); $('muster').classList.add('show'); } });
 
 function showEnd() {
   const win = sim.winner === Faction.Attacker;
   bannerTitle.textContent = win ? 'CASTLE TAKEN' : 'ASSAULT BROKEN';
   bannerTitle.style.color = win ? '#5fd16a' : '#e8513a';
   bannerText.textContent = win ? (sim.countAlive(Faction.Defender) < 30 ? 'A clean sweep — the castle is yours.' : 'You hold the walls; survivors slipped away.') : 'Your army broke before the keep fell.';
+  if (win && activeCastle) {
+    if (!progress.completed.includes(activeCastle.id)) progress.completed.push(activeCastle.id);
+    progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
+    saveProgress(progress);
+  }
+  restartBtn.textContent = activeCastle ? (win ? 'March On ▸' : 'Back to the Map') : 'Fight Again';
   banner.classList.add('show');
 }
 
@@ -202,10 +213,58 @@ function handleTap(cx: number, cy: number) {
   }
 }
 
-// ---------------- Loop ----------------
-buildMuster(); $('muster').classList.add('show');
-newGame(); // backdrop sim while mustering
+// ---------------- Campaign screens ----------------
+const castles = generateCastles();
+let progress: Progress = loadProgress();
+let activeCastle: CampaignCastle | null = null;
+let map: CampaignMap | null = null;
+
+function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
+
+function openMap() {
+  activeCastle = null;
+  show('intro', false); show('title', false); show('muster', false); show('map', true);
+  banner.classList.remove('show');
+  if (map) map.destroy();
+  const canvas = $('mapCanvas') as HTMLCanvasElement; // re-fetch (destroy swaps the node)
+  map = new CampaignMap(canvas, castles, progress, enterCastle);
+}
+
+function enterCastle(c: CampaignCastle) {
+  activeCastle = c;
+  currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8;
+  budget = Math.round(BUDGET * (1 + c.tier * 0.7));
+  // a sensible default army scaled to the budget
+  const k = budget / BUDGET;
+  Object.assign(comp, { heavy: Math.round(600 * k), light: Math.round(480 * k), archer: Math.round(460 * k), cavalry: Math.round(220 * k), siege: Math.max(6, Math.round(8 * k)) });
+  while (compCost(comp) > budget && comp.light > 0) comp.light -= 10;
+  show('map', false);
+  ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `${c.name} · ${c.region}`);
+  buildMuster(); $('muster').classList.add('show');
+  newGame(); // backdrop of the actual castle while mustering
+}
+
+// Title → start
+$('startGameBtn')?.addEventListener('click', () => openMap());
+// Intro: after the splash (video or fallback), go to title
+function startIntro() {
+  show('intro', true);
+  const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
+  let advanced = false;
+  const go = () => { if (advanced) return; advanced = true; show('intro', false); show('title', true); };
+  if (vid && vid.getAttribute('src')) {           // real studio video present → play it
+    vid.style.display = 'block'; vid.muted = false; vid.play?.().catch(() => {});
+    vid.addEventListener('ended', go); setTimeout(go, 6000); // safety
+  } else setTimeout(go, 3000);                      // styled placeholder splash (~3s)
+  document.getElementById('intro')?.addEventListener('click', go); // tap to skip
+}
+
+(window as any).__campaignWin = () => {}; // (placeholder hook)
+
+buildMuster();
+newGame(); // a quiet backdrop sim behind the menus
 loading.remove();
+startIntro();
 (window as any).__running = true;
 
 // perf readout (fps / ms / unit count) for on-device testing; tap to hide
