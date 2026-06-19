@@ -29,7 +29,8 @@ export class WorldMap3D {
   private march?: { t: number; dur: number; last: number; path: { p: THREE.Vector3; water: boolean }[]; army: THREE.Group; boat: THREE.Group; done: () => void; skip: boolean };
   private maskRef!: Uint8Array;
   private compassEl?: HTMLElement; private panelEl?: HTMLElement; private styleEl?: HTMLElement;
-  private dragging = false; private lastX = 0; private lastY = 0; private moved = 0; private downX = 0; private downY = 0; private downT = 0; private pinchD = 0;
+  private dragging = false; private lastX = 0; private lastY = 0; private moved = 0; private downX = 0; private downY = 0; private downT = 0; private pinchD = 0; private pinchA?: number; private azReset = false;
+  private compassRose?: HTMLElement; private _tp = new THREE.Vector3(); private _np = new THREE.Vector3();
   private ready = false;
 
   constructor(private canvas: HTMLCanvasElement, private nodes: CampaignCastle[], private prog: Progress, private onSelect: (c: CampaignCastle) => void) {
@@ -73,23 +74,23 @@ export class WorldMap3D {
     for (let s = 0; s < r.length - 1; s++) { const a = r[s], b = r[s + 1]; const dx = b[1] - a[1], dy = b[0] - a[0]; const t = Math.max(0, Math.min(1, ((lon - a[1]) * dx + (lat - a[0]) * dy) / (dx * dx + dy * dy || 1))); const px = a[1] + dx * t, py = a[0] + dy * t; const d = Math.hypot(lon - px, lat - py); if (d < m) m = d; }
     return m;
   }
-  // Relief from real ridge lines: a broad, gentle massif along each range (kept
-  // well below the spiky wall it used to be) so mountains read as mountains
-  // without dwarfing the rest of the map.
-  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const d = this.distRidge(lon, lat, r.ridge); h += r.h * 0.55 * Math.exp(-Math.pow(d / 0.58, 2)) + r.h * 0.26 * Math.exp(-Math.pow(d / 1.8, 2)); } return Math.min(h, 21); }
-  private hill(lon: number, lat: number) { return (hash(lon * 1.7, lat * 1.7) * 0.6 + hash(lon * 0.7, lat * 0.7) * 0.4) * 1.9; }
+  // Relief from real ridge lines — deliberately gentle so the map reads flat and
+  // map-like, with only the great ranges standing proud.
+  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const d = this.distRidge(lon, lat, r.ridge); h += r.h * 0.42 * Math.exp(-Math.pow(d / 0.62, 2)) + r.h * 0.2 * Math.exp(-Math.pow(d / 2.0, 2)); } return Math.min(h, 15); }
+  private hill(lon: number, lat: number) { return (hash(lon * 1.7, lat * 1.7) * 0.6 + hash(lon * 0.7, lat * 0.7) * 0.4) * 1.2; }
 
-  // Box-blur the heightmap a few times to soften both the mountain peaks and the
-  // coastal step. Land never dips below the waterline, sea never rises above it.
+  // Box-blur the heightmap to soften peaks and especially coasts. We only clamp
+  // land-above-water / sea-below-water on the FINAL pass, so the blur is free to
+  // pull the coastline into a gentle ramp instead of re-stepping every iteration.
   private smoothHeights(h: Float32Array, mask: Uint8Array, iters: number) {
     const { GW, GH } = this; let cur = h;
     for (let it = 0; it < iters; it++) {
-      const out = new Float32Array(GW * GH);
+      const last = it === iters - 1; const out = new Float32Array(GW * GH);
       for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
         let s = 0, n = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x >= GW || y >= GH) continue; s += cur[y * GW + x]; n++; }
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x >= GW || y >= GH) continue; const wt = (dx === 0 && dy === 0) ? 2 : 1; s += cur[y * GW + x] * wt; n += wt; }
         const i = gy * GW + gx; let v = s / n;
-        if (mask[i]) v = Math.max(v, 0.9); else v = Math.min(v, -0.35);
+        if (last) { if (mask[i]) v = Math.max(v, 0.9); else v = Math.min(v, -0.4); }
         out[i] = v;
       }
       cur = out;
@@ -112,11 +113,11 @@ export class WorldMap3D {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx;
         if (!mask[i]) { raw[i] = -1.7; continue; }
         const cd = cdist[i], m = this.mountain(lon, lat);
-        raw[i] = 1.4 + Math.min(cd * 1.5, 7) + m + this.hill(lon, lat) * (0.3 + Math.min(1, m * 0.07));
+        raw[i] = 1.0 + Math.min(cd * 1.0, 5) + m + this.hill(lon, lat) * (0.25 + Math.min(1, m * 0.06));
       }
     }
-    // 2) smooth (softer mountains + shores)
-    this.heights = this.smoothHeights(raw, mask, 2);
+    // 2) smooth (softer mountains + much gentler shores)
+    this.heights = this.smoothHeights(raw, mask, 4);
     // 3) geometry
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
     const green = new THREE.Color('#6fa148'), tan = new THREE.Color('#ccb06a');
@@ -127,10 +128,10 @@ export class WorldMap3D {
         pos.push(this.wX(lon), y, this.wZ(lat));
         const latT = (bb.n - lat) / (bb.n - bb.s);
         if (!land || y < 0.05) c.setRGB(0.30, 0.45, 0.55);
-        else if (y < 3.4) c.set('#ddc794');                                  // beach / coastal flats
-        else if (y < 12) c.copy(green).lerp(tan, Math.min(1, latT * 1.05));  // lowland farmland
-        else if (y < 18) c.set('#83864c');                                   // upland
-        else if (y < 24) c.set('#8e8068');                                   // bare mountain rock
+        else if (y < 2.6) c.set('#ddc794');                                  // beach / coastal flats
+        else if (y < 9.5) c.copy(green).lerp(tan, Math.min(1, latT * 1.05)); // lowland farmland
+        else if (y < 14) c.set('#83864c');                                   // upland
+        else if (y < 19) c.set('#8e8068');                                   // bare mountain rock
         else c.set('#efeae0');                                               // snow
         col.push(c.r, c.g, c.b);
       }
@@ -207,7 +208,7 @@ export class WorldMap3D {
     };
     for (let j = 0; j < WZ; j++) for (let i = 0; i < WX; i++) {
       const lon = bb.w + (bb.e - bb.w) * (i / (WX - 1)), lat = bb.s + (bb.n - bb.s) * (j / (WZ - 1));
-      pos.push(this.wX(lon), 0.5, this.wZ(lat));
+      pos.push(this.wX(lon), 0.3, this.wZ(lat));
       c.copy(deep).lerp(shallow, Math.min(1, landNear(lon, lat) * 1.15)); col.push(c.r, c.g, c.b);
     }
     for (let j = 0; j < WZ - 1; j++) for (let i = 0; i < WX - 1; i++) { const a = j * WX + i, b = a + 1, d = a + WX, e = d + 1; idx.push(a, b, d, b, e, d); }
@@ -312,14 +313,24 @@ export class WorldMap3D {
       this.clouds.push({ mesh: sp, speed: 0.06 + Math.random() * 0.08 });
     }
   }
-  // small V-flocks of birds drifting across
+  // small V-flocks of gull silhouettes, each a pair of swept wings that flap;
+  // kept small and high so they read as distant birds, not objects on the ground
+  private oneBird(mat: THREE.Material) {
+    const b = new THREE.Group();
+    const wing = new THREE.PlaneGeometry(1.4, 0.34).translate(0.7, 0, 0); // pivots at the body
+    const lw = new THREE.Mesh(wing, mat), rw = new THREE.Mesh(wing, mat);
+    lw.rotation.y = -0.5; rw.rotation.y = Math.PI + 0.5; // swept back into a chevron
+    b.add(lw); b.add(rw); (b as any).lw = lw; (b as any).rw = rw;
+    return b;
+  }
   private buildBirds() {
-    const wingGeo = new THREE.PlaneGeometry(1.6, 0.5); const mat = new THREE.MeshBasicMaterial({ color: '#2a2a30', side: THREE.DoubleSide });
-    for (let f = 0; f < 6; f++) {
+    const mat = new THREE.MeshBasicMaterial({ color: '#2c2c33', side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
+    for (let f = 0; f < 5; f++) {
       const grp = new THREE.Group();
-      for (let b = 0; b < 5; b++) { const w = new THREE.Mesh(wingGeo, mat); const col = b % 2 ? 1 : -1, row = Math.floor(b / 2); w.position.set(col * row * 2.0, 0, row * 1.6); grp.add(w); }
-      grp.position.set(this.wX(this.bb.w) + Math.random() * (this.wX(this.bb.e) - this.wX(this.bb.w)), 55 + Math.random() * 30, this.wZ(this.bb.n) + Math.random() * (this.wZ(this.bb.s) - this.wZ(this.bb.n)));
-      this.scene.add(grp); this.birds.push({ grp, speed: 0.12 + Math.random() * 0.1, phase: f * 1.7 });
+      const k = 4 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < k; i++) { const bird = this.oneBird(mat); const col = (i % 2 ? 1 : -1) * Math.ceil(i / 2); bird.position.set(col * 3.2, -Math.abs(col) * 0.6, -Math.abs(col) * 2.6); bird.scale.setScalar(0.9 + Math.random() * 0.3); grp.add(bird); }
+      grp.position.set(this.wX(this.bb.w) + Math.random() * (this.wX(this.bb.e) - this.wX(this.bb.w)), 78 + Math.random() * 34, this.wZ(this.bb.n) + Math.random() * (this.wZ(this.bb.s) - this.wZ(this.bb.n)));
+      this.scene.add(grp); this.birds.push({ grp, speed: 0.16 + Math.random() * 0.12, phase: f * 1.7 });
     }
   }
 
@@ -341,7 +352,8 @@ export class WorldMap3D {
     s.textContent = `
     .mapCompass{position:absolute;top:84px;right:14px;width:62px;height:62px;border-radius:50%;
       background:radial-gradient(circle at 50% 38%,#f6ecd2,#d8c69a);border:2px solid #6b5126;
-      box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:6;font:700 12px Georgia,serif;color:#4a3514;pointer-events:none}
+      box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:6;font:700 12px Georgia,serif;color:#4a3514;cursor:pointer}
+    .mapCompass .rose{position:absolute;inset:0;transform-origin:50% 50%}
     .mapCompass span{position:absolute;left:0;right:0;text-align:center}
     .mapCompass .n{top:3px;color:#a6301f}.mapCompass .s{bottom:3px}.mapCompass .e{top:24px;right:5px;left:auto}.mapCompass .w{top:24px;left:5px;right:auto}
     .mapCompass .needle{position:absolute;left:50%;top:50%;width:0;height:0;transform:translate(-50%,-100%);
@@ -370,9 +382,10 @@ export class WorldMap3D {
   private host() { return this.canvas.parentElement || document.body; }
   private makeCompass() {
     this.injectStyles();
-    const c = document.createElement('div'); c.className = 'mapCompass';
-    c.innerHTML = '<div class="needle"></div><div class="needle s"></div><span class="n">N</span><span class="s">S</span><span class="e">E</span><span class="w">W</span>';
-    this.host().appendChild(c); this.compassEl = c;
+    const c = document.createElement('div'); c.className = 'mapCompass'; c.title = 'Tap to face north';
+    c.innerHTML = '<div class="rose"><div class="needle"></div><div class="needle s"></div><span class="n">N</span><span class="s">S</span><span class="e">E</span><span class="w">W</span></div>';
+    c.addEventListener('click', () => { this.azReset = true; });
+    this.host().appendChild(c); this.compassEl = c; this.compassRose = c.querySelector('.rose') as HTMLElement;
   }
   private makePanel() {
     this.injectStyles();
@@ -510,14 +523,20 @@ export class WorldMap3D {
     c.addEventListener('pointerdown', e => { c.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (pts.size === 1) { this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY; this.downX = e.clientX; this.downY = e.clientY; this.moved = 0; this.downT = performance.now(); } });
     c.addEventListener('pointermove', e => {
       const p = pts.get(e.pointerId); if (!p) return; p.x = e.clientX; p.y = e.clientY;
-      if (pts.size >= 2) { const a = [...pts.values()]; const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); if (this.pinchD) { this.dist *= this.pinchD / d; this.clampTarget(); } this.pinchD = d; this.dragging = false; return; }
+      if (pts.size >= 2) {
+        const a = [...pts.values()]; const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+        if (this.pinchD) this.dist *= this.pinchD / d; this.pinchD = d;
+        const ang = Math.atan2(a[1].y - a[0].y, a[1].x - a[0].x);                  // twist to rotate the POV
+        if (this.pinchA !== undefined) { this.azimuth += ang - this.pinchA; this.azReset = false; } this.pinchA = ang;
+        this.clampTarget(); this.dragging = false; return;
+      }
       if (!this.dragging) return;
       const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY; this.lastX = e.clientX; this.lastY = e.clientY; this.moved += Math.abs(dx) + Math.abs(dy);
       const k = this.dist * 0.0016, ca = Math.cos(this.azimuth), sa = Math.sin(this.azimuth);
       // drag moves the map: pan in the camera's ground plane
       this.target.x -= (dx * ca - dy * sa) * k; this.target.z -= (dx * -sa + dy * ca) * k * 1.4; this.clampTarget();
     });
-    const end = (e: PointerEvent) => { const tap = pts.size === 1 && this.moved < 9 && performance.now() - this.downT < 400; pts.delete(e.pointerId); if (pts.size < 2) this.pinchD = 0; if (pts.size === 0) this.dragging = false; if (tap) this.pick(this.downX, this.downY); };
+    const end = (e: PointerEvent) => { const tap = pts.size === 1 && this.moved < 9 && performance.now() - this.downT < 400; pts.delete(e.pointerId); if (pts.size < 2) { this.pinchD = 0; this.pinchA = undefined; } if (pts.size === 0) this.dragging = false; if (tap) this.pick(this.downX, this.downY); };
     c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
     window.addEventListener('resize', () => this.resize());
   }
@@ -537,19 +556,32 @@ export class WorldMap3D {
     const w = this.water, base = this.waterBase; if (!w || !base) return;
     const p = (w.geometry.attributes.position as THREE.BufferAttribute);
     const arr = p.array as Float32Array; const t = this.pulse;
-    for (let k = 0; k < arr.length; k += 3) { const x = base[k], z = base[k + 2]; arr[k + 1] = 0.5 + Math.sin(t * 1.3 + x * 0.06) * 0.18 + Math.cos(t * 1.0 + z * 0.05) * 0.16; }
+    for (let k = 0; k < arr.length; k += 3) { const x = base[k], z = base[k + 2]; arr[k + 1] = 0.3 + Math.sin(t * 1.3 + x * 0.06) * 0.1 + Math.cos(t * 1.0 + z * 0.05) * 0.09; }
     p.needsUpdate = true;
   }
 
   private frame() {
     if (this.cssW() === 0) return; // map hidden behind muster/battle — don't burn cycles
     if (!this.ready) { this.renderer.render(this.scene, this.camera); return; }
+    this.azimuth = Math.atan2(Math.sin(this.azimuth), Math.cos(this.azimuth)); // keep in [-π,π]
+    if (this.azReset) { this.azimuth *= 0.82; if (Math.abs(this.azimuth) < 0.008) { this.azimuth = 0; this.azReset = false; } }
     this.clampTarget(); this.updateCamera();
+    if (this.compassRose) {
+      // point the rose at where due north actually projects on screen (accounts
+      // for the camera pitch, so it stays accurate as you twist the view)
+      this._tp.copy(this.target).project(this.camera);
+      this._np.set(this.target.x, this.target.y, this.target.z - 20).project(this.camera);
+      this.compassRose.style.transform = `rotate(${Math.atan2(this._np.x - this._tp.x, this._np.y - this._tp.y)}rad)`;
+    }
     for (const m of this.markers) if (m.ring) { const s = 1 + 0.12 * Math.sin(this.pulse); m.ring.scale.set(s, 1, s); }
     this.animateWater();
     for (const b of this.banners) b.mesh.rotation.y = 0.5 + Math.sin(this.pulse * 1.7 + b.phase) * 0.5;
     for (const cl of this.clouds) { cl.mesh.position.x += cl.speed; if (cl.mesh.position.x > this.wX(this.bb.e) + 200) cl.mesh.position.x = this.wX(this.bb.w) - 200; }
-    for (const bd of this.birds) { bd.grp.position.x += bd.speed; bd.grp.position.z += Math.sin(this.pulse * 0.5 + bd.phase) * 0.06; bd.grp.children.forEach((w, k) => { (w as THREE.Mesh).rotation.x = Math.sin(this.pulse * 6 + bd.phase + k) * 0.5; }); if (bd.grp.position.x > this.wX(this.bb.e) + 150) bd.grp.position.x = this.wX(this.bb.w) - 150; }
+    for (const bd of this.birds) {
+      bd.grp.position.x += bd.speed;
+      if (bd.grp.position.x > this.wX(this.bb.e) + 150) bd.grp.position.x = this.wX(this.bb.w) - 150;
+      bd.grp.children.forEach((b, k) => { const a = 0.55 * Math.sin(this.pulse * 7 + bd.phase + k * 0.7); (b as any).lw.rotation.z = a; (b as any).rw.rotation.z = a; });
+    }
     if (this.march) this.stepMarch();
     this.renderer.render(this.scene, this.camera);
   }
