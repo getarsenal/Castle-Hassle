@@ -579,13 +579,14 @@ export class Renderer {
 
     const sa = this.shadowMesh.instanceMatrix.array as Float32Array;
     const tm = this.time * 9;
+    let anyLive = false;
     for (let i = 0; i < sim.n; i++) {
       const t = sim.typ[i]; const mesh = this.meshes[t]; const o = i * 16;
       if (!mesh) { sa[o + 13] = -1000; continue; } // siege -> 3D model, no sprite
       const slot = sim.slot[i]; const s = this.sscale[i] || 1;
       if (!sim.alive[i]) {
         if (this.corpse![i]) continue;     // already a body — its matrix is static
-        this.corpse![i] = 1;
+        this.corpse![i] = 1; anyLive = true; // one upload to place the body
         this._col.setRGB(0.17, 0.16, 0.15); mesh.setColorAt(slot, this._col); this.colorDirty[t] = true; // grey out
         this._qYaw.setFromAxisAngle(this._yAxis, jit(i, 6) * 6.283);
         this.dummy.position.set(sim.px[i], 0.13, sim.pz[i]);            // lie flat where it fell
@@ -601,13 +602,18 @@ export class Renderer {
       this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s * h2) / 2 + yb, sim.pz[i]);
       this.dummy.quaternion.copy(this.billboard).multiply(this._roll); this.dummy.scale.set(s, s * h2, s); this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
       // shadow: only the translation changes (scale/rotation baked at build)
-      sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i];
+      sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i]; anyLive = true;
     }
-    for (let t = 0; t < 4; t++) {
-      this.meshes[t].instanceMatrix.needsUpdate = true;
-      if (this.colorDirty[t] && this.meshes[t].instanceColor) { this.meshes[t].instanceColor!.needsUpdate = true; this.colorDirty[t] = false; }
+    // Only re-upload the instance buffers when something actually changed (live
+    // soldiers move, or a body was just placed). Dead-unit work is skipped above,
+    // so cost falls as the field fills with corpses.
+    if (anyLive) {
+      for (let t = 0; t < 4; t++) {
+        this.meshes[t].instanceMatrix.needsUpdate = true;
+        if (this.colorDirty[t] && this.meshes[t].instanceColor) { this.meshes[t].instanceColor!.needsUpdate = true; this.colorDirty[t] = false; }
+      }
+      this.shadowMesh.instanceMatrix.needsUpdate = true;
     }
-    this.shadowMesh.instanceMatrix.needsUpdate = true;
 
     // move-order ping: bounce the arrow, pulse + fade the ring, then hide
     if (this.moveMarkerT > 0 && this.moveMarker) {

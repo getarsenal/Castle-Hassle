@@ -139,6 +139,15 @@ function blockedAt(x: number, z: number): boolean {
   }
   return false;
 }
+// Height of the tallest standing structure covering a point (0 if open ground).
+function heightAt(x: number, z: number): number {
+  let h = 0;
+  for (let i = 0; i < CASTLE.length; i++) {
+    const b = CASTLE[i];
+    if (!b.dead && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1 && b.h > h) h = b.h;
+  }
+  return h;
+}
 
 export function cellOf(x: number, z: number): number {
   let c = Math.floor((x - WORLD.minX) / CELL);
@@ -601,8 +610,13 @@ export class Sim {
       if (!deploy && !u.routing && u.faction === Faction.Defender && this.py[i] > 2 && this.climbState[i] === 0
           && (this.attInsideCount > 40 || (t === UType.Archer && this.ammo[i] <= 0))) {
         this.py[i] = Math.max(0, this.py[i] - 7 * dt);
-        const il = Math.hypot(this.px[i], this.pz[i]) || 1; // drift into the courtyard as they descend
-        this.px[i] -= this.px[i] / il * 3.5 * dt; this.pz[i] -= this.pz[i] / il * 3.5 * dt;
+        // head down toward the nearest enemy (falls back to interior); works for
+        // the offset citadel too, unlike steering at the world origin.
+        let dxg: number, dzg: number;
+        if (nearest >= 0) { dxg = this.px[nearest] - this.px[i]; dzg = this.pz[nearest] - this.pz[i]; }
+        else { dxg = -this.px[i]; dzg = -this.pz[i]; }
+        const il = Math.hypot(dxg, dzg) || 1;
+        this.px[i] += dxg / il * 3.5 * dt; this.pz[i] += dzg / il * 3.5 * dt;
         continue;
       }
 
@@ -899,10 +913,18 @@ export class Sim {
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
     const tx = this.px[target], tz = this.pz[target], ty = this.py[target] + 1.0; // aim at the body, at its height
     const d = Math.hypot(tx - sx, tz - sz) || 1;
-    // base loft; lob much higher when a wall/building sits between shooter and
-    // target so the arrow clears it and drops onto the enemy beyond.
+    // Lob exactly as high as needed: sample the tallest obstacle between archer
+    // and target and compare it to where a flat-ish shot would be there; only
+    // raise the arc if a structure actually blocks it (so close shots stay flat).
     let tof = Math.max(0.7, d / ARCHER_PROJ_SPEED);
-    if (pathBlocked(sx, sz, tx, tz)) tof *= 1.85;
+    let need = 0;
+    const steps = Math.max(2, Math.ceil(d / 3));
+    for (let k = 2; k < steps; k++) { // skip the archer's own footprint
+      const f = k / steps, qx = sx + (tx - sx) * f, qz = sz + (tz - sz) * f;
+      const h = heightAt(qx, qz);
+      if (h > 0) { const lineY = sy + (ty - sy) * f; const deficit = h - lineY; if (deficit > need) need = deficit; }
+    }
+    if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
     p.dmg = fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG; p.wall = -1; p.big = false; p.fire = fire;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
