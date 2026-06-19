@@ -138,9 +138,9 @@ export class WorldMap3D {
     // look-point: pulled off the coastal castle toward the body of land so land
     // fills the frame, but keep the objective near centre.
     this.target.set(cwx * 0.6 + landX * 0.4, this.terrainY((cur.lon), (cur.lat)), cwz * 0.6 + landZ * 0.4);
-    // North stays up (a gentle fixed tilt for 3D depth) — a per-castle azimuth
-    // felt disorienting (the map appeared rotated ~90°).
-    this.azimuth = -0.22;
+    // Classic campaign view: looking due north, north at the top of the screen
+    // (a per-castle 'seaward' azimuth felt rotated ~90° and disorienting).
+    this.azimuth = 0;
     // zoom from how spread the NEARBY castles are (the few closest objectives),
     // so the current siege stays prominent even in sprawling regions.
     const near = this.nodes.map(n => Math.hypot(this.wX(n.lon) - this.target.x, this.wZ(n.lat) - this.target.z)).sort((a, b) => a - b);
