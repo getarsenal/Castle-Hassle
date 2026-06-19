@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CampaignCastle, Progress } from './campaign';
 import { RANGES, FORESTS } from './mapfeatures';
+import mapData from './worldmapdata.json';
 
 const mercYdeg = (lat: number) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * 180 / Math.PI;
 const hash = (x: number, z: number) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
@@ -36,7 +37,8 @@ export class WorldMap3D {
     this.scene.add(new THREE.AmbientLight('#fff4e0', 0.22));
     this.resize();
     this.bind();
-    fetch('./worldmap.json').then(r => r.json()).then(d => this.build(d)).catch(() => { });
+    try { this.build(mapData as any); }   // data is bundled in — no fetch, no stale-asset risk
+    catch (e: any) { const h = document.getElementById('mapHeader'); if (h) { h.textContent = 'MAP ERROR: ' + (e?.message || e); (h as HTMLElement).style.maxWidth = '90vw'; } }
     const loop = () => { this.pulse += 0.05; this.frame(); this.raf = requestAnimationFrame(loop); };
     loop();
   }

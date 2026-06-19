@@ -54,5 +54,6 @@ const cdist = new Uint8Array(GW * GH);
 for (let i = 0; i < cdist.length; i++) cdist[i] = Math.min(255, Math.round(dist[i]));
 
 const b64 = (u8) => Buffer.from(u8).toString('base64');
-writeFileSync('public/worldmap.json', JSON.stringify({ bb: BB, rings: rings.map(r => r.flat()), grid: { w: GW, h: GH, mask: b64(mask), cdist: b64(cdist) } }));
-console.log(`worldmap.json: ${rings.length} rings + ${GW}x${GH} grid, ${(statSync('public/worldmap.json').size / 1024).toFixed(0)} KB`);
+// written into src/ so it's bundled (inlined) — no runtime fetch / stale-asset risk
+writeFileSync('src/worldmapdata.json', JSON.stringify({ bb: BB, grid: { w: GW, h: GH, mask: b64(mask), cdist: b64(cdist) } }));
+console.log(`worldmapdata.json: ${GW}x${GH} grid, ${(statSync('src/worldmapdata.json').size / 1024).toFixed(0)} KB`);
