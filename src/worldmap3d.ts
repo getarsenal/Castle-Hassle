@@ -3,7 +3,7 @@
 // settlement markers. Built from the baked land/coast grid + mountain ranges.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CampaignCastle, Progress } from './campaign';
+import { CampaignCastle, Progress, garrisonStrength } from './campaign';
 import { RANGES, FORESTS, REALMS } from './mapfeatures';
 import mapData from './worldmapdata.json';
 
@@ -412,7 +412,7 @@ export class WorldMap3D {
   };
   private describe(node: CampaignCastle): { blurb: string; stats: [string, string][]; canSiege: boolean } {
     const st = node.style; const done = this.prog.completed.includes(node.id); const current = node.id === this.prog.unlocked;
-    const defenders = Math.round((420 + 620 * node.tier));
+    const defenders = garrisonStrength(st, 1 + node.tier * 0.8);
     const stars = Math.max(1, Math.min(5, 1 + Math.round(node.tier * 4)));
     const def = st.concentric ? 'Concentric double walls' : st.strongKeep ? 'Mighty central keep' : st.round ? 'Round drum towers' : 'Curtain wall & towers';
     const blurb = WorldMap3D.BLURBS[node.name] || `A ${st.concentric ? 'concentric' : st.round ? 'drum-towered' : 'stout'} stronghold of ${node.region}, ${node.tier > 0.6 ? 'strongly held and richly garrisoned' : 'guarding the road east'}.`;

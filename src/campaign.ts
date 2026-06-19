@@ -66,10 +66,24 @@ export function generateCastles(): CampaignCastle[] {
   });
 }
 
-export interface Progress { unlocked: number; completed: number[]; }
+export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; }
 const KEY = 'castlehassle.campaign.v1';
 export function loadProgress(): Progress {
-  try { const p = JSON.parse(localStorage.getItem(KEY) || ''); if (p && typeof p.unlocked === 'number') return { unlocked: p.unlocked, completed: p.completed || [] }; } catch { /* ignore */ }
-  return { unlocked: 0, completed: [] };
+  try { const p = JSON.parse(localStorage.getItem(KEY) || ''); if (p && typeof p.unlocked === 'number') return { unlocked: p.unlocked, completed: p.completed || [], gold: p.gold || 0, upg: p.upg || {} }; } catch { /* ignore */ }
+  return { unlocked: 0, completed: [], gold: 0, upg: {} };
 }
 export function saveProgress(p: Progress) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+
+// Defender strength shown on the castle panel — mirrors the sim's garrison
+// formula (garrison + reserves + a citadel guard + wall/tower archers) using the
+// castle's size from its style, so the number tracks what you'll actually face.
+export function garrisonStrength(style: CastleStyle, difficulty: number): number {
+  const W = Math.max(40, Math.min(90, 59 * style.scale * Math.sqrt(style.aspect)));
+  const D = Math.max(36, Math.min(78, 52 * style.scale / Math.sqrt(style.aspect)));
+  const garr = Math.max(280, Math.min(560, W * D / 14)) * difficulty;
+  const citadel = style.concentric || style.strongKeep || W * D > 3200;
+  return Math.round(garr * 1.6 + (citadel ? 220 * difficulty : 0) + 260);
+}
+
+// Gold awarded for taking a castle — scales with how late/hard it is.
+export function goldReward(tier: number): number { return Math.round(90 + 360 * tier); }

@@ -17,6 +17,9 @@ export const TYPE_NAME = ['Heavy Inf', 'Light Inf', 'Archers', 'Cavalry', 'Trebu
 
 // ---- army composition (chosen on the muster screen before battle) ----
 export interface ArmyComp { heavy: number; light: number; archer: number; cavalry: number; siege: number; }
+// Persistent attacker upgrades (multipliers applied only to the player's army).
+export interface AtkBuff { hp: number; melee: number; archer: number; fire: boolean; siege: number; reload: number; }
+export const NO_BUFF: AtkBuff = { hp: 1, melee: 1, archer: 1, fire: false, siege: 1, reload: 1 };
 export const COST = { heavy: 1.5, light: 1.0, archer: 1.3, cavalry: 2.0, siege: 70 };
 export const BUDGET = 3200; // bigger castles + garrisons → a bigger assault army
 export const DEFAULT_COMP: ArmyComp = { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 }; // ~3066 / 3200
@@ -339,7 +342,8 @@ export class Sim {
   attackerAliveStart = 0; defenderAliveStart = 0;
 
   private difficulty: number;
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; generateCastle(seed, style); this.setup(); }
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; this.atk = atk; generateCastle(seed, style); this.setup(); }
+  atk: AtkBuff = NO_BUFF;
 
   private rnd() { // mulberry32
     this.seed |= 0; this.seed = (this.seed + 0x6D2B79F5) | 0;
@@ -363,7 +367,7 @@ export class Sim {
       const id = this.n++;
       const [x, z, y] = place(i);
       this.px[id] = x; this.pz[id] = z; this.py[id] = y; sx += x; sz += z;
-      this.hp[id] = HP[type]; this.cd[id] = this.rnd() * 0.5; this.ammo[id] = AMMO[type];
+      this.hp[id] = HP[type] * (faction === Faction.Attacker ? this.atk.hp : 1); this.cd[id] = this.rnd() * 0.5; this.ammo[id] = AMMO[type];
       this.unit[id] = this.units.length; this.fac[id] = faction; this.typ[id] = type;
       this.alive[id] = 1; this.slot[id] = this.typeCount[type]++;
     }
@@ -671,7 +675,7 @@ export class Sim {
         let seg = u.siegeTargetSeg;
         if (seg < 0 || CASTLE[seg].dead) { seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]); if (u.siegeTargetSeg >= 0 && CASTLE[u.siegeTargetSeg].dead) u.siegeTargetSeg = -1; }
         else if (((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + ((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2 > RANGE[t] * RANGE[t]) seg = -1;
-        if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0 && !u.holdFire) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
+        if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0 && !u.holdFire) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t] * this.atk.reload; this.ammo[i]--; }
         if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
@@ -687,7 +691,7 @@ export class Sim {
             const seg = this.nearestClimbWall(this.px[i], this.pz[i]); if (seg >= 0) { this.startClimb(i, seg); continue; }
           }
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
-          const mdmg = t === UType.Archer ? MELEE[UType.Light] : MELEE[t];
+          const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1);
           if (nearest >= 0 && dist <= mrng) {
             if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
           } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
@@ -903,7 +907,7 @@ export class Sim {
     // wall-top / ladder melee against an adjacent same-level enemy
     if (nearest >= 0 && Math.abs(this.py[nearest] - this.py[i]) < 2.5) {
       const dd = Math.hypot(this.px[nearest] - this.px[i], this.pz[nearest] - this.pz[i]);
-      if (dd < 2.2 && this.cd[i] <= 0) { const dmg = (MELEE[t] || 7) * 1.4; this.hp[nearest] -= dmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+      if (dd < 2.2 && this.cd[i] <= 0) { const dmg = (MELEE[t] || 7) * 1.4 * (u.faction === Faction.Attacker ? this.atk.melee : 1); this.hp[nearest] -= dmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
     }
     const st = this.climbState[i];
     if (st === 1) {                       // ascending
@@ -946,7 +950,8 @@ export class Sim {
 
   private shoot(i: number, target: number) {
     const p = this.getProj();
-    const fire = this.units[this.unit[i]].fireArrows;
+    const atkShot = this.fac[i] === Faction.Attacker;
+    const fire = this.units[this.unit[i]].fireArrows || (atkShot && this.atk.fire);
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
     const tx = this.px[target], tz = this.pz[target], ty = this.py[target] + 1.0; // aim at the body, at its height
     const d = Math.hypot(tx - sx, tz - sz) || 1;
@@ -963,7 +968,7 @@ export class Sim {
     }
     if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
-    p.dmg = fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG; p.wall = -1; p.big = false; p.fire = fire;
+    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1); p.wall = -1; p.big = false; p.fire = fire;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
@@ -989,7 +994,7 @@ export class Sim {
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
-    p.dmg = BOULDER_DMG; p.wall = segIdx; p.big = true; p.fire = false;
+    p.dmg = BOULDER_DMG * this.atk.siege; p.wall = segIdx; p.big = true; p.fire = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
   }
 

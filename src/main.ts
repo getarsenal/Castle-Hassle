@@ -1,7 +1,8 @@
-import { Sim, Faction, UType, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost } from './sim';
+import { Sim, Faction, UType, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost, AtkBuff, NO_BUFF } from './sim';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward } from './campaign';
 import { WorldMap3D } from './worldmap3d';
+import { computeBuffs, openUpgrades } from './upgrades';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -63,9 +64,10 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
+let currentBuff: AtkBuff = NO_BUFF;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
-  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle);
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
   renderer = new Renderer(sim, app);
   bindInput();
   selected = -1; showRange = true;
@@ -139,8 +141,10 @@ function showEnd() {
   bannerTitle.style.color = win ? '#5fd16a' : '#e8513a';
   bannerText.textContent = win ? (sim.countAlive(Faction.Defender) < 30 ? 'A clean sweep — the castle is yours.' : 'You hold the walls; survivors slipped away.') : 'Your army broke before the keep fell.';
   if (win && activeCastle) {
-    if (!progress.completed.includes(activeCastle.id)) progress.completed.push(activeCastle.id);
+    const firstTake = !progress.completed.includes(activeCastle.id);
+    if (firstTake) progress.completed.push(activeCastle.id);
     progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
+    if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} 💰 gold.`; }
     saveProgress(progress);
   }
   restartBtn.textContent = activeCastle ? (win ? 'March On ▸' : 'Back to the Map') : 'Fight Again';
@@ -223,22 +227,27 @@ let map: WorldMap3D | null = null;
 
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
+function refreshGoldLabel() { const g = document.getElementById('wcGold'); if (g) g.textContent = `· ${progress.gold} 💰`; }
 function openMap() {
   activeCastle = null;
   show('intro', false); show('titleScreen', false); show('muster', false); show('map', true);
   banner.classList.remove('show');
+  refreshGoldLabel();
   if (map) map.destroy();
   const canvas = $('mapCanvas') as HTMLCanvasElement; // re-fetch (destroy swaps the node)
   map = new WorldMap3D(canvas, castles, progress, enterCastle);
 }
+document.getElementById('warCouncilBtn')?.addEventListener('click', () => openUpgrades(progress, refreshGoldLabel));
 
 function enterCastle(c: CampaignCastle) {
   activeCastle = c;
+  const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
-  budget = Math.round(BUDGET * (1 + c.tier * 0.7));
+  // bigger castles cost more troops; the Quartermaster tree swells the war chest
+  budget = Math.round(BUDGET * (1 + c.tier * 0.7) * buffs.budgetMult);
   // a sensible default army scaled to the budget
   const k = budget / BUDGET;
-  Object.assign(comp, { heavy: Math.round(600 * k), light: Math.round(480 * k), archer: Math.round(460 * k), cavalry: Math.round(220 * k), siege: Math.max(6, Math.round(8 * k)) });
+  Object.assign(comp, { heavy: Math.round(600 * k), light: Math.round(480 * k), archer: Math.round(460 * k), cavalry: Math.round(220 * k), siege: Math.max(6, Math.round(8 * k)) + buffs.extraTrebs });
   while (compCost(comp) > budget && comp.light > 0) comp.light -= 10;
   show('map', false);
   ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `${c.name} · ${c.region}`);
