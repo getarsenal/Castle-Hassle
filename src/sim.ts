@@ -259,7 +259,7 @@ const ENGAGE = 9; // range at which troops break formation to fight
 
 export interface Projectile {
   active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number;
-  tx: number; tz: number; dmg: number; fac: Faction;
+  tx: number; tz: number; ty: number; dmg: number; fac: Faction;
   wall: number;   // target wall-segment index for boulders, else -1
   big: boolean;   // boulder vs arrow (render size)
   fire: boolean;  // flaming arrow (tower archers)
@@ -282,6 +282,7 @@ export class Sim {
   climbLadder = new Int16Array(this.MAX).fill(-1); // ladder a climber is on (-1 = direct/none)
   ladders: Ladder[] = [];
   private ladderMinPy: number[] = []; // lowest occupied height per ladder (single-file gating)
+  private attInsideCount = 0;         // attackers standing inside the walls
   n = 0;
   units: Unit[] = [];
   typeCount = [0, 0, 0, 0, 0];
@@ -543,6 +544,7 @@ export class Sim {
         } else if (this.climbState[i] === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1 && this.typ[i] !== UType.Siege) attInside++;
       }
       const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
+      this.attInsideCount = attInside; // wall defenders abandon the walls once this is high
       if (defGround < 25 || (defFrac < 0.5 && attInside > 80 && attInside > 2.5 * defGround))
         for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
@@ -592,6 +594,17 @@ export class Sim {
       // soldiers on a ladder / wall-top are handled by climbStep (unless routing,
       // in which case they bail off the wall and flee)
       if (!deploy && this.climbState[i] > 0 && !u.routing) { this.climbStep(i, u, t, dt, nearest); continue; }
+
+      // Defenders abandon the wall-tops and come DOWN to fight once the attackers
+      // hold the courtyard (or they're out of arrows) — they can't keep shooting
+      // from above a fight they can't join.
+      if (!deploy && !u.routing && u.faction === Faction.Defender && this.py[i] > 2 && this.climbState[i] === 0
+          && (this.attInsideCount > 40 || (t === UType.Archer && this.ammo[i] <= 0))) {
+        this.py[i] = Math.max(0, this.py[i] - 7 * dt);
+        const il = Math.hypot(this.px[i], this.pz[i]) || 1; // drift into the courtyard as they descend
+        this.px[i] -= this.px[i] / il * 3.5 * dt; this.pz[i] -= this.pz[i] / il * 3.5 * dt;
+        continue;
+      }
 
       if (deploy) {
         // positioning phase: march to formation, no combat
@@ -781,15 +794,40 @@ export class Sim {
     const cap = Math.max(1, Math.floor(segLen / 6));
     if (onSeg >= cap || this.ladders.length >= this.LADDER_CAP) return best; // at cap → share the nearest
     const wallPerp = horiz ? (g.z0 + g.z1) / 2 : (g.x0 + g.x1) / 2;
-    const outer = (Math.sign(wallPerp) || 1);
+    // foot on the side the attacker is approaching from (works for the citadel,
+    // whose walls aren't centred on the world origin)
+    const myPerp = horiz ? this.pz[i] : this.px[i];
+    const outer = (Math.sign(myPerp - wallPerp) || 1);
     const aMin = (horiz ? g.x0 : g.z0) + 1.2, aMax = (horiz ? g.x1 : g.z1) - 1.2;
     const along = Math.max(aMin, Math.min(aMax, myAlong));
     const foot = wallPerp + outer * (T / 2 + 1.6);
     this.ladders.push({ seg, along, bx: horiz ? along : foot, bz: horiz ? foot : along, horiz, outer, raise: 0 });
     return this.ladders.length - 1;
   }
+  // The non-dead wall/gate section containing a point (or -1).
+  private wallSegAtPoint(x: number, z: number): number {
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s];
+      if (g.dead || (g.kind !== 'wall' && g.kind !== 'gate')) continue;
+      if (x >= g.x0 - 0.5 && x <= g.x1 + 0.5 && z >= g.z0 - 0.5 && z <= g.z1 + 0.5) return s;
+    }
+    return -1;
+  }
+  // March from the soldier toward its goal and return the FIRST wall the path
+  // crosses — that's the wall actually standing in the way (e.g. the citadel).
+  private wallTowardGoal(i: number): number {
+    const u = this.units[this.unit[i]];
+    const x = this.px[i], z = this.pz[i];
+    const ddx = u.ax - x, ddz = u.az - z, gl = Math.hypot(ddx, ddz) || 1, sx = ddx / gl, sz = ddz / gl;
+    for (let d = 1.5; d < Math.min(gl + 6, 80); d += 1.5) {
+      const qx = x + sx * d, qz = z + sz * d;
+      if (qx < WORLD.minX || qx > WORLD.maxX || qz < WORLD.minZ || qz > WORLD.maxZ) break;
+      if (blockedAt(qx, qz)) { const s = this.wallSegAtPoint(qx, qz); return s >= 0 ? s : this.nearestClimbWall(qx, qz); }
+    }
+    return this.nearestClimbWall(x, z);
+  }
   private useLadder(i: number) {
-    const seg = this.nearestClimbWall(this.px[i], this.pz[i]);
+    const seg = this.wallTowardGoal(i);
     if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
     const L = this.findOrMakeLadder(seg, i);
     if (L < 0) { // couldn't get a ladder: just press toward the wall and retry
@@ -840,11 +878,10 @@ export class Sim {
       if (!tw) { this.climbState[i] = 3; return; } // no tower left → drop where we are
       const l = this.moveXZ(i, tw.x, tw.z, 4.0 * dt);
       if (l < tw.r + 1.0) this.climbState[i] = 3;
-    } else if (st === 3) {                // descend the tower stairs into the courtyard
-      const tw = this.nearestTowerPos(this.px[i], this.pz[i]);
-      const l = this.moveXZ(i, tw ? tw.ix : this.px[i], tw ? tw.iz : this.pz[i], 3.5 * dt);
+    } else if (st === 3) {                // descend the tower stairs toward the interior we're assaulting
+      this.moveXZ(i, u.ax, u.az, 3.2 * dt);
       this.py[i] = Math.max(0, this.py[i] - 4 * dt);
-      if (this.py[i] <= 0.05 && l < 1.8) { this.climbState[i] = 0; this.py[i] = 0; }
+      if (this.py[i] <= 0.05) { this.climbState[i] = 0; this.py[i] = 0; }
     } else {                              // st 4: defender holds the wall-top
       const seg = CASTLE[this.climbSeg[i]];
       if (!seg || seg.dead) { this.climbState[i] = 0; this.py[i] = 0; return; }
@@ -860,12 +897,15 @@ export class Sim {
     const p = this.getProj();
     const fire = this.units[this.unit[i]].fireArrows;
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
-    const tx = this.px[target], tz = this.pz[target];
+    const tx = this.px[target], tz = this.pz[target], ty = this.py[target] + 1.0; // aim at the body, at its height
     const d = Math.hypot(tx - sx, tz - sz) || 1;
-    const tof = Math.max(0.75, d / ARCHER_PROJ_SPEED); // min loft so even close shots arc
-    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
+    // base loft; lob much higher when a wall/building sits between shooter and
+    // target so the arrow clears it and drops onto the enemy beyond.
+    let tof = Math.max(0.7, d / ARCHER_PROJ_SPEED);
+    if (pathBlocked(sx, sz, tx, tz)) tof *= 1.85;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
     p.dmg = fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG; p.wall = -1; p.big = false; p.fire = fire;
-    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc
+    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
   // Nearest still-standing wall/gate section within a trebuchet's range.
@@ -910,7 +950,7 @@ export class Sim {
 
   private getProj(): Projectile {
     for (const p of this.projectiles) if (!p.active) return p;
-    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, dmg: 0, fac: 0, wall: -1, big: false, fire: false };
+    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, ty: 0, dmg: 0, fac: 0, wall: -1, big: false, fire: false };
     this.projectiles.push(p); return p;
   }
   private stepProjectiles(dt: number) {

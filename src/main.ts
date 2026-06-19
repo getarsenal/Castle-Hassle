@@ -179,7 +179,7 @@ function bindInput() {
   const endPointer = (e: PointerEvent) => {
     const wasTap = !moved && gesture !== 'camera' && (performance.now() - downAt.t) < 350 && pointers.size === 1;
     pointers.delete(e.pointerId);
-    if (gesture === 'command' && moved && cmdP0 && cmdP1 && selected >= 0) sim.orderFormation(selected, cmdP0.x, cmdP0.z, cmdP1.x, cmdP1.z);
+    if (gesture === 'command' && moved && cmdP0 && cmdP1 && selected >= 0) { sim.orderFormation(selected, cmdP0.x, cmdP0.z, cmdP1.x, cmdP1.z); renderer.pingMove((cmdP0.x + cmdP1.x) / 2, (cmdP0.z + cmdP1.z) / 2); }
     else if (wasTap) handleTap(e.clientX, e.clientY);
     renderer.setPreview(null);
     if (pointers.size === 0) { gesture = 'none'; cmdP0 = cmdP1 = null; }
@@ -196,9 +196,9 @@ function handleTap(cx: number, cy: number) {
   if (best >= 0) { selected = best; refreshCards(); updateHint(); updateTools(); return; }
   if (selected >= 0 && sim.phase !== 'over') {
     const u = sim.units[selected];
-    if (u.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTarget(selected, seg); return; } sim.orderMove(selected, p.x, p.z); }
+    if (u.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTarget(selected, seg); return; } sim.orderMove(selected, p.x, p.z); renderer.pingMove(p.x, p.z); }
     else if (u.type === UType.Archer) { sim.setFocus(selected, p.x, p.z); updateTools(); }
-    else sim.orderMove(selected, p.x, p.z);
+    else { sim.orderMove(selected, p.x, p.z); renderer.pingMove(p.x, p.z); }
   }
 }
 

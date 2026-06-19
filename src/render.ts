@@ -45,6 +45,14 @@ export class Renderer {
   private billboard = new THREE.Quaternion();
   private _roll = new THREE.Quaternion();
   private _zAxis = new THREE.Vector3(0, 0, 1);
+  private _yAxis = new THREE.Vector3(0, 1, 0);
+  private _qFlat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2); // lay a sprite on the ground
+  private _qYaw = new THREE.Quaternion();
+  private _col = new THREE.Color();
+  private corpse?: Uint8Array;                 // which units have been laid down as bodies
+  private colorDirty = [false, false, false, false];
+  private moveMarker?: THREE.Group;
+  private moveMarkerT = 0;
   private time = 0;
   private sscale: Float32Array;
   private rubbleMat = new THREE.MeshLambertMaterial({ color: '#a3987f' });
@@ -100,6 +108,15 @@ export class Renderer {
     const tg = new THREE.RingGeometry(2.2, 3.2, 4); tg.rotateX(-Math.PI / 2);
     this.targetRing = new THREE.Mesh(tg, new THREE.MeshBasicMaterial({ color: '#ff5a3c', transparent: true, opacity: 0.95 }));
     this.targetRing.visible = false; this.scene.add(this.targetRing);
+
+    // move-order ping: a ground ring + a bouncing arrow pointing down at the spot
+    this.moveMarker = new THREE.Group();
+    const mr = new THREE.Mesh(new THREE.RingGeometry(1.7, 2.4, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#9ef07a', transparent: true, opacity: 0.9, depthWrite: false }));
+    const ac = new THREE.ConeGeometry(1.1, 2.4, 5); // points down (apex -Y)
+    const arrow = new THREE.Mesh(ac, new THREE.MeshBasicMaterial({ color: '#9ef07a', transparent: true, opacity: 0.95 }));
+    arrow.rotation.x = Math.PI; arrow.position.y = 5; arrow.name = 'arrow';
+    this.moveMarker.add(mr, arrow); this.moveMarker.visible = false; this.scene.add(this.moveMarker);
+    this.corpse = new Uint8Array(sim.n);
 
     // range fan (translucent disc + bright edge ring), radius set per unit
     this.rangeFan = new THREE.Group();
@@ -462,6 +479,8 @@ export class Renderer {
 
   setSelection(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.selRing.visible = false; return; } this.selRing.visible = true; this.selRing.position.set(cx, 0.06, cz); }
   setTargetMarker(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.targetRing.visible = false; return; } this.targetRing.visible = true; this.targetRing.position.set(cx, 0.5, cz); }
+  // flash a move-order marker at a ground point for ~1.6s
+  pingMove(x: number, z: number) { if (!this.moveMarker) return; this.moveMarker.position.set(x, 0, z); this.moveMarker.visible = true; this.moveMarkerT = 1.6; }
   setRangeFan(cx: number | null, cz: number | null, r = 0) { if (cx === null || cz === null) { this.rangeFan.visible = false; return; } this.rangeFan.visible = true; this.rangeFan.position.set(cx, 0.04, cz); this.rangeFan.scale.set(r, 1, r); }
 
   setPreview(p0: THREE.Vector3 | null, p1?: THREE.Vector3, fx = 0, fz = 0) {
@@ -565,7 +584,13 @@ export class Renderer {
       if (!mesh) { sa[o + 13] = -1000; continue; } // siege -> 3D model, no sprite
       const slot = sim.slot[i]; const s = this.sscale[i] || 1;
       if (!sim.alive[i]) {
-        this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.quaternion.identity(); this.dummy.updateMatrix();
+        if (this.corpse![i]) continue;     // already a body — its matrix is static
+        this.corpse![i] = 1;
+        this._col.setRGB(0.17, 0.16, 0.15); mesh.setColorAt(slot, this._col); this.colorDirty[t] = true; // grey out
+        this._qYaw.setFromAxisAngle(this._yAxis, jit(i, 6) * 6.283);
+        this.dummy.position.set(sim.px[i], 0.13, sim.pz[i]);            // lie flat where it fell
+        this.dummy.quaternion.multiplyQuaternions(this._qYaw, this._qFlat);
+        this.dummy.scale.set(s * 0.95, s * 0.95, s * 0.95); this.dummy.updateMatrix();
         mesh.setMatrixAt(slot, this.dummy.matrix); sa[o + 13] = -1000; continue;
       }
       // marching bob + side sway so soldiers feel alive (not flat & static)
@@ -578,8 +603,23 @@ export class Renderer {
       // shadow: only the translation changes (scale/rotation baked at build)
       sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i];
     }
-    for (let t = 0; t < 4; t++) this.meshes[t].instanceMatrix.needsUpdate = true;
+    for (let t = 0; t < 4; t++) {
+      this.meshes[t].instanceMatrix.needsUpdate = true;
+      if (this.colorDirty[t] && this.meshes[t].instanceColor) { this.meshes[t].instanceColor!.needsUpdate = true; this.colorDirty[t] = false; }
+    }
     this.shadowMesh.instanceMatrix.needsUpdate = true;
+
+    // move-order ping: bounce the arrow, pulse + fade the ring, then hide
+    if (this.moveMarkerT > 0 && this.moveMarker) {
+      this.moveMarkerT -= dt;
+      const age = 1.6 - this.moveMarkerT, fade = Math.min(1, this.moveMarkerT / 0.4);
+      const arrow = this.moveMarker.getObjectByName('arrow') as THREE.Mesh;
+      if (arrow) arrow.position.y = 4 + Math.abs(Math.sin(age * 6)) * 2.2;
+      this.moveMarker.scale.setScalar(1 + Math.sin(age * 5) * 0.06);
+      (this.moveMarker.children as THREE.Mesh[]).forEach(c => { const m = c.material as THREE.MeshBasicMaterial; m.opacity = (c.name === 'arrow' ? 0.95 : 0.9) * fade; });
+      this.moveMarker.rotation.y += dt * 1.5;
+      if (this.moveMarkerT <= 0) this.moveMarker.visible = false;
+    }
 
     // trebuchets — position + throw animation
     for (const tr of this.trebs) {
