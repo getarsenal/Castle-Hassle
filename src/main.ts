@@ -223,7 +223,7 @@ function show(id: string, on: boolean) { const el = document.getElementById(id);
 
 function openMap() {
   activeCastle = null;
-  show('intro', false); show('title', false); show('muster', false); show('map', true);
+  show('intro', false); show('titleScreen', false); show('muster', false); show('map', true);
   banner.classList.remove('show');
   if (map) map.destroy();
   const canvas = $('mapCanvas') as HTMLCanvasElement; // re-fetch (destroy swaps the node)
@@ -251,11 +251,17 @@ function startIntro() {
   show('intro', true);
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
   let advanced = false;
-  const go = () => { if (advanced) return; advanced = true; show('intro', false); show('title', true); };
-  if (vid && vid.getAttribute('src')) {           // real studio video present → play it
-    vid.style.display = 'block'; vid.muted = false; vid.play?.().catch(() => {});
-    vid.addEventListener('ended', go); setTimeout(go, 6000); // safety
-  } else setTimeout(go, 3000);                      // styled placeholder splash (~3s)
+  const go = () => { if (advanced) return; advanced = true; if (vid) { vid.pause?.(); } show('intro', false); show('titleScreen', true); };
+  if (vid) {
+    vid.src = './intro.mp4'; vid.style.display = 'block';
+    vid.addEventListener('ended', go);
+    vid.addEventListener('error', () => setTimeout(go, 1200)); // missing/unsupported → brief card then on
+    // Try WITH audio first; browsers that block unmuted autoplay fall back to a
+    // silent play so the splash still shows.
+    vid.muted = false;
+    vid.play().catch(() => { vid.muted = true; vid.play().catch(() => setTimeout(go, 1500)); });
+    setTimeout(go, 6000); // safety so the splash can never hang the boot
+  } else setTimeout(go, 3000);
   document.getElementById('intro')?.addEventListener('click', go); // tap to skip
 }
 

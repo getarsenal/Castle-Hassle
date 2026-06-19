@@ -117,8 +117,8 @@
 
     /* ---- muster screen (medieval theme) ---- */
     /* ---- studio splash / title / world map ---- */
-    #intro, #title, #map { position: fixed; inset: 0; z-index: 50; display: none; }
-    #intro.show, #title.show { display: flex; }
+    #intro, #titleScreen, #map { position: fixed; inset: 0; z-index: 50; display: none; }
+    #intro.show, #titleScreen.show { display: flex; }
     #map.show { display: block; }
     #intro { align-items: center; justify-content: center; background: #0b0f17; animation: fadein 0.8s ease; }
     #introVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -127,7 +127,7 @@
     #introSub { font: 600 18px Georgia, serif; letter-spacing: 12px; color: #9fb0c4; margin-top: 6px; }
     @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 
-    #title { flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+    #titleScreen { flex-direction: column; align-items: center; justify-content: center; gap: 22px;
       background: radial-gradient(120% 80% at 50% 20%, #2a3b54, #0e1622 70%); animation: fadein 0.6s ease; }
     #titleIcon { width: 168px; height: 168px; border-radius: 36px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
     #startGameBtn { pointer-events: auto; border: none; cursor: pointer;
@@ -258,14 +258,14 @@
 
   <!-- Studio splash → title → world map -->
   <div id="intro">
-    <video id="introVideo" playsinline muted preload="auto" style="display:none"></video>
+    <video id="introVideo" playsinline preload="auto" style="display:none"></video>
     <div id="introCard">
       <div id="introMark">SCHEIDEL</div>
       <div id="introSub">INTERACTIVE</div>
     </div>
   </div>
 
-  <div id="title">
+  <div id="titleScreen">
     <img id="titleIcon" src="https://getarsenal.app/Castle-Hassle/icon.png" alt="Castle Hassle" />
     <button id="startGameBtn">Start Game</button>
     <div id="titleHint">A medieval siege conquest</div>
