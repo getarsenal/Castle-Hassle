@@ -359,19 +359,21 @@ export class WorldMap3D {
     .mapCompass .needle{position:absolute;left:50%;top:50%;width:0;height:0;transform:translate(-50%,-100%);
       border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:22px solid #a6301f}
     .mapCompass .needle.s{transform:translate(-50%,0);border-bottom:none;border-top:22px solid #3a4a66}
-    .castlePanel{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(86vw,420px);
-      background:linear-gradient(#241a10f2,#160f08f2);border:1px solid #7a5e2e;border-radius:14px;
-      padding:14px 16px 16px;color:#f3e6cf;z-index:7;box-shadow:0 6px 22px rgba(0,0,0,.55);display:none;font-family:Georgia,serif}
+    .castlePanel{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(88vw,400px);
+      background:linear-gradient(#241a10f2,#160f08f2);border:1px solid #7a5e2e;border-radius:16px;
+      padding:20px 20px 18px;color:#f3e6cf;z-index:7;box-shadow:0 6px 22px rgba(0,0,0,.55);display:none;font-family:Georgia,serif;text-align:center}
     .castlePanel.show{display:block;animation:cpIn .18s ease-out}
     @keyframes cpIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
-    .castlePanel h3{margin:0 0 2px;font-size:20px;color:#ffe6a6;letter-spacing:.3px}
-    .castlePanel .reg{font-size:12px;color:#c7a86e;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
-    .castlePanel .blurb{font-size:13px;line-height:1.4;color:#e6d8c0;margin-bottom:10px}
-    .castlePanel .stats{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;margin-bottom:12px}
-    .castlePanel .stat{font-size:12.5px;display:flex;justify-content:space-between;border-bottom:1px solid #3a2c19;padding-bottom:3px}
-    .castlePanel .stat b{color:#ffd98a;font-weight:600}
-    .castlePanel .row{display:flex;gap:10px}
-    .castlePanel button{flex:1;border:none;border-radius:9px;padding:11px;font:600 15px Georgia,serif;cursor:pointer}
+    .castlePanel h3{margin:0 0 4px;font-size:23px;color:#ffe6a6;letter-spacing:.4px;line-height:1.1}
+    .castlePanel .reg{font-size:11px;color:#c7a86e;margin-bottom:13px;text-transform:uppercase;letter-spacing:2.5px}
+    .castlePanel .blurb{font-size:13.5px;line-height:1.5;color:#e3d4ba;margin:0 auto 16px;max-width:330px}
+    .castlePanel .stats{margin:0 auto 18px;text-align:left;max-width:340px}
+    .castlePanel .stat{font-size:13.5px;display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:8px 2px;border-bottom:1px solid #3a2c19}
+    .castlePanel .stat:last-child{border-bottom:none}
+    .castlePanel .stat span{color:#bda981;white-space:nowrap}
+    .castlePanel .stat b{color:#ffd98a;font-weight:600;text-align:right}
+    .castlePanel .row{display:flex;gap:11px}
+    .castlePanel button{flex:1;border:none;border-radius:10px;padding:12px 10px;font:600 15px Georgia,serif;cursor:pointer;line-height:1.15}
     .castlePanel .go{background:linear-gradient(#b5402f,#8c2b20);color:#fff}
     .castlePanel .close{background:#3a2e1e;color:#d9c8a8}
     .marchHint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:7;
@@ -426,7 +428,7 @@ export class WorldMap3D {
     const p = this.panelEl; if (!p) return; const d = this.describe(node);
     p.innerHTML = `<h3>${node.name}</h3><div class="reg">${node.region}</div><div class="blurb">${d.blurb}</div>`
       + `<div class="stats">${d.stats.map(s => `<div class="stat"><span>${s[0]}</span><b>${s[1]}</b></div>`).join('')}</div>`
-      + `<div class="row">${d.canSiege ? '<button class="go">⚔ March &amp; Lay Siege</button>' : ''}<button class="close">Close</button></div>`;
+      + `<div class="row">${d.canSiege ? '<button class="go">March &amp; Lay Siege</button>' : ''}<button class="close">Close</button></div>`;
     p.classList.add('show');
     p.querySelector('.close')!.addEventListener('click', () => p.classList.remove('show'));
     const go = p.querySelector('.go'); if (go) go.addEventListener('click', () => { p.classList.remove('show'); this.marchTo(node); });

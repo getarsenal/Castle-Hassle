@@ -64,6 +64,15 @@
 
     /* Begin button: directly under the topbar, deploy only */
     #startbar { position: absolute; top: calc(var(--safe-top) + 54px); left: 50%; transform: translateX(-50%); pointer-events: auto; }
+    #keepBar { position: absolute; top: calc(var(--safe-top) + 52px); left: 50%; transform: translateX(-50%);
+      width: min(72vw, 300px); display: none; text-align: center; }
+    #keepBar.show { display: block; }
+    #keepLabel { font: 700 11px Georgia, serif; letter-spacing: 1.5px; color: #ffe1a0;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8); margin-bottom: 4px; }
+    #keepTrack { height: 9px; border-radius: 6px; background: rgba(10,8,6,0.72);
+      border: 1px solid rgba(255,255,255,0.18); overflow: hidden; }
+    #keepFill { height: 100%; width: 0%; border-radius: 6px;
+      background: linear-gradient(90deg, #e8b53a, #c43d34); transition: width 0.12s linear; }
     #startbtn { font: inherit; font-weight: 800; font-size: 15px; color: #1a2433; background: #ffd24a; border: none; border-radius: 12px; padding: 10px 22px; box-shadow: 0 4px 0 #c79a20; cursor: pointer; }
     #startbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #c79a20; }
 
@@ -246,7 +255,8 @@
       <span class="stat"><span class="dot def"></span><span id="defCount">0</span></span>
       <span style="opacity:.4; margin-left:6px;" id="phase">DEPLOY</span>
     </div>
-    <div id="startbar"><button id="startbtn">⚔ Begin Assault</button></div>
+    <div id="startbar"><button id="startbtn">Begin Assault</button></div>
+    <div id="keepBar"><div id="keepLabel">HOLD THE KEEP</div><div id="keepTrack"><div id="keepFill"></div></div></div>
     <div id="hint">Tap a unit card, then tap the field to send them. Drag to pan, pinch to zoom.</div>
     <div id="tools"></div>
     <div id="cards"></div>
@@ -261,7 +271,7 @@
       <div id="budgetBar"><i></i></div>
     </div>
     <div id="rosterRows"></div>
-    <button id="musterBtn">Muster &amp; Deploy ▶</button>
+    <button id="musterBtn">Muster &amp; Deploy</button>
   </div>
 
   <!-- Studio splash → title → world map -->
@@ -271,7 +281,7 @@
       <div id="introMark">SCHEIDEL</div>
       <div id="introSub">INTERACTIVE</div>
     </div>
-    <div id="introHint">🔊 tap for sound</div>
+    <div id="introHint">tap for sound</div>
   </div>
 
   <div id="titleScreen">
@@ -282,7 +292,7 @@
   <div id="map">
     <canvas id="mapCanvas"></canvas>
     <div id="mapHeader">CHOOSE YOUR NEXT SIEGE</div>
-    <button id="warCouncilBtn">⚖️ War Council<span id="wcGold"></span></button>
+    <button id="warCouncilBtn">War Council<span id="wcGold"></span></button>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

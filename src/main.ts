@@ -24,11 +24,11 @@ const banner = $('banner'), bannerTitle = $('bannerTitle'), bannerText = $('bann
 // ---------------- Muster screen ----------------
 const comp: ArmyComp = { ...DEFAULT_COMP };
 const ROSTER = [
-  { key: 'heavy', icon: '🛡️', name: 'Heavy Infantry', dsc: 'Tanky, slow — holds the line', step: 20 },
-  { key: 'light', icon: '⚔️', name: 'Light Infantry', dsc: 'Fast, fragile — swarms', step: 20 },
-  { key: 'archer', icon: '🏹', name: 'Archers', dsc: 'Volleys, limited arrows', step: 20 },
-  { key: 'cavalry', icon: '🐎', name: 'Cavalry', dsc: 'Shock charge, weak in a grind', step: 20 },
-  { key: 'siege', icon: '🪨', name: 'Trebuchets', dsc: 'Smash walls, few boulders', step: 1 },
+  { key: 'heavy', name: 'Heavy Infantry', dsc: 'Tanky, slow — holds the line', step: 20 },
+  { key: 'light', name: 'Light Infantry', dsc: 'Fast, fragile — swarms', step: 20 },
+  { key: 'archer', name: 'Archers', dsc: 'Volleys, limited arrows', step: 20 },
+  { key: 'cavalry', name: 'Cavalry', dsc: 'Shock charge, weak in a grind', step: 20 },
+  { key: 'siege', name: 'Trebuchets', dsc: 'Smash walls, few boulders', step: 1 },
 ] as const;
 let budget = BUDGET;       // per-battle muster budget (grows across the campaign)
 ($('ptsMax')).textContent = String(budget);
@@ -37,7 +37,7 @@ function buildMuster() {
   const rows = $('rosterRows'); rows.innerHTML = '';
   for (const r of ROSTER) {
     const row = document.createElement('div'); row.className = 'rrow';
-    row.innerHTML = `<div class="ic">${r.icon}</div><div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc} · ${(COST as any)[r.key]}p each</div></div>
+    row.innerHTML = `<div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc} · ${(COST as any)[r.key]}p each</div></div>
       <button class="rbtn minus">−</button><div class="ct" data-k="${r.key}">0</div><button class="rbtn plus">+</button>`;
     const ct = row.querySelector('.ct') as HTMLElement;
     row.querySelector('.minus')!.addEventListener('click', () => { (comp as any)[r.key] = Math.max(0, (comp as any)[r.key] - r.step); ct.textContent = String((comp as any)[r.key]); updateBudget(); });
@@ -98,18 +98,26 @@ function refreshCards() {
     if (am) am.style.width = `${u.ammoMax ? Math.round(u.ammo / u.ammoMax * 100) : 0}%`;
   }
 }
+const keepBar = document.getElementById('keepBar'), keepFill = document.getElementById('keepFill'), keepLabel = document.getElementById('keepLabel');
 function updateTopbar() {
   attCountEl.textContent = String(sim.countAlive(Faction.Attacker));
   defCountEl.textContent = String(sim.countAlive(Faction.Defender));
   phaseEl.textContent = sim.phase === 'deploy' ? 'DEPLOY' : sim.phase === 'battle' ? 'BATTLE' : 'OVER';
+  // keep-capture meter: only meaningful once the assault is underway
+  const cp = sim.captureProgress;
+  if (keepBar && keepFill && keepLabel) {
+    const showBar = sim.phase === 'battle' && cp > 0.001;
+    keepBar.classList.toggle('show', showBar);
+    if (showBar) { keepFill.style.width = `${Math.round(cp * 100)}%`; keepLabel.textContent = cp >= 0.999 ? 'KEEP TAKEN' : 'RAISING YOUR BANNER OVER THE KEEP'; }
+  }
 }
 function updateHint() {
   const u = selected >= 0 ? sim.units[selected] : null;
   if (u && u.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
   else if (u && u.type === UType.Archer) hintEl.textContent = 'Archers: TAP to set a focus target · drag to reposition';
   else if (u) hintEl.textContent = 'Tap to send · DRAG to set their line & facing · two fingers = camera';
-  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: position your units, then ⚔ Begin Assault (top). One finger rotates.';
-  else hintEl.textContent = 'Tap a unit to select · trebuchets breach walls, then send troops in';
+  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: position your units, then Begin Assault (top). One finger rotates.';
+  else hintEl.textContent = 'Breach the walls, storm the keep and hold it — or grind the garrison to nothing';
 }
 function updateTools() {
   const u = selected >= 0 ? sim.units[selected] : null;
@@ -139,15 +147,17 @@ function showEnd() {
   const win = sim.winner === Faction.Attacker;
   bannerTitle.textContent = win ? 'CASTLE TAKEN' : 'ASSAULT BROKEN';
   bannerTitle.style.color = win ? '#5fd16a' : '#e8513a';
-  bannerText.textContent = win ? (sim.countAlive(Faction.Defender) < 30 ? 'A clean sweep — the castle is yours.' : 'You hold the walls; survivors slipped away.') : 'Your army broke before the keep fell.';
+  bannerText.textContent = win
+    ? (sim.captureProgress >= 0.999 ? 'Your banner flies over the keep — the castle is yours.' : 'The garrison is shattered — the castle is yours.')
+    : 'Your assault was thrown back from the walls.';
   if (win && activeCastle) {
     const firstTake = !progress.completed.includes(activeCastle.id);
     if (firstTake) progress.completed.push(activeCastle.id);
     progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
-    if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} 💰 gold.`; }
+    if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} gold.`; }
     saveProgress(progress);
   }
-  restartBtn.textContent = activeCastle ? (win ? 'March On ▸' : 'Back to the Map') : 'Fight Again';
+  restartBtn.textContent = activeCastle ? (win ? 'March On' : 'Back to the Map') : 'Fight Again';
   banner.classList.add('show');
 }
 
@@ -227,7 +237,7 @@ let map: WorldMap3D | null = null;
 
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
-function refreshGoldLabel() { const g = document.getElementById('wcGold'); if (g) g.textContent = `· ${progress.gold} 💰`; }
+function refreshGoldLabel() { const g = document.getElementById('wcGold'); if (g) g.textContent = ` · ${progress.gold} gold`; }
 function openMap() {
   activeCastle = null;
   show('intro', false); show('titleScreen', false); show('muster', false); show('map', true);

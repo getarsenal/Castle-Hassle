@@ -5,30 +5,30 @@ import { AtkBuff } from './sim';
 import { Progress, saveProgress } from './campaign';
 
 export interface UpgNode { name: string; desc: string; cost: number; }
-export interface UpgTree { key: string; title: string; icon: string; nodes: UpgNode[]; }
+export interface UpgTree { key: string; title: string; nodes: UpgNode[]; }
 
 export const TREES: UpgTree[] = [
-  { key: 'quartermaster', title: 'Quartermaster', icon: '⚖️', nodes: [
+  { key: 'quartermaster', title: 'Quartermaster', nodes: [
     { name: 'Supply Lines', desc: '+8% army budget', cost: 120 },
     { name: 'War Chest', desc: '+16% army budget', cost: 280 },
     { name: 'Grand Logistics', desc: '+24% army budget', cost: 520 },
   ] },
-  { key: 'armorer', title: 'Armorer', icon: '🛡️', nodes: [
+  { key: 'armorer', title: 'Armorer', nodes: [
     { name: 'Hardened Mail', desc: '+12% infantry health', cost: 120 },
     { name: 'Plate Harness', desc: '+24% infantry health', cost: 280 },
     { name: 'Masterwork Plate', desc: '+36% infantry health', cost: 520 },
   ] },
-  { key: 'weaponsmith', title: 'Weaponsmith', icon: '⚔️', nodes: [
+  { key: 'weaponsmith', title: 'Weaponsmith', nodes: [
     { name: 'Whetstones', desc: '+12% melee damage', cost: 120 },
     { name: 'Tempered Steel', desc: '+24% melee damage', cost: 280 },
     { name: 'Damascus Edge', desc: '+36% melee damage', cost: 520 },
   ] },
-  { key: 'fletcher', title: 'Master Fletcher', icon: '🏹', nodes: [
+  { key: 'fletcher', title: 'Master Fletcher', nodes: [
     { name: 'Bodkin Points', desc: '+15% arrow damage', cost: 120 },
     { name: 'Yew Longbows', desc: '+30% arrow damage', cost: 300 },
     { name: 'Fire Arrows', desc: 'Your archers loose flaming arrows', cost: 560 },
   ] },
-  { key: 'engineer', title: 'Siege Engineer', icon: '🪨', nodes: [
+  { key: 'engineer', title: 'Siege Engineer', nodes: [
     { name: 'Counterweights', desc: '+22% boulder damage', cost: 150 },
     { name: 'Siege Workshop', desc: '+2 free trebuchets', cost: 340 },
     { name: 'Master Engineers', desc: '+44% boulder damage, faster reload', cost: 600 },
@@ -88,15 +88,15 @@ export function openUpgrades(prog: Progress, onClose: () => void) {
   injectStyles();
   const root = document.createElement('div'); root.className = 'upgScreen';
   const render = () => {
-    root.innerHTML = `<div class="upgTop"><button class="upgClose">‹ Back</button><h2>War Council</h2><div class="upgGold">💰 <b>${prog.gold}</b> gold</div></div>`
+    root.innerHTML = `<div class="upgTop"><button class="upgClose">Back</button><h2>War Council</h2><div class="upgGold"><b>${prog.gold}</b> gold</div></div>`
       + `<div class="upgHint">Spend the spoils of conquest on permanent upgrades for your army.</div>`
       + `<div class="upgBody">${TREES.map(t => {
         const lvl = prog.upg[t.key] || 0;
-        return `<div class="upgTree"><h3>${t.icon} ${t.title}</h3><div class="upgRow">${t.nodes.map((nd, i) => {
+        return `<div class="upgTree"><h3>${t.title}</h3><div class="upgRow">${t.nodes.map((nd, i) => {
           const bought = i < lvl, canbuy = i === lvl && prog.gold >= nd.cost, locked = !bought && !canbuy;
           const cls = bought ? 'bought' : canbuy ? 'canbuy' : 'locked';
-          const btn = bought ? 'Owned' : `${nd.cost} 💰`;
-          return `<div class="upgNode ${cls}">${i > 0 ? '<div class="upgConn"></div>' : ''}${bought ? '<div class="upgDone">✓</div>' : ''}`
+          const btn = bought ? 'Owned' : `${nd.cost} gold`;
+          return `<div class="upgNode ${cls}">${i > 0 ? '<div class="upgConn"></div>' : ''}`
             + `<div class="nm">${nd.name}</div><div class="ds">${nd.desc}</div>`
             + `<button class="buy" data-k="${t.key}" data-i="${i}" ${bought || locked ? 'disabled' : ''}>${btn}</button></div>`;
         }).join('')}</div></div>`;

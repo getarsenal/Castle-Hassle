@@ -41,6 +41,7 @@ const BOULDER_DMG = 200;       // damage a trebuchet boulder does to a wall sect
 const BOULDER_SPEED = 30;
 const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
+const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
 
 export function maxHp(t: UType) { return HP[t]; }
 
@@ -330,6 +331,8 @@ export class Sim {
   ladders: Ladder[] = [];
   private ladderMinPy: number[] = []; // lowest occupied height per ladder (single-file gating)
   private attInsideCount = 0;         // attackers standing inside the walls
+  captureProgress = 0;                // 0..1 — your banner rising over the keep
+  private keepX = 0; private keepZ = 0; private captureR = 20;
   n = 0;
   units: Unit[] = [];
   typeCount = [0, 0, 0, 0, 0];
@@ -476,6 +479,11 @@ export class Sim {
       if (u.faction === Faction.Attacker) this.attackerAliveStart += u.count;
       else this.defenderAliveStart += u.count;
     }
+    // the keep is the prize: hold its ground to raise your banner over it
+    const keep = CASTLE.find(b => b.kind === 'keep'); const citd = LAYOUT.citadel;
+    this.keepX = citd ? citd.cx : keep ? (keep.x0 + keep.x1) / 2 : 0;
+    this.keepZ = citd ? citd.cz : keep ? (keep.z0 + keep.z1) / 2 : 0;
+    this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : 20;
   }
 
   private setAnchor(u: Unit, x: number, z: number, facing: number, cols: number) {
@@ -579,23 +587,30 @@ export class Sim {
       if (!deploy && !u.routing && a > 0 && a / u.count < ROUT_FRAC) u.routing = true;
     }
     if (!deploy) {
-      // The defense only collapses once it's genuinely beaten — NOT the moment a
-      // few attackers stand in the bailey. Either the ground garrison (incl. the
-      // citadel guard) is broken, OR the defenders have been ground down to a
-      // remnant AND the attackers overwhelmingly hold the courtyard. This stops
-      // the castle "falling" with most of the garrison still alive.
-      let defGround = 0, defAlive = 0, attInside = 0;
+      // The castle falls only when you actually win it: either raise your banner
+      // over the keep (hold its ground while the garrison there is cleared) or
+      // grind the garrison down to a shattered remnant. Count who holds the keep.
+      let defAlive = 0, attInside = 0, attKeep = 0, defKeep = 0;
+      const kr2 = this.captureR * this.captureR;
       for (let i = 0; i < this.n; i++) {
         if (!this.alive[i]) continue;
+        const nearKeep = (this.px[i] - this.keepX) ** 2 + (this.pz[i] - this.keepZ) ** 2 < kr2 && this.py[i] < 7;
         if (this.fac[i] === Faction.Defender) {
           defAlive++;
-          if ((this.typ[i] === UType.Heavy || this.typ[i] === UType.Light) && this.climbState[i] === 0 && this.py[i] < 2) defGround++;
-        } else if (this.climbState[i] === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1 && this.typ[i] !== UType.Siege) attInside++;
+          if (nearKeep) defKeep++;
+        } else if (this.typ[i] !== UType.Siege) {
+          if (this.climbState[i] === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1) attInside++;
+          if (nearKeep) attKeep++;
+        }
       }
       const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
       this.attInsideCount = attInside; // wall defenders abandon the walls once this is high
-      if (defGround < 25 || (defFrac < 0.5 && attInside > 80 && attInside > 2.5 * defGround))
-        for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
+      // capture meter: fills while you hold the keep ground with its guard cleared,
+      // drains while the defenders still contest it.
+      if (attKeep >= 6 && defKeep <= attKeep * 0.4) this.captureProgress = Math.min(1, this.captureProgress + dt / CAPTURE_TIME);
+      else if (defKeep > attKeep) this.captureProgress = Math.max(0, this.captureProgress - dt * 0.6);
+      // only the last shattered survivors break and run
+      if (defFrac < 0.12) for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
 
     // ---- ladders: raise animation + per-ladder lowest occupant (single file) ----
@@ -1045,9 +1060,16 @@ export class Sim {
   }
 
   private checkVictory() {
-    let attActive = 0, defActive = 0;
-    for (const u of this.units) { if (u.routing) continue; if (u.faction === Faction.Attacker) attActive += u.alive; else defActive += u.alive; }
-    if (defActive === 0) { this.phase = 'over'; this.winner = Faction.Attacker; }
+    // You win by raising your banner over the keep (capture meter full) or by
+    // all-but-annihilating the garrison (down to ~10%). You lose when the assault
+    // is spent — every remaining company has broken and routed.
+    let attActive = 0, defAlive = 0;
+    for (const u of this.units) {
+      if (u.faction === Faction.Defender) defAlive += u.alive;
+      else if (!u.routing) attActive += u.alive;
+    }
+    const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
+    if (this.captureProgress >= 1 || defFrac <= 0.1) { this.phase = 'over'; this.winner = Faction.Attacker; }
     else if (attActive === 0) { this.phase = 'over'; this.winner = Faction.Defender; }
   }
 
