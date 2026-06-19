@@ -1,6 +1,7 @@
 import { Sim, Faction, UType, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost } from './sim';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignMap, CampaignCastle, Progress } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress } from './campaign';
+import { WorldMap3D } from './worldmap3d';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -217,7 +218,7 @@ function handleTap(cx: number, cy: number) {
 const castles = generateCastles();
 let progress: Progress = loadProgress();
 let activeCastle: CampaignCastle | null = null;
-let map: CampaignMap | null = null;
+let map: WorldMap3D | null = null;
 
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
@@ -227,7 +228,7 @@ function openMap() {
   banner.classList.remove('show');
   if (map) map.destroy();
   const canvas = $('mapCanvas') as HTMLCanvasElement; // re-fetch (destroy swaps the node)
-  map = new CampaignMap(canvas, castles, progress, enterCastle);
+  map = new WorldMap3D(canvas, castles, progress, enterCastle);
 }
 
 function enterCastle(c: CampaignCastle) {
@@ -314,8 +315,11 @@ function frame(now: number) {
   if (u && u.alive > 0 && (u.type === UType.Archer || u.type === UType.Siege) && showRange) renderer.setRangeFan(u.cx, u.cz, sim.unitRange(u.id));
   else renderer.setRangeFan(null, null);
 
+  // Skip the battle render while a full-screen overlay covers it (the 3D map,
+  // title or splash) — no point drawing two WebGL scenes at once.
+  const covered = ['map', 'titleScreen', 'intro'].some(id => document.getElementById(id)?.classList.contains('show'));
   const tg = performance.now();
-  renderer.render(Math.min(dt, 0.05));
+  if (!covered) renderer.render(Math.min(dt, 0.05));
   gfxMs += performance.now() - tg;
   refreshCards(); updateTopbar();
   if (sim.phase === 'over' && !ended) { ended = true; showEnd(); }
