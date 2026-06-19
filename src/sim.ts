@@ -49,6 +49,9 @@ export type SegKind = 'wall' | 'gate' | 'tower' | 'keep' | 'building';
 export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; }
 export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; }
 export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
+// A scaling ladder raised against a wall section. Attackers queue at the foot
+// and climb it single-file; `raise` animates it swinging up (0..1).
+export interface Ladder { seg: number; along: number; bx: number; bz: number; horiz: boolean; outer: number; raise: number; }
 export interface CastleLayout {
   W: number; D: number; gate: { x: number; z: number };
   wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
@@ -276,6 +279,9 @@ export class Sim {
   ammo = new Float32Array(this.MAX);
   // wall-scaling: 0 ground, 1 climbing up, 2 on wall-top, 3 descending inside
   climbState = new Uint8Array(this.MAX); climbSeg = new Int16Array(this.MAX);
+  climbLadder = new Int16Array(this.MAX).fill(-1); // ladder a climber is on (-1 = direct/none)
+  ladders: Ladder[] = [];
+  private ladderMinPy: number[] = []; // lowest occupied height per ladder (single-file gating)
   n = 0;
   units: Unit[] = [];
   typeCount = [0, 0, 0, 0, 0];
@@ -347,6 +353,7 @@ export class Sim {
   }
 
   private setup() {
+    this.ladders = []; this.climbLadder.fill(-1);
     const R = (a: number, b: number) => a + this.rnd() * (b - a);
     // grid block placement helper
     const block = (cx: number, cz: number, cols: number, gap: number) => (i: number): [number, number, number] => {
@@ -540,6 +547,18 @@ export class Sim {
         for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
 
+    // ---- ladders: raise animation + per-ladder lowest occupant (single file) ----
+    if (!deploy && this.ladders.length) {
+      if (this.ladderMinPy.length !== this.ladders.length) this.ladderMinPy = new Array(this.ladders.length).fill(Infinity);
+      else this.ladderMinPy.fill(Infinity);
+      for (let l = 0; l < this.ladders.length; l++) { const L = this.ladders[l]; if (L.raise < 1) L.raise = Math.min(1, L.raise + dt / 0.6); }
+      for (let i = 0; i < this.n; i++) {
+        if (!this.alive[i] || this.climbState[i] !== 1) continue;
+        const l = this.climbLadder[i];
+        if (l >= 0 && this.py[i] < this.ladderMinPy[l]) this.ladderMinPy[l] = this.py[i];
+      }
+    }
+
     for (let i = 0; i < this.n; i++) {
       if (!this.alive[i]) continue;
       const u = this.units[this.unit[i]];
@@ -596,7 +615,7 @@ export class Sim {
           // active archer: volley enemies in range (within the focus area if set)
           if (nearest >= 0 && dist <= RANGE[t] && !u.holdFire && this.focusOk(u, nearest)) {
             if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
-          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.scaleWall(i); dx = this._dir[0]; dz = this._dir[1]; } }
+          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; } }
         } else {
           // melee — including archers who've spent all their arrows
           // Defender reserves rush to MOUNT a wall the enemy is scaling.
@@ -613,7 +632,7 @@ export class Sim {
           } else if (!u.hold) {
             this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
             // no breach to filter through → march to the wall in front and scale it
-            if (this._stuck && t !== UType.Cavalry) { this.scaleWall(i); dx = this._dir[0]; dz = this._dir[1]; }
+            if (this._stuck && t !== UType.Cavalry) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
           } else if (u.hold && nearest >= 0 && dist < 24 && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
             // garrison surges off its hold to engage enemies that get inside the walls
             const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
@@ -725,55 +744,115 @@ export class Sim {
     }
     return best;
   }
-  private startClimb(i: number, seg: number) { this.climbState[i] = 1; this.climbSeg[i] = seg; }
-
-  // Walled off from the goal: head to the nearest wall section and start scaling
-  // it. Writes the approach direction to _dir (0,0 once the ladder is mounted).
-  private scaleWall(i: number) {
-    const seg = this.nearestClimbWall(this.px[i], this.pz[i]);
-    if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
-    const g = CASTLE[seg];
-    const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
-    const ddx = cpx - this.px[i], ddz = cpz - this.pz[i], l = Math.hypot(ddx, ddz) || 1;
-    if (l <= this.CLIMB) { this.startClimb(i, seg); this._dir[0] = 0; this._dir[1] = 0; }
-    else { this._dir[0] = ddx / l; this._dir[1] = ddz / l; }
+  // Defender wall reinforcement uses interior stairs (direct climb, no ladder).
+  private startClimb(i: number, seg: number) { this.climbState[i] = 1; this.climbSeg[i] = seg; this.climbLadder[i] = -1; }
+  private moveXZ(i: number, tx: number, tz: number, step: number): number {
+    const dx = tx - this.px[i], dz = tz - this.pz[i], l = Math.hypot(dx, dz);
+    if (l > 0.05) { const s = Math.min(l, step); this.px[i] += dx / l * s; this.pz[i] += dz / l * s; }
+    return l;
+  }
+  // Nearest standing tower + the point just inside it (where its stairs let you
+  // down into the courtyard).
+  private nearestTowerPos(x: number, z: number): { x: number; z: number; r: number; ix: number; iz: number } | null {
+    let bx = 0, bz = 0, br = 0, bd = 1e9, found = false;
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s]; if (g.dead || g.kind !== 'tower') continue;
+      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2, d2 = (cx - x) ** 2 + (cz - z) ** 2;
+      if (d2 < bd) { bd = d2; bx = cx; bz = cz; br = (g.x1 - g.x0) / 2; found = true; }
+    }
+    if (!found) return null;
+    const il = Math.hypot(bx, bz) || 1; // inner point: from the tower toward the keep/centre
+    return { x: bx, z: bz, r: br, ix: bx - bx / il * (br + 3), iz: bz - bz / il * (br + 3) };
   }
 
-  // Fully controls a climbing soldier for the tick (sets px/pz/py). Each soldier
-  // climbs at its OWN position along the wall (so they spread out, not jam) and
-  // pushes across the walkway while fighting, then drops inside.
+  // Attacker: pick (or raise) a ladder on the nearest wall and queue at its foot;
+  // mount single-file once it's up and the rungs below are clear.
+  private LADDER_CAP = 48;
+  private findOrMakeLadder(seg: number, i: number): number {
+    const g = CASTLE[seg], horiz = (g.x1 - g.x0) >= (g.z1 - g.z0);
+    const myAlong = horiz ? this.px[i] : this.pz[i];
+    let best = -1, bd = 1e9, onSeg = 0;
+    for (let l = 0; l < this.ladders.length; l++) {
+      const L = this.ladders[l]; if (L.seg !== seg) continue;
+      onSeg++; const d = Math.abs(L.along - myAlong); if (d < bd) { bd = d; best = l; }
+    }
+    if (best >= 0 && bd < 7) return best;                 // reuse a nearby ladder
+    const segLen = horiz ? g.x1 - g.x0 : g.z1 - g.z0;
+    const cap = Math.max(1, Math.floor(segLen / 6));
+    if (onSeg >= cap || this.ladders.length >= this.LADDER_CAP) return best; // at cap → share the nearest
+    const wallPerp = horiz ? (g.z0 + g.z1) / 2 : (g.x0 + g.x1) / 2;
+    const outer = (Math.sign(wallPerp) || 1);
+    const aMin = (horiz ? g.x0 : g.z0) + 1.2, aMax = (horiz ? g.x1 : g.z1) - 1.2;
+    const along = Math.max(aMin, Math.min(aMax, myAlong));
+    const foot = wallPerp + outer * (T / 2 + 1.6);
+    this.ladders.push({ seg, along, bx: horiz ? along : foot, bz: horiz ? foot : along, horiz, outer, raise: 0 });
+    return this.ladders.length - 1;
+  }
+  private useLadder(i: number) {
+    const seg = this.nearestClimbWall(this.px[i], this.pz[i]);
+    if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
+    const L = this.findOrMakeLadder(seg, i);
+    if (L < 0) { // couldn't get a ladder: just press toward the wall and retry
+      const g = CASTLE[seg], cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
+      const dx = cpx - this.px[i], dz = cpz - this.pz[i], l = Math.hypot(dx, dz) || 1; this._dir[0] = dx / l; this._dir[1] = dz / l; return;
+    }
+    const lad = this.ladders[L];
+    const dx = lad.bx - this.px[i], dz = lad.bz - this.pz[i], l = Math.hypot(dx, dz);
+    if (l <= 1.7) {
+      this._dir[0] = 0; this._dir[1] = 0;     // at the foot — wait our turn, then mount
+      const clear = this.ladderMinPy[L] === undefined || this.ladderMinPy[L] > 3.0;
+      if (lad.raise >= 0.55 && clear) {
+        this.climbState[i] = 1; this.climbSeg[i] = seg; this.climbLadder[i] = L;
+        if (lad.horiz) this.px[i] = lad.along; else this.pz[i] = lad.along; // snap to the rung line
+      }
+    } else { this._dir[0] = dx / l; this._dir[1] = dz / l; }
+  }
+
+  // Fully controls a climbing soldier for the tick (sets px/pz/py): up a ladder
+  // single-file, across the wall-walk to a tower, and down its stairs inside.
   private climbStep(i: number, u: Unit, t: UType, dt: number, nearest: number) {
-    const seg = CASTLE[this.climbSeg[i]];
-    if (!seg || seg.dead) { this.climbState[i] = 0; this.py[i] = 0; return; } // wall fell → it's a breach now
-    const horiz = (seg.x1 - seg.x0) >= (seg.z1 - seg.z0);
-    const wallPerp = horiz ? (seg.z0 + seg.z1) / 2 : (seg.x0 + seg.x1) / 2;
-    const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
-    const along = Math.max(aMin, Math.min(aMax, horiz ? this.px[i] : this.pz[i]));
-    const sgn = wallPerp >= 0 ? 1 : -1;
-    const innerPerp = wallPerp - sgn * (T + 3.5);
-    const at = (alongV: number, perpV: number, sp: number) => {
-      const tx = horiz ? alongV : perpV, tz = horiz ? perpV : alongV;
-      const dx = tx - this.px[i], dz = tz - this.pz[i], l = Math.hypot(dx, dz);
-      if (l > 0.05) { const s = Math.min(l, sp * dt); this.px[i] += dx / l * s; this.pz[i] += dz / l * s; }
-      return l;
-    };
-    // strike a same-level enemy if adjacent (the wall-top melee)
+    // wall-top / ladder melee against an adjacent same-level enemy
     if (nearest >= 0 && Math.abs(this.py[nearest] - this.py[i]) < 2.5) {
       const dd = Math.hypot(this.px[nearest] - this.px[i], this.pz[nearest] - this.pz[i]);
       if (dd < 2.2 && this.cd[i] <= 0) { const dmg = (MELEE[t] || 7) * 1.4; this.hp[nearest] -= dmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
     }
     const st = this.climbState[i];
-    if (st === 1) {                       // up the outer face onto the walkway
-      const l = at(along, wallPerp, 3.0); this.py[i] = Math.min(WH, this.py[i] + 4 * dt);
-      if (l < 1.0 && this.py[i] >= WH - 0.1) this.climbState[i] = u.faction === Faction.Attacker ? 2 : 4;
-    } else if (st === 2) {                // attacker: push across the walkway (fighting), then drop in
-      const l = at(along, innerPerp, 1.6);
-      if (l < 1.2) this.climbState[i] = 3;
-    } else if (st === 3) {                // descend into the courtyard
-      const l = at(along, innerPerp, 3.0); this.py[i] = Math.max(0, this.py[i] - 4 * dt);
-      if (this.py[i] <= 0.05 && l < 1.2) { this.climbState[i] = 0; this.py[i] = 0; }
+    if (st === 1) {                       // ascending
+      const seg = CASTLE[this.climbSeg[i]];
+      if (!seg || seg.dead) { this.climbState[i] = 0; this.py[i] = 0; this.climbLadder[i] = -1; return; } // wall fell → breach
+      const horiz = (seg.x1 - seg.x0) >= (seg.z1 - seg.z0);
+      const wallPerp = horiz ? (seg.z0 + seg.z1) / 2 : (seg.x0 + seg.x1) / 2;
+      const lad = this.climbLadder[i] >= 0 ? this.ladders[this.climbLadder[i]] : null;
+      if (lad) {                          // attacker, single-file up the ladder line
+        this.moveXZ(i, horiz ? lad.along : wallPerp, horiz ? wallPerp : lad.along, 2.4 * dt);
+        this.py[i] = Math.min(WH, this.py[i] + 3.2 * dt);
+        if (this.py[i] >= WH - 0.1) { this.climbState[i] = 2; this.climbLadder[i] = -1; }
+      } else {                            // defender, direct interior climb
+        const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
+        const along = Math.max(aMin, Math.min(aMax, horiz ? this.px[i] : this.pz[i]));
+        const l = this.moveXZ(i, horiz ? along : wallPerp, horiz ? wallPerp : along, 3.0 * dt);
+        this.py[i] = Math.min(WH, this.py[i] + 4 * dt);
+        if (l < 1.0 && this.py[i] >= WH - 0.1) this.climbState[i] = u.faction === Faction.Attacker ? 2 : 4;
+      }
+    } else if (st === 2) {                // attacker on the battlements: head to a tower to get down
+      this.py[i] = WH;
+      const tw = this.nearestTowerPos(this.px[i], this.pz[i]);
+      if (!tw) { this.climbState[i] = 3; return; } // no tower left → drop where we are
+      const l = this.moveXZ(i, tw.x, tw.z, 4.0 * dt);
+      if (l < tw.r + 1.0) this.climbState[i] = 3;
+    } else if (st === 3) {                // descend the tower stairs into the courtyard
+      const tw = this.nearestTowerPos(this.px[i], this.pz[i]);
+      const l = this.moveXZ(i, tw ? tw.ix : this.px[i], tw ? tw.iz : this.pz[i], 3.5 * dt);
+      this.py[i] = Math.max(0, this.py[i] - 4 * dt);
+      if (this.py[i] <= 0.05 && l < 1.8) { this.climbState[i] = 0; this.py[i] = 0; }
     } else {                              // st 4: defender holds the wall-top
-      at(along, wallPerp, 1.5);
+      const seg = CASTLE[this.climbSeg[i]];
+      if (!seg || seg.dead) { this.climbState[i] = 0; this.py[i] = 0; return; }
+      const horiz = (seg.x1 - seg.x0) >= (seg.z1 - seg.z0);
+      const wallPerp = horiz ? (seg.z0 + seg.z1) / 2 : (seg.x0 + seg.x1) / 2;
+      const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
+      const along = Math.max(aMin, Math.min(aMax, horiz ? this.px[i] : this.pz[i]));
+      this.moveXZ(i, horiz ? along : wallPerp, horiz ? wallPerp : along, 1.5 * dt);
     }
   }
 

@@ -30,6 +30,9 @@ export class Renderer {
   private fireMesh!: THREE.InstancedMesh;
   private segVis: (SegVis | null)[] = [];
   private trebs: Treb[] = [];
+  private ladderMeshes: THREE.Mesh[] = [];
+  private ladderGeo?: THREE.BufferGeometry;
+  private ladderMat?: THREE.MeshLambertMaterial;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
@@ -476,6 +479,30 @@ export class Renderer {
     this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dir.x, dir.z));
   }
 
+  // Scaling ladders: one mesh per sim ladder, swinging up from the foot (raise).
+  private updateLadders() {
+    if (!this.ladderGeo) {
+      const parts: THREE.BufferGeometry[] = [];
+      const H = 10.5, wd = 1.5;
+      for (const sx of [-wd / 2, wd / 2]) parts.push(new THREE.BoxGeometry(0.18, H, 0.18).translate(sx, H / 2, 0));
+      for (let r = 0; r < 6; r++) parts.push(new THREE.BoxGeometry(wd, 0.16, 0.16).translate(0, 1.0 + r * ((H - 1.6) / 5), 0));
+      this.ladderGeo = mergeGeometries(parts, false);
+      this.ladderMat = this.stone('#855a2f');
+    }
+    const lads = this.sim.ladders;
+    for (let l = 0; l < lads.length; l++) {
+      let m = this.ladderMeshes[l];
+      if (!m) { m = new THREE.Mesh(this.ladderGeo, this.ladderMat!); m.rotation.order = 'YXZ'; this.scene.add(m); this.ladderMeshes[l] = m; }
+      const L = lads[l];
+      const inwardX = L.horiz ? 0 : -L.outer, inwardZ = L.horiz ? -L.outer : 0;
+      m.visible = true;
+      m.position.set(L.bx, 0, L.bz);
+      m.rotation.y = Math.atan2(inwardX, inwardZ);
+      m.rotation.x = Math.PI / 2 + (0.28 - Math.PI / 2) * L.raise; // flat -> leaning on the wall
+    }
+    for (let l = lads.length; l < this.ladderMeshes.length; l++) if (this.ladderMeshes[l]) this.ladderMeshes[l].visible = false;
+  }
+
   // wall damage tint, impact puffs, and the animated collapse
   private updateWalls(dt: number) {
     for (let s = 0; s < CASTLE.length; s++) {
@@ -528,6 +555,7 @@ export class Renderer {
     const sim = this.sim;
     this.time += dt;
     this.updateWalls(dt);
+    this.updateLadders();
     this.updateEffects(dt);
 
     const sa = this.shadowMesh.instanceMatrix.array as Float32Array;
