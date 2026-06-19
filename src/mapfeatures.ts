@@ -20,22 +20,40 @@ export const RIVERS: [number, number][][] = [
   [[33.2, 35.6], [32.0, 35.5], [31.5, 35.5]],                                                // Jordan
 ];
 
-// mountain ranges: ridge polylines; the renderer studs peaks along them
-export const RANGES: [number, number][][] = [
-  [[57.2, -4.8], [56.8, -4.0]],                                                              // Scottish Highlands
-  [[52.7, -3.9], [52.3, -3.6]],                                                              // Cambrian (Wales)
-  [[42.8, -1.4], [42.7, 0.6], [42.5, 2.3]],                                                  // Pyrenees
-  [[45.1, 5.2], [44.2, 3.0]],                                                                // Massif Central
-  [[44.1, 7.0], [45.2, 6.6], [46.0, 7.8], [46.8, 10.0], [47.1, 12.4], [47.3, 14.3]],         // Alps
-  [[44.5, 9.6], [43.3, 11.8], [42.0, 13.8], [40.3, 15.9]],                                   // Apennines
-  [[49.4, 19.2], [48.0, 22.5], [46.0, 24.6], [45.4, 23.0]],                                  // Carpathians
-  [[45.4, 14.6], [43.6, 16.9], [42.0, 19.3], [40.9, 20.3]],                                  // Dinaric Alps
-  [[42.8, 23.0], [42.0, 25.2]],                                                              // Balkan / Rhodope
-  [[40.0, 22.0], [39.9, 21.6]],                                                              // Pindus
-  [[40.9, 34.0], [40.7, 37.5]],                                                              // Pontic
-  [[37.7, 30.5], [37.1, 33.5], [36.9, 35.8]],                                                // Taurus
-  [[34.4, 36.2], [33.4, 35.8]],                                                              // Lebanon
-  [[34.0, -4.5], [33.7, 0.0], [34.6, 3.0]],                                                  // Atlas (N. Africa edge)
+// mountain ranges: ridge polylines following the real chains, each with a peak
+// height (world units, lowland ≈ 10, snowline ≈ 31) so the Alps are snow-capped
+// giants while the British and Greek hills stay modest and green.
+export interface Range { ridge: [number, number][]; h: number; }
+export const RANGES: Range[] = [
+  // ---- British uplands (modest, green/rocky — no permanent snow) ----
+  { ridge: [[57.6, -5.3], [57.1, -4.4], [56.7, -3.7], [56.9, -3.0]], h: 15 },                // Scottish Highlands / Grampians
+  { ridge: [[55.3, -4.2], [55.1, -3.1]], h: 9 },                                             // Southern Uplands
+  { ridge: [[54.7, -2.5], [54.1, -2.2], [53.5, -1.9]], h: 10 },                              // Pennines
+  { ridge: [[54.5, -3.2], [54.4, -3.0]], h: 11 },                                            // Lake District
+  { ridge: [[53.10, -4.02], [52.96, -3.83]], h: 13 },                                        // Snowdonia (Wales)
+  { ridge: [[52.5, -3.7], [52.2, -3.5]], h: 9 },                                             // Cambrian Mountains
+  // ---- Iberia edge & Pyrenees ----
+  { ridge: [[43.1, -5.6], [43.0, -4.0], [42.9, -2.8]], h: 17 },                              // Cantabrian Mountains
+  { ridge: [[42.8, -1.5], [42.7, 0.6], [42.5, 2.4]], h: 26 },                                // Pyrenees (snow)
+  // ---- France ----
+  { ridge: [[45.6, 2.4], [44.9, 3.4], [44.6, 4.0]], h: 13 },                                 // Massif Central
+  { ridge: [[46.3, 6.0], [47.1, 7.0]], h: 10 },                                              // Jura
+  { ridge: [[47.9, 7.0], [48.5, 7.2]], h: 9 },                                               // Vosges
+  // ---- Alps & Italy ----
+  { ridge: [[44.1, 7.0], [45.2, 6.6], [46.0, 7.8], [46.5, 9.0], [46.9, 10.6], [47.1, 12.4], [47.4, 13.9]], h: 31 }, // Alps (snow)
+  { ridge: [[44.5, 8.9], [43.9, 11.1], [43.0, 13.0], [42.0, 13.9], [40.8, 15.6], [39.9, 16.3]], h: 18 }, // Apennines
+  // ---- Central & SE Europe ----
+  { ridge: [[49.4, 18.8], [49.0, 21.0], [47.8, 23.6], [46.5, 25.0], [45.5, 24.2], [45.6, 22.5]], h: 19 }, // Carpathians
+  { ridge: [[45.6, 14.5], [44.3, 16.2], [43.0, 17.7], [42.0, 19.2], [41.0, 20.2]], h: 17 },  // Dinaric Alps
+  { ridge: [[43.1, 23.0], [42.7, 25.6]], h: 14 },                                            // Balkan Mountains
+  { ridge: [[41.6, 24.0], [41.5, 25.3]], h: 12 },                                            // Rhodope
+  { ridge: [[40.1, 21.0], [39.4, 21.3], [38.8, 21.8]], h: 17 },                              // Pindus
+  // ---- Anatolia & the Levant ----
+  { ridge: [[41.0, 35.0], [40.8, 38.0], [40.9, 40.5]], h: 18 },                              // Pontic Mountains
+  { ridge: [[37.6, 29.8], [37.2, 32.0], [37.0, 34.0], [36.8, 35.9]], h: 23 },                // Taurus (snow on the heights)
+  { ridge: [[34.6, 36.1], [33.9, 35.9], [33.3, 35.8]], h: 19 },                              // Lebanon / Anti-Lebanon
+  // ---- N. Africa edge ----
+  { ridge: [[34.0, -4.5], [33.7, 0.0], [34.6, 3.0]], h: 17 },                                // Atlas
 ];
 
 // forest blobs: [lat, lon, radius-in-degrees]

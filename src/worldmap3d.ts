@@ -62,7 +62,9 @@ export class WorldMap3D {
     for (let s = 0; s < r.length - 1; s++) { const a = r[s], b = r[s + 1]; const dx = b[1] - a[1], dy = b[0] - a[0]; const t = Math.max(0, Math.min(1, ((lon - a[1]) * dx + (lat - a[0]) * dy) / (dx * dx + dy * dy || 1))); const px = a[1] + dx * t, py = a[0] + dy * t; const d = Math.hypot(lon - px, lat - py); if (d < m) m = d; }
     return m;
   }
-  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const e = this.distRidge(lon, lat, r) / 1.05; h += 13 * Math.exp(-(e * e)); } return Math.min(h, 19); }
+  // Relief from real ridge lines: a sharp peak band along each range plus a wide
+  // gentle skirt of foothills, so mountains sit where they actually are.
+  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const d = this.distRidge(lon, lat, r.ridge); h += r.h * Math.exp(-Math.pow(d / 0.42, 2)) + r.h * 0.32 * Math.exp(-Math.pow(d / 1.4, 2)); } return Math.min(h, 36); }
   private hill(lon: number, lat: number) { return (hash(lon * 1.7, lat * 1.7) * 0.6 + hash(lon * 0.7, lat * 0.7) * 0.4) * 2.6; }
 
   private build(d: { bb: BB; grid: { w: number; h: number; mask: string; cdist: string } }) {
@@ -78,17 +80,18 @@ export class WorldMap3D {
       const lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       for (let gx = 0; gx < GW; gx++) {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx; const land = mask[i];
+        // Shallow sea shelf so coasts meet the water softly; flat-ish lowlands
+        // with ruggedness that grows only near real ranges, so the relief stays
+        // tied to actual geography.
         let y: number;
-        // Gentle coast: shallow sea shelf + land that rises from near water level
-        // inland, so coastlines meet the sea softly instead of as dark cliffs.
-        if (!land) y = -1.6; else { const cd = cdist[i]; y = 3.2 + Math.min(cd * 1.7, 9) + this.mountain(lon, lat) * 0.85 + this.hill(lon, lat) * Math.min(1, 0.4 + cd * 0.5); }
+        if (!land) y = -1.6; else { const cd = cdist[i]; const m = this.mountain(lon, lat); y = 3.0 + Math.min(cd * 1.3, 6.5) + m + this.hill(lon, lat) * (0.3 + Math.min(1, m * 0.07)); }
         this.heights[i] = y; pos.push(this.wX(lon), y, this.wZ(lat));
         const latT = (bb.n - lat) / (bb.n - bb.s);
         if (!land || y < 0.05) c.setRGB(0.30, 0.45, 0.55);
         else if (y < 4.4) c.set('#ddc794');                                  // beach / coastal flats
         else if (y < 14) c.copy(green).lerp(tan, Math.min(1, latT * 1.05));  // lowland farmland
-        else if (y < 22) c.set('#83864c');                                   // upland
-        else if (y < 29) c.set('#8e8068');                                   // bare mountain rock
+        else if (y < 23) c.set('#83864c');                                   // upland
+        else if (y < 31) c.set('#8e8068');                                   // bare mountain rock
         else c.set('#efeae0');                                               // snow
         col.push(c.r, c.g, c.b);
       }
@@ -132,16 +135,17 @@ export class WorldMap3D {
       }
     const cwx = this.wX(cur.lon), cwz = this.wZ(cur.lat);
     const landX = lw ? lx / lw : cwx, landZ = lw ? lz / lw : cwz;
-    // look-point: pulled off the coastal castle toward the body of land
-    this.target.set(cwx * 0.45 + landX * 0.55, this.terrainY((cur.lon), (cur.lat)), cwz * 0.45 + landZ * 0.55);
-    // seaward direction = from land toward the castle; sit the camera there so we
-    // look inland across the country.
-    let sx = cwx - landX, sz = cwz - landZ; const sl = Math.hypot(sx, sz) || 1; sx /= sl; sz /= sl;
-    this.azimuth = Math.atan2(sx, sz);
-    // zoom from how spread the region's castles are, but kept tight enough that land dominates
-    const region = this.nodes.filter(n => n.region === cur.region);
-    let ext = 0; for (const n of region) ext = Math.max(ext, Math.hypot(this.wX(n.lon) - this.target.x, this.wZ(n.lat) - this.target.z));
-    this.dist = Math.max(120, Math.min(230, ext * 1.5 + 70));
+    // look-point: pulled off the coastal castle toward the body of land so land
+    // fills the frame, but keep the objective near centre.
+    this.target.set(cwx * 0.6 + landX * 0.4, this.terrainY((cur.lon), (cur.lat)), cwz * 0.6 + landZ * 0.4);
+    // North stays up (a gentle fixed tilt for 3D depth) — a per-castle azimuth
+    // felt disorienting (the map appeared rotated ~90°).
+    this.azimuth = -0.22;
+    // zoom from how spread the NEARBY castles are (the few closest objectives),
+    // so the current siege stays prominent even in sprawling regions.
+    const near = this.nodes.map(n => Math.hypot(this.wX(n.lon) - this.target.x, this.wZ(n.lat) - this.target.z)).sort((a, b) => a - b);
+    const spread = near[Math.min(4, near.length - 1)]; // distance to ~4th nearest
+    this.dist = Math.max(115, Math.min(185, spread * 2.2 + 80));
     this.pitch = 40 * Math.PI / 180;
   }
 

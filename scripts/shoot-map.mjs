@@ -43,14 +43,11 @@ const page = await browser.newPage();
 await page.setRequestInterception(true);
 page.on('request', r => (/getarsenal\.app/.test(r.url()) && /\.(png|jpg|jpeg|webmanifest|mp4)/.test(r.url())) ? r.respond({ status: 200, contentType: 'image/png', body: PNG }) : r.continue());
 await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 }); // iPhone-ish portrait
+// seed campaign progress so the map opens framed on the chosen objective
+await page.evaluateOnNewDocument(i => { try { localStorage.setItem('castlehassle.campaign.v1', JSON.stringify({ unlocked: i, completed: Array.from({ length: i }, (_, k) => k) })); } catch { /* */ } }, castleIndex);
 await page.goto(pathToFileURL('index.html').href, { waitUntil: 'load' });
 await page.evaluate(() => document.getElementById('startGameBtn')?.click());
-await new Promise(r => setTimeout(r, 1500));
-if (castleIndex > 0) {
-  await page.evaluate(i => { const m = window.__map; if (m) { m.prog.unlocked = i; m.destroy?.(); } }, castleIndex);
-  // simplest: re-open the map so frameOn runs for the chosen objective
-}
-await new Promise(r => setTimeout(r, 1500));
+await new Promise(r => setTimeout(r, 1800));
 writeFileSync(out, await page.screenshot());
 console.log('wrote', out);
 await browser.close();
