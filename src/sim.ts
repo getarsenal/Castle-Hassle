@@ -714,21 +714,23 @@ export class Sim {
   begin() {
     if (this.phase !== 'deploy') return;
     this.phase = 'battle';
-    // Auto-assault: every infantry/cavalry company advances on the keep on its
-    // own (so you aren't forced to nurse every order). Trebuchets hold & bombard.
-    // You can still drag any company to redirect it.
-    const goal = cellOf(this.keepX, this.keepZ); this.field(goal);
-    for (const u of this.units) {
-      if (u.faction !== Faction.Attacker || u.type === UType.Siege || u.routing) continue;
-      u.hold = false; u.goal = goal; u.ax = this.keepX; u.az = this.keepZ;
-    }
+    this.autoOrders();
   }
   // Sound the general assault again (re-issue the auto-advance to every company).
-  assaultAll() {
-    const goal = cellOf(this.keepX, this.keepZ); this.field(goal);
+  assaultAll() { this.autoOrders(); }
+  // Auto-assault orders: infantry & cavalry storm the keep on their own; archers
+  // hold a firing line just outside the wall — behind the assault but still in
+  // range — so you aren't forced to nurse every order. Drag any arm to override.
+  private autoOrders() {
+    const keep = cellOf(this.keepX, this.keepZ); this.field(keep);
+    const fz = LAYOUT.front + 6; // archers' standoff, just short of the gate
     for (const u of this.units) {
       if (u.faction !== Faction.Attacker || u.type === UType.Siege || u.routing) continue;
-      u.hold = false; u.goal = goal; u.ax = this.keepX; u.az = this.keepZ;
+      u.hold = false;
+      if (u.type === UType.Archer) {
+        const ax = Math.max(WORLD.minX + 4, Math.min(WORLD.maxX - 4, u.ax));
+        u.ax = ax; u.az = fz; let c = cellOf(ax, fz); if (BLOCKED[c]) c = cellOf(ax, fz + 6); u.goal = c;
+      } else { u.goal = keep; u.ax = this.keepX; u.az = this.keepZ; }
     }
   }
 
@@ -1151,8 +1153,13 @@ export class Sim {
     const atkShot = this.fac[i] === Faction.Attacker;
     const fire = this.units[this.unit[i]].fireArrows || (atkShot && this.atk.fire);
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
-    const tx = this.px[target], tz = this.pz[target], ty = this.py[target] + 1.0; // aim at the body, at its height
-    const d = Math.hypot(tx - sx, tz - sz) || 1;
+    const tx0 = this.px[target], tz0 = this.pz[target], ty = this.py[target] + 1.0; // aim at the body, at its height
+    const d = Math.hypot(tx0 - sx, tz0 - sz) || 1;
+    // Spread + scatter: nudge each arrow off the exact mark (a little up close,
+    // more at long range) so a volley fans across the enemies instead of every
+    // shaft piling onto one man — and some fall short or wide and simply miss.
+    const sc = 0.6 + d * 0.05;
+    const tx = tx0 + (this.rnd() - 0.5) * 2 * sc, tz = tz0 + (this.rnd() - 0.5) * 2 * sc;
     // Lob exactly as high as needed: sample the tallest obstacle between archer
     // and target and compare it to where a flat-ish shot would be there; only
     // raise the arc if a structure actually blocks it (so close shots stay flat).
@@ -1236,7 +1243,10 @@ export class Sim {
   private fireBolt(e: Emplacement, target: number) {
     const p = this.getProj();
     const sx = e.x, sz = e.z, sy = e.y + 1.2;
-    const tx = this.px[target], tz = this.pz[target], ty = 1;
+    const d0 = Math.hypot(this.px[target] - sx, this.pz[target] - sz) || 1;
+    // a tiny bit of scatter so a ballista doesn't snipe a man with every bolt
+    const sc = 0.8 + d0 * 0.03;
+    const tx = this.px[target] + (this.rnd() - 0.5) * 2 * sc, tz = this.pz[target] + (this.rnd() - 0.5) * 2 * sc, ty = 1;
     const d = Math.hypot(tx - sx, tz - sz) || 1, tof = d / BOLT_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = Faction.Defender;
     p.dmg = BALLISTA_DMG; p.wall = -1; p.big = false; p.fire = false; p.bolt = true; p.splash = ARTY_SPLASH;
@@ -1274,8 +1284,9 @@ export class Sim {
           // ballista bolt / anti-personnel shot: kill the man it strikes, little spill
           this.artySplash(p.x, p.z, p.fac, p.dmg, p.splash);
         } else {
-          // arrow: damage nearest enemy soldier to the impact point
-          let best = -1, bd2 = 6.25;
+          // arrow: damage nearest enemy to the (scattered) impact point — tighter
+          // radius so wide shots genuinely miss instead of always snapping to a hit
+          let best = -1, bd2 = 1.7;
           const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((p.tx - WORLD.minX) / this.hCell)));
           const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((p.tz - WORLD.minZ) / this.hCell)));
           for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
