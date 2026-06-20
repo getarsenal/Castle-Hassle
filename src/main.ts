@@ -11,6 +11,7 @@ import { feedback, installFeedback } from './feedback';
 import * as THREE from 'three';
 
 (window as any).__started = true;
+(window as any).__audio = battleAudio; // console access for tuning / preview render
 // warm the bundled fonts so canvas-baked labels (map place names) get Cinzel
 try { (document as any).fonts?.load("600 30px 'Cinzel'"); (document as any).fonts?.load("400 20px 'EB Garamond'"); } catch { /* ignore */ }
 
