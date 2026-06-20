@@ -9,7 +9,7 @@
 // — and everything is fed to a shared REVERB so the render sits in a space
 // instead of sounding dry and synthetic.
 
-export interface SfxTally { arrows: number; bolts: number; boulders: number; breaches: number; melee: number; deaths: number; hits: number; }
+export interface SfxTally { arrows: number; bolts: number; boulders: number; breaches: number; melee: number; deaths: number; hits: number; cavalry: number; }
 
 function makeImpulse(ctx: AudioContext, seconds: number, decay: number): AudioBuffer {
   const rate = ctx.sampleRate, len = Math.max(1, Math.floor(rate * seconds)), buf = ctx.createBuffer(2, len, rate);
@@ -29,6 +29,22 @@ class BattleAudioImpl {
   private last: Record<string, number> = {};
   private vol = 0.9;
 
+  // Real recorded battle SFX — once decoded these REPLACE the synthesised
+  // one-shots and din (the synthesis stays as the fallback until they load, or
+  // if a file is missing). Paths are relative, like the menu music, so they
+  // resolve against wherever the game is served from.
+  private buffers: Record<string, AudioBuffer> = {};
+  private SAMPLES: Record<string, string> = {
+    swords1: './battle-swords-1.mp3', swords2: './battle-swords-2.mp3',
+    archers: './archers-shot.mp3', trebFire: './trebuchet-firing.mp3',
+    trebHit: './trebuchet-hit-crash.mp3', cavalry: './cavalry-charge-loop.mp3',
+    cries: './battle-cries.mp3', drum: './siege-background-drum.mp3',
+  };
+  private samplesReq = false;
+  private dinStarted = false;
+  private procDin!: GainNode;   // synthesised crowd din (fallback)
+  private sampleDin!: GainNode; // recorded battle-cries + siege-drum loop
+
   private _t0 = 0; // scheduling offset, used only when rendering an offline preview
 
   ensure() {
@@ -38,7 +54,32 @@ class BattleAudioImpl {
       this.ctx = new AC();
       this.build();
     }
+    this.loadSamples();
     this.kick();
+  }
+  // Fetch + decode the recorded SFX once (after a context exists). Each file is
+  // best-effort: a failure just leaves that sound on its synthesised fallback.
+  private loadSamples() {
+    if (this.samplesReq || !this.ctx) return; this.samplesReq = true;
+    const ctx = this.ctx;
+    for (const [k, url] of Object.entries(this.SAMPLES)) {
+      fetch(url).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error(url)))
+        .then(ab => ctx.decodeAudioData(ab))
+        .then(buf => { this.buffers[k] = buf; if (k === 'cries' || k === 'drum') this.startDin(); })
+        .catch(() => { /* keep the synthesised fallback for this one */ });
+    }
+  }
+  // Once the looping recordings are decoded, start them and crossfade off the
+  // synthesised din so the bed is real crowd noise + siege drums.
+  private startDin() {
+    if (this.dinStarted || !this.ctx) return;
+    const cries = this.buffers.cries, drum = this.buffers.drum;
+    if (!cries || !drum) return;                 // wait until both are ready
+    this.dinStarted = true; const t = this.now();
+    const cs = this.ctx.createBufferSource(); cs.buffer = cries; cs.loop = true; cs.connect(this.gWith(0.95, this.sampleDin)); cs.start(t);
+    const ds = this.ctx.createBufferSource(); ds.buffer = drum; ds.loop = true; ds.connect(this.gWith(0.6, this.sampleDin)); ds.start(t);
+    this.procDin.gain.setTargetAtTime(0, t, 0.5);
+    this.sampleDin.gain.setTargetAtTime(1, t, 0.5);
   }
   // Build the master/reverb/din graph on the current context (live or offline).
   private build() {
@@ -65,7 +106,12 @@ class BattleAudioImpl {
     const breathe = this.g(0.8);
     const lfo = ctx.createOscillator(); lfo.frequency.value = 0.11; const lfoG = this.g(0.2); lfo.connect(lfoG).connect(breathe.gain); lfo.start();
     this.ambGain = this.g(0);
-    mix.connect(breathe).connect(this.ambGain).connect(this.master);
+    // Two interchangeable beds under the ambience level: the synthesised din
+    // (default) and the recorded loops, crossfaded once the samples decode.
+    this.procDin = this.g(1); this.sampleDin = this.g(0);
+    mix.connect(breathe).connect(this.procDin).connect(this.ambGain);
+    this.sampleDin.connect(this.ambGain);
+    this.ambGain.connect(this.master);
     src.start();
   }
   // Render a montage of every battle sound to an AudioBuffer (offline), for
@@ -123,9 +169,34 @@ class BattleAudioImpl {
   private env(p: AudioParam, t: number, peak: number, a: number, d: number) { p.setValueAtTime(0.0001, t); p.linearRampToValueAtTime(peak, t + a); p.exponentialRampToValueAtTime(0.0005, t + a + d); }
   private gWith(v: number, dest: AudioNode) { const n = this.g(v); n.connect(dest); return n; }
 
+  // ---- recorded-sample playback ----
+  // A short slice (random start) of a continuous recording — for clashes/arrows,
+  // so each trigger is a fresh hit and the long files never pile up. Falls back
+  // (returns false) when the sample isn't decoded yet.
+  private slice(key: string, dur: number, vol: number, panv = 0, send = 0, rate = 1): boolean {
+    const buf = this.buffers[key]; if (!buf || !this.ctx) return false;
+    const t = this.now();
+    const src = this.ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+    const off = Math.random() * Math.max(0, buf.duration - dur - 0.05);
+    const eg = this.g(0); src.connect(eg); eg.connect(this.bus(vol, panv, send));
+    eg.gain.setValueAtTime(0.0001, t); eg.gain.linearRampToValueAtTime(1, t + 0.006);
+    eg.gain.setValueAtTime(1, t + Math.max(0.05, dur - 0.05)); eg.gain.linearRampToValueAtTime(0.0001, t + dur);
+    src.start(t, off, dur + 0.03);
+    return true;
+  }
+  // A discrete event recording played from its start (a whole treb fire / crash).
+  private oneshot(key: string, vol: number, panv = 0, send = 0, rate = 1): boolean {
+    const buf = this.buffers[key]; if (!buf || !this.ctx) return false;
+    const src = this.ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+    src.connect(this.bus(vol, panv, send)); src.start(this.now());
+    return true;
+  }
+
   // ---- battle one-shots ----
   clang(vol = 1) {                        // sword/shield: body thud + metal ring + shing
-    if (!this.ctx || !this.rl('clang', 0.1)) return; const t = this.now();
+    if (!this.ctx || !this.rl('clang', 0.1)) return;
+    if (this.slice(Math.random() < 0.5 ? 'swords1' : 'swords2', 0.3, 0.85 * vol, (Math.random() - 0.5) * 0.6, 0.2, 0.97 + Math.random() * 0.06)) return;
+    const t = this.now();
     const out = this.bus(0.5 * vol, (Math.random() - 0.5) * 0.6, 0.26);
     const base = 1050 + Math.random() * 650;
     // metallic ring — inharmonic sine partials, each ringing out (modal synthesis)
@@ -140,14 +211,18 @@ class BattleAudioImpl {
     const bd = this.g(0); bd.connect(out); this.noise(0.05).connect(this.bq('lowpass', 320)).connect(bd); this.env(bd.gain, t, 0.4, 0.001, 0.045);
   }
   arrow(vol = 1) {                        // a few arrows — an airy thwip
-    if (!this.ctx || !this.rl('arrow', 0.06)) return; const t = this.now();
+    if (!this.ctx || !this.rl('arrow', 0.06)) return;
+    if (this.slice('archers', 0.4, 0.4 * vol, (Math.random() - 0.5) * 0.7, 0.12)) return;
+    const t = this.now();
     const out = this.bus(0.16 * vol, (Math.random() - 0.5) * 0.7, 0.12); const eg = this.g(0); eg.connect(out);
     const bp = this.bq('bandpass', 1600, 1.3); this.noise(0.18).connect(bp).connect(eg);
     bp.frequency.setValueAtTime(900, t); bp.frequency.exponentialRampToValueAtTime(2800, t + 0.05); bp.frequency.exponentialRampToValueAtTime(700, t + 0.17);
     this.env(eg.gain, t, 1, 0.008, 0.15);
   }
   volley(vol = 1) {                       // a salvo — two airy noise layers (different lengths)
-    if (!this.ctx || !this.rl('volley', 0.16)) return; const t = this.now();
+    if (!this.ctx || !this.rl('volley', 0.16)) return;
+    if (this.slice('archers', 1.1, 0.55 * vol, (Math.random() - 0.5) * 0.3, 0.18)) return;
+    const t = this.now();
     const out = this.bus(0.24 * vol, 0, 0.2);
     for (const [dur, fc, q, pk] of [[0.5, 2300, 0.7, 0.7], [0.36, 1300, 1.0, 0.4]] as const) {
       const eg = this.g(0); eg.connect(out); const bp = this.bq('bandpass', fc, q); this.noise(dur).connect(bp).connect(eg);
@@ -164,7 +239,9 @@ class BattleAudioImpl {
     bp.frequency.setValueAtTime(3000, t); bp.frequency.exponentialRampToValueAtTime(1100, t + 0.09); this.env(ng.gain, t, 0.4, 0.003, 0.09);
   }
   trebFire(vol = 1) {                     // trebuchet — groaning arm + release thunk
-    if (!this.ctx || !this.rl('treb', 0.12)) return; const t = this.now();
+    if (!this.ctx || !this.rl('treb', 0.12)) return;
+    if (this.oneshot('trebFire', 0.8 * vol, (Math.random() - 0.5) * 0.4, 0.2)) return;
+    const t = this.now();
     const out = this.bus(0.6 * vol, (Math.random() - 0.5) * 0.4, 0.22);
     const creak = this.g(0); creak.connect(out);
     const o = this.osc('sawtooth', 58, t, 0.4); o.frequency.linearRampToValueAtTime(112, t + 0.26);
@@ -175,20 +252,28 @@ class BattleAudioImpl {
     this.noise(0.12).connect(this.bq('bandpass', 800, 1)).connect(this.gWith(0.28, out));
   }
   impact(vol = 1) {                       // boulder strikes stone — boom + crack + rubble
-    if (!this.ctx || !this.rl('impact', 0.05)) return; const t = this.now();
+    if (!this.ctx || !this.rl('impact', 0.05)) return;
+    if (this.oneshot('trebHit', 0.85 * vol, (Math.random() - 0.5) * 0.5, 0.3)) return;
+    const t = this.now();
     const out = this.bus(0.9 * vol, (Math.random() - 0.5) * 0.5, 0.34);
     const bg = this.g(0); bg.connect(out); const o = this.osc('sine', 130, t, 0.45); o.frequency.exponentialRampToValueAtTime(40, t + 0.32); o.connect(bg); this.env(bg.gain, t, 0.7, 0.002, 0.36);
     const cg = this.g(0); cg.connect(out); this.noise(0.04).connect(this.bq('bandpass', 1800, 1.4)).connect(cg); this.env(cg.gain, t, 0.32, 0.001, 0.04);
     const rg = this.g(0); rg.connect(out); const lp = this.bq('lowpass', 1800); this.noise(0.34).connect(lp).connect(rg); lp.frequency.setValueAtTime(2000, t); lp.frequency.exponentialRampToValueAtTime(360, t + 0.32); this.env(rg.gain, t, 0.42, 0.002, 0.32);
   }
   breach(vol = 1) {                       // a wall comes down — deep boom + long rubble + cracks
-    if (!this.ctx) return; const t = this.now();
+    if (!this.ctx) return;
+    if (this.oneshot('trebHit', 1.0 * vol, (Math.random() - 0.5) * 0.4, 0.45, 0.8)) return; // pitched down = a bigger collapse
+    const t = this.now();
     const out = this.bus(1.0 * vol, (Math.random() - 0.5) * 0.4, 0.5);
     const bg = this.g(0); bg.connect(out); const o = this.osc('sine', 95, t, 0.7); o.frequency.exponentialRampToValueAtTime(30, t + 0.5); o.connect(bg); this.env(bg.gain, t, 0.85, 0.003, 0.55);
     const rg = this.g(0); rg.connect(out); const lp = this.bq('lowpass', 1400); this.noise(0.9).connect(lp).connect(rg); lp.frequency.setValueAtTime(1600, t); lp.frequency.exponentialRampToValueAtTime(260, t + 0.8); this.env(rg.gain, t, 0.6, 0.004, 0.85);
     for (let i = 0; i < 6; i++) { const tc = t + 0.05 + Math.random() * 0.75; const cg = this.g(0); cg.connect(out);
       const n = this.ctx.createBufferSource(); n.buffer = this.noiseBuf; n.loop = true; n.start(tc); n.stop(tc + 0.05);
       n.connect(this.bq('bandpass', 900 + Math.random() * 1800, 7)).connect(cg); this.env(cg.gain, tc, 0.42, 0.001, 0.05); }
+  }
+  cavalry(vol = 1) {                      // recorded charge — thundering hooves as horse hits home
+    if (!this.ctx || !this.rl('cav', 1.6)) return;
+    this.oneshot('cavalry', 0.7 * vol, (Math.random() - 0.5) * 0.4, 0.2); // no synth fallback — silent until loaded
   }
   // war horn — two slightly-detuned saw stacks through a lowpass (warm brass), with reverb
   horn(mood: 'call' | 'victory' | 'defeat' = 'call') {
@@ -280,6 +365,7 @@ class BattleAudioImpl {
     for (let i = 0; i < Math.min(e.hits, 3); i++) this.impact();
     for (let i = 0; i < e.breaches; i++) this.breach();
     if (e.bolts > 0) this.bolt();
+    if (e.cavalry > 0) this.cavalry(Math.min(1, e.cavalry / 8));
     if (e.arrows >= 10) this.volley(Math.min(1, e.arrows / 30));
     else if (e.arrows > 0) this.arrow(Math.min(1, e.arrows / 5));
     // a melee is carried by the DIN; clangs punctuate it as distinct clashes

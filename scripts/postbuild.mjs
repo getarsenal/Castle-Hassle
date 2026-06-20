@@ -21,7 +21,8 @@ rmSync(src);
 // Vite copies everything in public/ into www/. Mirror the icon/preview assets to
 // the repo root too, so the directly-deployable set (index.html + icons) is
 // self-contained when you drop it at getarsenal.app/castle-hassle/.
-for (const f of ['icon.png', 'icon-512.png', 'icon-192.png', 'apple-touch-icon.png', 'favicon.png', 'title.png', 'og.jpg', 'manifest.webmanifest', 'intro.mp4', 'theme.mp3']) {
+for (const f of ['icon.png', 'icon-512.png', 'icon-192.png', 'apple-touch-icon.png', 'favicon.png', 'title.png', 'og.jpg', 'manifest.webmanifest', 'intro.mp4', 'theme.mp3',
+  'archers-shot.mp3', 'battle-cries.mp3', 'battle-swords-1.mp3', 'battle-swords-2.mp3', 'cavalry-charge-loop.mp3', 'siege-background-drum.mp3', 'trebuchet-firing.mp3', 'trebuchet-hit-crash.mp3']) {
   const from = resolve(root, 'www', f);
   if (existsSync(from)) copyFileSync(from, resolve(root, f));
 }

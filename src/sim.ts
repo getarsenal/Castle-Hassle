@@ -417,8 +417,8 @@ export class Sim {
   private attInsideCount = 0;         // attackers standing inside the walls
   captureProgress = 0;                // 0..1 — your banner rising over the keep
   // per-frame sound-effect tallies; main drains these to drive procedural audio
-  sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0 };
-  drainSfx() { const s = this.sfx; this.sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0 }; return s; }
+  sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 };
+  drainSfx() { const s = this.sfx; this.sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 }; return s; }
   private keepX = 0; private keepZ = 0; private captureR = 20;
   n = 0;
   units: Unit[] = [];
@@ -616,8 +616,14 @@ export class Sim {
     const keep = CASTLE.find(b => b.kind === 'keep'); const citd = LAYOUT.citadel;
     this.keepX = citd ? citd.cx : keep ? (keep.x0 + keep.x1) / 2 : 0;
     this.keepZ = citd ? citd.cz : keep ? (keep.z0 + keep.z1) / 2 : 0;
-    // a town is taken by storming its whole centre, not a tight keep-hold
-    this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : LAYOUT.palisade ? Math.max(28, Math.min(W, D) - 4) : 20;
+    // The keep falls when you get your men onto the ground immediately around it
+    // and clear its guard. This radius is deliberately TIGHT — a ring close to the
+    // keep tower — so the garrison still holding the bailey (or the citadel's own
+    // wall) isn't counted as "contesting the keep". With the old ward-wide radius
+    // the whole defending army sat inside the capture circle, so the meter could
+    // never fill and a stormed citadel was impossible to actually take. A town is
+    // looser: it's taken by dominating its whole centre.
+    this.captureR = LAYOUT.palisade ? Math.max(28, Math.min(W, D) - 4) : 20;
     // defensive ballistae from the layout (staggered initial reload)
     this.ballistae = LAYOUT.ballistae.map(b => ({ x: b.x, z: b.z, y: b.y, seg: b.seg, cd: this.rnd() * BALLISTA_CD, recoil: 0, horiz: b.horiz, outer: b.outer, aimX: b.x, aimZ: b.z + b.outer * 40 }));
   }
@@ -976,7 +982,7 @@ export class Sim {
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
           const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1);
           if (nearest >= 0 && dist <= mrng) {
-            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; this.sfx.melee++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
           } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
                      && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
             // chase a *reachable* enemy — but only once the company has reached its
@@ -985,10 +991,13 @@ export class Sim {
           } else if (!u.hold) {
             this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
             if (this._stuck && t !== UType.Cavalry) {
-              // The flow field can't thread us to the goal. Make for the nearest
-              // breach (broken-down walls are the way in); only scale a standing
-              // wall as a last resort when nothing has been broken open yet.
-              const br = this.nearestBreach(this.px[i], this.pz[i]);
+              // The flow field can't thread us to the goal: a standing ring (the
+              // inner ward of a concentric castle, or the outer curtain) is in the
+              // way. Head for a breach that actually leads INWARD toward the keep;
+              // if none has been opened on the ring ahead of us, scale it. (Never
+              // double back to a breach behind us — that's how the keep became
+              // unreachable.)
+              const br = this.breachToward(this.px[i], this.pz[i]);
               if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; dx = bx / bl; dz = bz / bl; }
               else { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
             }
@@ -1108,12 +1117,23 @@ export class Sim {
   private CLIMB = 4.5; // distance from a wall section's box at which a soldier mounts the ladder
   // Nearest breach (a fallen wall/gate section, now an open gap) — the entry point
   // attackers should make for when the flow field can't thread them to their goal.
-  private nearestBreach(x: number, z: number): number {
-    let best = -1, bd = 1e9;
+  // The breach (fallen wall/gate) that best leads INWARD toward the keep — the one
+  // minimising (walk to breach + breach to keep), counting only breaches that
+  // actually get us closer to the keep than we already are. Without the inward
+  // test, a unit that has fought its way into the bailey of a concentric castle
+  // doubles back to the outer breach it entered through (the nearest breach, but
+  // FARTHER from the keep) instead of breaching/scaling the inner ward — so the
+  // keep can never be reached and the siege is unwinnable.
+  private breachToward(x: number, z: number): number {
+    const dKeep = Math.hypot(this.keepX - x, this.keepZ - z);
+    let best = -1, bc = 1e9;
     for (let s = 0; s < CASTLE.length; s++) {
       const g = CASTLE[s]; if (!g.dead || (g.kind !== 'wall' && g.kind !== 'gate')) continue;
-      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2, d2 = (cx - x) ** 2 + (cz - z) ** 2;
-      if (d2 < bd) { bd = d2; best = s; }
+      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
+      const bk = Math.hypot(this.keepX - cx, this.keepZ - cz);
+      if (bk >= dKeep - 1) continue;                 // breach is no closer to the keep — not progress
+      const cost = Math.hypot(cx - x, cz - z) + bk;  // cheapest route in through this gap
+      if (cost < bc) { bc = cost; best = s; }
     }
     return best;
   }
