@@ -616,14 +616,10 @@ export class Sim {
     const keep = CASTLE.find(b => b.kind === 'keep'); const citd = LAYOUT.citadel;
     this.keepX = citd ? citd.cx : keep ? (keep.x0 + keep.x1) / 2 : 0;
     this.keepZ = citd ? citd.cz : keep ? (keep.z0 + keep.z1) / 2 : 0;
-    // The keep falls when you get your men onto the ground immediately around it
-    // and clear its guard. This radius is deliberately TIGHT — a ring close to the
-    // keep tower — so the garrison still holding the bailey (or the citadel's own
-    // wall) isn't counted as "contesting the keep". With the old ward-wide radius
-    // the whole defending army sat inside the capture circle, so the meter could
-    // never fill and a stormed citadel was impossible to actually take. A town is
-    // looser: it's taken by dominating its whole centre.
-    this.captureR = LAYOUT.palisade ? Math.max(28, Math.min(W, D) - 4) : 20;
+    // A citadel is taken by dominating its inner WARD (hold the ground inside the
+    // last ring and outnumber its guard); a lone keep, by holding the courtyard
+    // immediately around it; a town, by storming its whole centre.
+    this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : LAYOUT.palisade ? Math.max(28, Math.min(W, D) - 4) : 20;
     // defensive ballistae from the layout (staggered initial reload)
     this.ballistae = LAYOUT.ballistae.map(b => ({ x: b.x, z: b.z, y: b.y, seg: b.seg, cd: this.rnd() * BALLISTA_CD, recoil: 0, horiz: b.horiz, outer: b.outer, aimX: b.x, aimZ: b.z + b.outer * 40 }));
   }
