@@ -161,14 +161,45 @@
     #introSub { font: 600 18px 'EB Garamond', Georgia, serif; letter-spacing: 12px; color: #9fb0c4; margin-top: 6px; }
     @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 
-    #titleScreen { flex-direction: column; align-items: center; justify-content: space-between;
-      padding: 9vh 16px calc(var(--safe-bottom) + 7vh);
-      background: radial-gradient(120% 80% at 50% 18%, #2a3b54, #0e1622 70%); animation: fadein 0.6s ease; }
-    #titleIcon { width: min(86vw, 480px); height: auto; border-radius: 14%; box-shadow: 0 16px 50px rgba(0,0,0,0.65); margin-top: 4vh; }
-    #startGameBtn { pointer-events: auto; border: none; cursor: pointer; width: min(86vw, 480px);
-      font: 800 24px 'EB Garamond', Georgia, serif; letter-spacing: 1px; color: #3a2a08; background: linear-gradient(#ffd86b, #e9a72c);
-      padding: 18px 0; border-radius: 16px; box-shadow: 0 6px 0 #b9851c; }
-    #startGameBtn:active { transform: translateY(2px); box-shadow: 0 4px 0 #b9851c; }
+    #titleScreen { flex-direction: column; align-items: center; justify-content: flex-start; overflow: hidden;
+      background: linear-gradient(#0a0e1c 0%, #16213a 32%, #2b2946 60%, #4a3550 80%, #774a37 100%); animation: fadein 0.6s ease; }
+    /* --- atmosphere layers (all procedural) --- */
+    .tsGlow { position: absolute; left: 50%; top: 60%; transform: translate(-50%,-50%); width: 130vw; height: 64vh; pointer-events: none;
+      background: radial-gradient(closest-side, rgba(244,176,92,0.55), rgba(244,176,92,0.13) 46%, transparent 72%); }
+    .tsClouds { position: absolute; inset: 0 0 38% 0; pointer-events: none; overflow: hidden; }
+    .tsClouds span { position: absolute; border-radius: 50%; background: rgba(222,212,232,0.10); filter: blur(16px); animation: tsDrift linear infinite; }
+    .tsHills { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: auto; pointer-events: none; }
+    .tsHills.far { opacity: 0.55; bottom: 6%; }
+    .tsEmbers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    .tsEmbers span { position: absolute; bottom: -8px; width: 3px; height: 3px; border-radius: 50%; opacity: 0;
+      background: radial-gradient(circle, #ffd98a, #e8883a); box-shadow: 0 0 7px #f0a04a; animation: tsRise linear infinite; }
+    @keyframes tsDrift { from { transform: translateX(-24vw); } to { transform: translateX(124vw); } }
+    @keyframes tsRise { 0% { transform: translateY(0) scale(1); opacity: 0; } 14% { opacity: .9; } 80% { opacity: .75; } 100% { transform: translateY(-72vh) scale(0.4); opacity: 0; } }
+    @keyframes tsFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+    @keyframes tsSway { 0%,100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
+    @keyframes tsShine { 0% { background-position: -150% 0; } 55%,100% { background-position: 250% 0; } }
+    /* --- heraldic banners hung from the top --- */
+    .tsBanner { position: absolute; top: 0; z-index: 3; width: 52px; pointer-events: none; transform-origin: 50% 0; animation: tsSway 4.2s ease-in-out infinite; }
+    .tsBanner.l { left: 5vw; } .tsBanner.r { right: 5vw; animation-delay: -2.1s; }
+    /* --- content column --- */
+    .tsContent { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; width: 100%;
+      padding: calc(var(--safe-top) + 7vh) 18px 0; }
+    .tsArt { position: relative; width: min(70vw, 340px); animation: tsFloat 5.5s ease-in-out infinite; }
+    #titleIcon { width: 100%; height: auto; display: block; border-radius: 11%;
+      box-shadow: 0 22px 55px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,216,107,0.55), 0 0 64px rgba(244,176,92,0.28); }
+    .tsArt::after { content: ''; position: absolute; left: 50%; bottom: -20px; transform: translateX(-50%);
+      width: 72%; height: 30px; background: radial-gradient(closest-side, rgba(0,0,0,0.55), transparent 76%); filter: blur(5px); }
+    .tsTag { margin-top: 24px; color: #f1ddb2; font: 600 15px 'EB Garamond', Georgia, serif; letter-spacing: 0.5px;
+      text-align: center; line-height: 1.55; max-width: 300px; text-shadow: 0 1px 7px rgba(0,0,0,0.65); }
+    .tsDiv { margin: 15px 0 22px; color: #d8b673; opacity: 0.85; }
+    #startGameBtn { position: relative; overflow: hidden; pointer-events: auto; border: none; cursor: pointer; width: min(78vw, 360px);
+      font: 800 22px 'Cinzel', Georgia, serif; letter-spacing: 1px; color: #3a2208; background: linear-gradient(#ffe487, #e7a52a);
+      border-top: 1px solid #fff1c4; padding: 17px 0; border-radius: 14px; box-shadow: 0 6px 0 #b9851c, 0 11px 26px rgba(0,0,0,0.5); }
+    #startGameBtn::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 36%, rgba(255,255,255,0.5) 50%, transparent 64%);
+      background-size: 250% 100%; animation: tsShine 5s ease-in-out infinite; }
+    #startGameBtn:active { transform: translateY(2px); box-shadow: 0 4px 0 #b9851c, 0 7px 16px rgba(0,0,0,0.45); }
+    .tsFoot { position: absolute; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 13px); z-index: 2; text-align: center;
+      color: rgba(241,226,194,0.5); font: 600 10.5px 'EB Garamond', Georgia, serif; letter-spacing: 3.5px; }
 
     #map { background: #cfe3f2; }
     #mapCanvas { width: 100%; height: 100%; display: block; touch-action: none; }
@@ -325,8 +356,65 @@
   </div>
 
   <div id="titleScreen">
-    <img id="titleIcon" src="https://getarsenal.app/Castle-Hassle/icon.png" alt="Castle Hassle" />
-    <button id="startGameBtn">Start Game</button>
+    <div class="tsGlow"></div>
+    <div class="tsClouds">
+      <span style="left:6%;top:14%;width:120px;height:34px;animation-duration:46s;animation-delay:-8s"></span>
+      <span style="left:40%;top:6%;width:170px;height:44px;animation-duration:64s;animation-delay:-30s"></span>
+      <span style="left:20%;top:26%;width:90px;height:26px;animation-duration:38s;animation-delay:-20s"></span>
+    </div>
+    <svg class="tsHills far" viewBox="0 0 390 90" preserveAspectRatio="xMidYMax meet" fill="#1a2238">
+      <path d="M0 90 V62 Q60 40 130 56 Q210 74 280 50 Q340 32 390 54 V90 Z"/>
+      <rect x="96" y="40" width="14" height="24"/><polygon points="96,40 110,40 103,28"/>
+      <rect x="262" y="34" width="16" height="28"/><polygon points="262,34 278,34 270,20"/>
+    </svg>
+    <svg class="tsHills" viewBox="0 0 390 132" preserveAspectRatio="xMidYMax meet" fill="#090d18">
+      <rect x="0" y="86" width="390" height="46"/>
+      <g><rect x="6" y="80" width="10" height="8"/><rect x="28" y="80" width="10" height="8"/><rect x="50" y="80" width="10" height="8"/><rect x="72" y="80" width="10" height="8"/><rect x="300" y="80" width="10" height="8"/><rect x="322" y="80" width="10" height="8"/><rect x="344" y="80" width="10" height="8"/><rect x="366" y="80" width="10" height="8"/></g>
+      <rect x="26" y="56" width="34" height="76"/><polygon points="23,57 63,57 43,36"/>
+      <rect x="332" y="60" width="32" height="72"/><polygon points="329,61 367,61 348,42"/>
+      <rect x="150" y="30" width="50" height="102"/>
+      <g><rect x="150" y="24" width="9" height="8"/><rect x="167" y="24" width="9" height="8"/><rect x="184" y="24" width="9" height="8"/><rect x="191" y="24" width="9" height="8"/></g>
+      <rect x="168" y="14" width="14" height="14"/><polygon points="163,16 187,16 175,2"/>
+      <rect x="214" y="64" width="26" height="68"/><polygon points="211,65 243,65 227,48"/>
+      <rect x="116" y="70" width="24" height="62"/><polygon points="113,71 143,71 128,55"/>
+    </svg>
+    <div class="tsEmbers">
+      <span style="left:12%;width:3px;height:3px;animation-duration:8s;animation-delay:0s"></span>
+      <span style="left:22%;width:2px;height:2px;animation-duration:10s;animation-delay:-3s"></span>
+      <span style="left:31%;width:4px;height:4px;animation-duration:7s;animation-delay:-5s"></span>
+      <span style="left:44%;width:2px;height:2px;animation-duration:11s;animation-delay:-1s"></span>
+      <span style="left:52%;width:3px;height:3px;animation-duration:9s;animation-delay:-6s"></span>
+      <span style="left:61%;width:2px;height:2px;animation-duration:8.5s;animation-delay:-2s"></span>
+      <span style="left:69%;width:4px;height:4px;animation-duration:7.5s;animation-delay:-8s"></span>
+      <span style="left:77%;width:3px;height:3px;animation-duration:10.5s;animation-delay:-4s"></span>
+      <span style="left:86%;width:2px;height:2px;animation-duration:9.5s;animation-delay:-7s"></span>
+      <span style="left:38%;width:3px;height:3px;animation-duration:12s;animation-delay:-9s"></span>
+      <span style="left:55%;width:2px;height:2px;animation-duration:8s;animation-delay:-10s"></span>
+      <span style="left:17%;width:3px;height:3px;animation-duration:9s;animation-delay:-11s"></span>
+    </div>
+    <svg class="tsBanner l" viewBox="0 0 40 112" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="0" width="36" height="5" fill="#5a4326"/>
+      <path d="M5 5 H35 V90 L20 102 L5 90 Z" fill="#b5332b"/>
+      <path d="M5 5 H35 V13 H5 Z" fill="#e9c46a"/>
+      <rect x="18" y="32" width="4" height="36" fill="#e9c46a"/><rect x="9" y="44" width="22" height="4" fill="#e9c46a"/>
+    </svg>
+    <svg class="tsBanner r" viewBox="0 0 40 112" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="0" width="36" height="5" fill="#5a4326"/>
+      <path d="M5 5 H35 V90 L20 102 L5 90 Z" fill="#2f5a8c"/>
+      <path d="M5 5 H35 V13 H5 Z" fill="#e9c46a"/>
+      <path d="M20 30 L31 41 L20 52 L9 41 Z" fill="#e9c46a"/>
+    </svg>
+    <div class="tsContent">
+      <div class="tsArt"><img id="titleIcon" src="https://getarsenal.app/Castle-Hassle/icon.png" alt="Castle Hassle" /></div>
+      <div class="tsTag">Command thousands. Storm the walls.<br/>Raise your banner over the keep.</div>
+      <svg class="tsDiv" width="190" height="14" viewBox="0 0 190 14" fill="currentColor">
+        <rect x="8" y="6.3" width="68" height="1.4"/><rect x="114" y="6.3" width="68" height="1.4"/>
+        <circle cx="82" cy="7" r="1.7"/><circle cx="108" cy="7" r="1.7"/>
+        <path d="M95 1 L101 7 L95 13 L89 7 Z"/>
+      </svg>
+      <button id="startGameBtn">March to War</button>
+    </div>
+    <div class="tsFoot">SCHEIDEL INTERACTIVE</div>
   </div>
 
   <div id="map">
