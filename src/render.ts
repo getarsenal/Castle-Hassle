@@ -230,8 +230,9 @@ export class Renderer {
           for (const sx of [-1, 1]) parts.push(this.boxG(w / 2 - 0.3, b.h - 1.2, 0.6, sx * w / 4, (b.h - 1.2) / 2, d / 2)); // doors
           parts.push(this.boxG(w + 2, 1.6, d + 1, 0, b.h + 0.4, 0)); // arch
         }
-        const mat = (isStone ? this.stone('#e6d6af') : timber.clone());
-        if (isStone) mat.map = this.texStone;
+        const wood = LAYOUT.palisade; // a town's walls are timber, not dressed stone
+        const mat = (isStone && !wood ? this.stone('#e6d6af') : isStone ? this.stone('#8a5a31') : timber.clone());
+        if (isStone && !wood) mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); this.scene.add(box);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };

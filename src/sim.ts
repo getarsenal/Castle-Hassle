@@ -69,7 +69,7 @@ export interface CastleLayout {
   W: number; D: number; front: number; gate: { x: number; z: number };
   wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
   buildings: { x: number; z: number; w: number; d: number }[]; citadel: Citadel | null;
-  round: boolean; concentric: boolean; ballistae: Ballista[];
+  round: boolean; concentric: boolean; ballistae: Ballista[]; palisade: boolean;
 }
 // Per-castle architectural style. Drives generateCastle so each real castle in
 // the campaign has a distinguishable shape/silhouette (concentric double walls,
@@ -82,6 +82,7 @@ export interface CastleStyle {
   strongKeep: boolean; // force a substantial inner citadel/keep
   town: number;        // building density 0..1 (higher = denser bailey)
   shape?: 'rect' | 'barbican' | 'twin';  // outer footprint: plain, fronted by a barbican bailey, or a flanking twin bailey (non-square)
+  palisade?: boolean;  // a town behind low WOODEN walls: no towers, no stone, no engines — a soft raid target
 }
 
 export const T = 4, WH = 9, SEG = 8;
@@ -102,12 +103,14 @@ export function generateCastle(seed: number, style?: CastleStyle) {
     scale: rr(0.85, 1.25), aspect: rr(0.9, 1.5), concentric: R() < 0.4,
     round: R() < 0.5, strongKeep: R() < 0.6, town: rr(0.45, 0.75),
   };
+  const pal = !!st.palisade; // a wooden-palisade town: no towers, weaker walls
   const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind = 'wall', h = WH) => {
     if (x1 - x0 < 0.3 || z1 - z0 < 0.3) return;
-    const hp = kind === 'gate' ? 1100 : kind === 'building' ? 1e9 : 1700;
-    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? WH - 1 : h, kind, hp, maxhp: hp, dead: false });
+    const hp = kind === 'gate' ? (pal ? 500 : 1100) : kind === 'building' ? 1e9 : (pal ? 650 : 1700);
+    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? Math.max(5, h - 1) : h, kind, hp, maxhp: hp, dead: false });
   };
   const tower = (x: number, z: number, big: boolean, list?: { x: number; z: number; big: boolean }[]) => {
+    if (pal) return; // a palisade town has no towers
     const r = big ? 5 : 4.2, hp = big ? 3200 : 2600;
     segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: big ? WH + 6 : WH + 4, kind: 'tower', hp, maxhp: hp, dead: false });
     TOWERS.push({ x, z, big }); if (list) list.push({ x, z, big });
@@ -130,8 +133,9 @@ export function generateCastle(seed: number, style?: CastleStyle) {
   const W = Math.max(40, Math.min(106, Math.round(rr(54, 64) * st.scale * Math.sqrt(st.aspect) / 2) * 2));
   const D = Math.max(36, Math.min(88, Math.round(rr(48, 56) * st.scale / Math.sqrt(st.aspect) / 2) * 2));
   const GH = 9, gateX = Math.round(rr(-W * 0.22, W * 0.22) / SEG) * SEG;
-  // Concentric castles get a lower outer curtain (the inner ring towers over it).
-  const outerWH = st.concentric ? WH - 2 : WH;
+  // Concentric castles get a lower outer curtain (the inner ring towers over it);
+  // a palisade town has only low wooden walls.
+  const outerWH = pal ? 5 : st.concentric ? WH - 2 : WH;
   const wallLines = compound(-W, W, -D, D, gateX, GH, true, undefined, outerWH);
   // mid-wall towers
   const tSpace = st.round ? 26 : 28;
@@ -169,15 +173,16 @@ export function generateCastle(seed: number, style?: CastleStyle) {
     tower(ccx, ccz, true, cTowers); // corner drums on the inner ward
     segs.push({ x0: ccx - 8, x1: ccx + 8, z0: ccz - 7, z1: ccz + 7, h: 24, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
     citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx + igX, z: ccz + cd }, wallLines: cLines };
-  } else if (st.strongKeep || W * D > 3200 || R() < 0.45) {
+  } else if (!pal && (st.strongKeep || W * D > 3200 || R() < 0.45)) {
     // an offset inner bailey + keep
     const cw = 19, cd = 15, ccx = Math.round(rr(-W * 0.18, W * 0.18)), ccz = -Math.round(D * 0.34);
     const cLines = compound(ccx - cw, ccx + cw, ccz - cd, ccz + cd, ccx, 6, true, cTowers);
     segs.push({ x0: ccx - 7, x1: ccx + 7, z0: ccz - 6, z1: ccz + 6, h: st.strongKeep ? 24 : 21, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
     citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx, z: ccz + cd }, wallLines: cLines };
   } else {
-    // a lone great keep dominating an open bailey (early/simple castles)
-    segs.push({ x0: -9, x1: 9, z0: -9, z1: 9, h: 20, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+    // a lone keep dominating an open bailey — a lord's manor in a palisade town
+    const kh = pal ? 13 : 20, kr = pal ? 7 : 9;
+    segs.push({ x0: -kr, x1: kr, z0: -kr, z1: kr, h: kh, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
   }
 
   // ----- town buildings in the bailey (avoid walls, the gate avenue & citadel) -----
@@ -189,6 +194,7 @@ export function generateCastle(seed: number, style?: CastleStyle) {
       const bw = rr(3.5, 6.5), bd = rr(3.5, 5.5), x = bx + rr(0, 4), z = bz + rr(0, 4);
       if (Math.abs(x - gateX) < 9 && z > -D * 0.1) continue;                 // keep the gate avenue clear
       if (citadel && x > citadel.x0 - 7 && x < citadel.x1 + 7 && z > citadel.z0 - 7 && z < citadel.z1 + 7) continue;
+      if (!citadel && x * x + z * z < 18 * 18) continue;                      // open plaza around the lone keep/manor so it can be stormed and held
       if (x - bw < -W + T + 3 || x + bw > W - T - 3 || z - bd < -D + T + 3 || z + bd > D - T - 3) continue;
       wall(x - bw, x + bw, z - bd, z + bd, 'building', rr(5, 9)); buildings.push({ x, z, w: bw, d: bd });
     }
@@ -214,11 +220,13 @@ export function generateCastle(seed: number, style?: CastleStyle) {
       }
     }
   };
-  const outerCap = Math.round(rr(3, 5) + W * D / 1700); // more on bigger castles
-  placeBallistae(wallLines, 30, outerCap);
-  if (citadel) placeBallistae(citadel.wallLines, 22, ballistae.length + 3);
+  if (!pal) { // a town has no wall engines either
+    const outerCap = Math.round(rr(3, 5) + W * D / 1700); // more on bigger castles
+    placeBallistae(wallLines, 30, outerCap);
+    if (citadel) placeBallistae(citadel.wallLines, 22, ballistae.length + 3);
+  }
 
-  LAYOUT = { W, D, front, gate: { x: outerGateX, z: front }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae };
+  LAYOUT = { W, D, front, gate: { x: outerGateX, z: front }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae, palisade: pal };
   rebuildBlocked();
 }
 
@@ -531,10 +539,14 @@ export class Sim {
     };
     // pre-compute every defender count, then scale BOTH armies to a total cap so
     // huge late-campaign sieges stay performant (and never blow the soldier cap).
-    const wallPts = archersOnLines(L.wallLines, 2.6, 6);
+    // A palisade town is a soft raid: only a sparse picket lines the low wall (so
+    // it can't hide behind unreachable archers), and the militia fights on the
+    // ground where your infantry can cut it down — a raid you win by routing the
+    // defenders, not by a grinding siege.
+    const wallPts = archersOnLines(L.wallLines, L.palisade ? 16 : 2.6, 6);
     const NT = TOWERS.length;
-    const garr = Math.round(Math.max(280, Math.min(560, Math.round(W * D / 14))) * this.difficulty);
-    const reserves = Math.round(garr * 0.6);
+    const garr = Math.round((L.palisade ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(560, Math.round(W * D / 14)))) * this.difficulty);
+    const reserves = Math.round(garr * (L.palisade ? 0.35 : 0.6));
     const citGuard = cit ? Math.round(220 * this.difficulty) : 0;
     const cPts = cit ? archersOnLines(cit.wallLines, 2.4, 4) : [];
     const attReq = C.heavy + C.light + C.archer + C.cavalry;
@@ -601,7 +613,8 @@ export class Sim {
     const keep = CASTLE.find(b => b.kind === 'keep'); const citd = LAYOUT.citadel;
     this.keepX = citd ? citd.cx : keep ? (keep.x0 + keep.x1) / 2 : 0;
     this.keepZ = citd ? citd.cz : keep ? (keep.z0 + keep.z1) / 2 : 0;
-    this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : 20;
+    // a town is taken by storming its whole centre, not a tight keep-hold
+    this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : LAYOUT.palisade ? Math.max(28, Math.min(W, D) - 4) : 20;
     // defensive ballistae from the layout (staggered initial reload)
     this.ballistae = LAYOUT.ballistae.map(b => ({ x: b.x, z: b.z, y: b.y, seg: b.seg, cd: this.rnd() * BALLISTA_CD, recoil: 0, horiz: b.horiz, outer: b.outer, aimX: b.x, aimZ: b.z + b.outer * 40 }));
   }
@@ -821,8 +834,11 @@ export class Sim {
       this.attInsideCount = attInside; // wall defenders abandon the walls once this is high
       // capture meter: fills while you hold the keep ground with its guard cleared,
       // drains while the defenders still contest it.
-      if (attKeep >= 6 && defKeep <= attKeep * 0.4) this.captureProgress = Math.min(1, this.captureProgress + dt / CAPTURE_TIME);
-      else if (defKeep > attKeep) this.captureProgress = Math.max(0, this.captureProgress - dt * 0.6);
+      // A town falls once your men dominate its centre (more lenient and quicker
+      // than holding a castle keep); a castle keep must be cleared of its guard.
+      const pal = LAYOUT.palisade;
+      if (attKeep >= (pal ? 5 : 6) && defKeep <= attKeep * (pal ? 1.0 : 0.4)) this.captureProgress = Math.min(1, this.captureProgress + dt / (pal ? CAPTURE_TIME * 0.7 : CAPTURE_TIME));
+      else if (defKeep > attKeep * (pal ? 1.4 : 1)) this.captureProgress = Math.max(0, this.captureProgress - dt * 0.6);
       // only the last shattered survivors break and run
       if (defFrac < 0.12) for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
@@ -961,13 +977,16 @@ export class Sim {
               else { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
             }
           } else if (u.hold && u.faction === Faction.Defender && this.py[i] < 3) {
-            // Ground companies manoeuvre as a body: a battered company makes a
-            // fighting retreat toward the keep; a fresh one sorties to meet the
-            // nearest attackers that have got in (within ~38m, path permitting).
-            if (u.alive < u.count * 0.45 && !u.routing) {
+            // Ground companies manoeuvre as a body. In a castle, a battered company
+            // makes a fighting retreat to the keep while a fresh one sorties to meet
+            // attackers within ~38m. A town militia has no keep to fall back on, so
+            // it sorties far and wide to meet the raiders — and is cut down in the
+            // open, the way a raid should end.
+            const town = LAYOUT.palisade;
+            if (!town && u.alive < u.count * 0.45 && !u.routing) {
               const ex = this.keepX - this.px[i], ez = this.keepZ - this.pz[i]; const l = Math.hypot(ex, ez) || 1;
               if (l > 7) { dx = ex / l; dz = ez / l; }
-            } else if (nearest >= 0 && dist < 38 && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
+            } else if (nearest >= 0 && dist < (town ? 75 : 38) && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
               const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
             }
           }

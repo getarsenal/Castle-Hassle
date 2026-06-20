@@ -121,14 +121,26 @@
 
     #banner {
       position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
-      flex-direction: column; gap: 18px; pointer-events: auto; background: rgba(10,14,22,0.55); z-index: 20;
+      padding: 24px; pointer-events: auto; z-index: 30;
+      background: radial-gradient(120% 95% at 50% 32%, rgba(24,18,11,0.7), rgba(6,8,12,0.93));
+      -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
     }
-    #banner.show { display: flex; }
-    #banner h1 { font-size: 40px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 3px 14px rgba(0,0,0,.5); }
-    #banner p { font-size: 15px; color: rgba(255,255,255,0.85); max-width: 320px; text-align: center; }
+    #banner.show { display: flex; animation: bannerIn .35s ease-out; }
+    @keyframes bannerIn { from { opacity: 0; } to { opacity: 1; } }
+    .bannerCard {
+      display: flex; flex-direction: column; align-items: center; gap: 15px; text-align: center;
+      width: min(86vw, 380px); padding: 30px 26px 26px; border-radius: 18px;
+      background: linear-gradient(#241a0f, #14100a); border: 1px solid #6a522a;
+      box-shadow: 0 22px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,225,160,0.08);
+    }
+    #banner h1 { font-size: 33px; font-weight: 800; letter-spacing: 1px; line-height: 1.1; text-shadow: 0 3px 14px rgba(0,0,0,.5); }
+    #banner p { font-size: 15px; line-height: 1.5; color: #d8c8a8; max-width: 320px; }
     #banner button, #startbtn { pointer-events: auto; }
-    #restartbtn { font: inherit; font-weight: 700; font-size: 16px; color: #1a2433; background: #ffd24a; border: none; border-radius: 12px; padding: 12px 26px; cursor: pointer; box-shadow: 0 4px 0 #c79a20; }
-    #restartbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #c79a20; }
+    #restartbtn { font: inherit; font-weight: 700; font-size: 16px; color: #2a1c08; margin-top: 4px;
+      background: linear-gradient(#ffe27a,#ffbe34); border: none; border-radius: 12px; padding: 13px 30px; cursor: pointer; box-shadow: 0 4px 0 #b9851c; }
+    #restartbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #b9851c; }
+    /* when the battle is over, the end-card stands alone — hide the live HUD behind it */
+    #hud.over > :not(#banner) { display: none !important; }
     .hidden { display: none !important; }
     #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       background: #1a2433; z-index: 50; font-weight: 700; letter-spacing: 1px; color: #ffd24a; }
@@ -285,7 +297,7 @@
     <div id="hint">Tap a unit card, then tap the field to send them. Drag to pan, pinch to zoom.</div>
     <div id="tools"></div>
     <div id="cards"></div>
-    <div id="banner"><h1 id="bannerTitle"></h1><p id="bannerText"></p><button id="restartbtn">Fight Again</button></div>
+    <div id="banner"><div class="bannerCard"><h1 id="bannerTitle"></h1><p id="bannerText"></p><button id="restartbtn">Fight Again</button></div></div>
   </div>
   <div id="muster">
     <button id="musterBack">◂ Map</button>

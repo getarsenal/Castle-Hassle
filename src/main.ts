@@ -43,6 +43,7 @@ const RECRUIT_STEP: Record<string, number> = { heavy: 50, light: 50, archer: 50,
 function buildMuster() {
   const rows = $('rosterRows'); rows.innerHTML = '';
   for (const r of ROSTER) {
+    if (currentNoArtillery && r.key === 'siege') continue; // no siege train on a town raid
     const k = r.key as ArmyKey; const step = RECRUIT_STEP[k];
     const row = document.createElement('div'); row.className = 'rrow';
     row.innerHTML = `<div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc}</div>
@@ -88,7 +89,7 @@ let currentSeed = (Date.now() & 0xffff) >>> 0;
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
 let currentBuff: AtkBuff = NO_BUFF;
-let currentDiscount = 1, currentExtraTrebs = 0;
+let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
@@ -96,7 +97,7 @@ function newGame() {
   bindInput();
   selected = -1; showRange = true; paused = false;
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.textContent = 'Pause'; }
-  banner.classList.remove('show'); startbar.style.display = 'block';
+  banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
   buildCards(); updateHint(); updateTools();
 }
 
@@ -233,6 +234,7 @@ function showEnd() {
   bannerText.textContent += casualtyLine;
   if (inCampaign) saveProgress(progress);
   restartBtn.textContent = inCampaign ? (activeCastle && win ? 'March On' : 'Back to the Map') : 'Fight Again';
+  document.getElementById('hud')?.classList.add('over'); // hide the live HUD behind the end card
   banner.classList.add('show');
 }
 
@@ -332,11 +334,11 @@ document.getElementById('raidsBtn')?.addEventListener('click', () => openRaids(p
 // and any free engineer-corps trebuchets
 function bringable(key: ArmyKey): number {
   if (key === 'light') return Math.max(progress.army.light, LEVY_LIGHT);
-  if (key === 'siege') return progress.army.siege + currentExtraTrebs;
+  if (key === 'siege') return currentNoArtillery ? 0 : progress.army.siege + currentExtraTrebs;
   return progress.army[key];
 }
 function enterCastle(c: CampaignCastle) {
-  activeCastle = c; activeRaid = null;
+  activeCastle = c; activeRaid = null; currentNoArtillery = false;
   const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
   // default: bring your whole army
@@ -351,6 +353,8 @@ function enterCastle(c: CampaignCastle) {
 // seed each time so the fort varies from raid to raid.
 function enterRaid(r: Raid) {
   activeRaid = r; activeCastle = null;
+  // a palisade-town raid is an infantry affair — no siege train
+  currentNoArtillery = !!r.style.palisade;
   const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
   currentSeed = (r.seedBase + (Date.now() & 0x3ff)) >>> 0; currentDifficulty = r.difficulty; currentStyle = r.style;
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);

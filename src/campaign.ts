@@ -119,9 +119,9 @@ export function goldReward(tier: number): number { return Math.round(160 + 560 *
 export interface Raid { id: number; name: string; blurb: string; difficulty: number; reward: number; seedBase: number; style: CastleStyle; }
 export function generateRaids(): Raid[] {
   return [
-    { id: 0, name: 'Bandit Stockade', difficulty: 0.45, reward: 90, seedBase: 50101,
-      blurb: 'Brigands behind a timber palisade. Thinly held — easy coin for a real army.',
-      style: { scale: 0.55, aspect: 1.0, concentric: false, round: false, strongKeep: false, town: 0.1, shape: 'rect' } },
+    { id: 0, name: 'Bandit Stockade', difficulty: 0.6, reward: 90, seedBase: 50101,
+      blurb: 'A village behind a low timber stockade — no stone, no towers, just a brigand militia. Send in your foot and take it. (No siege train needed.)',
+      style: { scale: 0.66, aspect: 1.25, concentric: false, round: false, strongKeep: false, town: 0.32, shape: 'rect', palisade: true } },
     { id: 1, name: "Rival Baron's Keep", difficulty: 0.7, reward: 175, seedBase: 50102,
       blurb: 'A minor lord who will not bend the knee. Break his keep and take his silver.',
       style: { scale: 0.78, aspect: 1.1, concentric: false, round: true, strongKeep: true, town: 0.2, shape: 'rect' } },
