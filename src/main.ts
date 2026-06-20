@@ -369,7 +369,30 @@ function enterRaid(r: Raid) {
 }
 
 // Title → start
-$('startGameBtn')?.addEventListener('click', () => openMap());
+// ---- title theme music: drop the file at public/theme.mp3 (see MUSIC_SRC) ----
+const titleMusic = document.getElementById('titleMusic') as HTMLAudioElement | null;
+const MUSIC_SRC = './theme.mp3';   // served from the deploy root, like intro.mp4
+const MUSIC_VOL = 0.55;            // title themes shouldn't blast
+let musicArmed = false;
+function rampVolume(a: HTMLAudioElement, to: number, ms: number, thenPause = false) {
+  const from = a.volume, t0 = performance.now();
+  const tick = () => { const k = Math.min(1, (performance.now() - t0) / ms); a.volume = Math.max(0, Math.min(1, from + (to - from) * k)); if (k < 1) requestAnimationFrame(tick); else if (thenPause) a.pause(); };
+  requestAnimationFrame(tick);
+}
+function startTitleMusic() {
+  if (!titleMusic || musicArmed) return;
+  const tryPlay = () => {
+    if (musicArmed) return;
+    if (!titleMusic.src) titleMusic.src = MUSIC_SRC;
+    titleMusic.volume = 0;
+    titleMusic.play().then(() => { musicArmed = true; rampVolume(titleMusic, MUSIC_VOL, 1600); })
+      .catch(() => { document.addEventListener('pointerdown', tryPlay, { once: true }); }); // autoplay blocked → start on first touch
+  };
+  tryPlay();
+}
+function stopTitleMusic() { if (titleMusic && musicArmed) rampVolume(titleMusic, 0, 700, true); }
+
+$('startGameBtn')?.addEventListener('click', () => { stopTitleMusic(); openMap(); });
 // Intro: after the splash (video or fallback), go to title
 function startIntro() {
   show('intro', true);
@@ -377,7 +400,19 @@ function startIntro() {
   const card = document.getElementById('introCard');
   if (card) card.style.display = 'none';          // the styled card is a fallback only
   let advanced = false;
-  const go = () => { if (advanced) return; advanced = true; vid?.pause?.(); show('intro', false); show('titleScreen', true); };
+  // End the splash: fade the whole screen to black, swap to the title behind the
+  // black, then lift the black so the title fades up — with the theme coming in.
+  const go = () => {
+    if (advanced) return; advanced = true; vid?.pause?.();
+    const black = document.getElementById('fadeBlack');
+    if (!black) { show('intro', false); show('titleScreen', true); startTitleMusic(); return; }
+    black.classList.add('on');
+    setTimeout(() => {
+      show('intro', false); show('titleScreen', true);
+      startTitleMusic();
+      black.classList.remove('on');
+    }, 720);
+  };
   if (vid) {
     vid.src = './intro.mp4'; vid.style.display = 'block'; vid.playsInline = true;
     vid.addEventListener('ended', go);

@@ -36,6 +36,9 @@
     body { font-family: 'EB Garamond', Georgia, serif; color: #fff; touch-action: none; user-select: none; -webkit-user-select: none; }
     #app { position: fixed; inset: 0; }
     canvas { display: block; }
+    /* full-screen black used to cross-fade the intro into the title */
+    #fadeBlack { position: fixed; inset: 0; background: #000; opacity: 0; z-index: 60; pointer-events: none; transition: opacity 0.7s ease; }
+    #fadeBlack.on { opacity: 1; pointer-events: auto; }
 
     /* ---- HUD (clean vertical stacks: nothing overlaps) ---- */
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
@@ -279,6 +282,8 @@
 <body>
   <div id="app"></div>
   <div id="loading">RAISING THE BANNERS…</div>
+  <div id="fadeBlack"></div>
+  <audio id="titleMusic" loop></audio>
   <script>
     // Startup diagnostics: if the game module fails to load or throws during
     // init, surface the reason on screen instead of an eternal loading screen.
@@ -301,8 +306,11 @@
       }
       function show(msg) { box().textContent = msg; }
       window.addEventListener('error', function (e) {
+        // media (intro video / title music) is non-critical — a missing/blocked
+        // file there must not raise the "bundle didn't deploy" diagnostic
+        var t = e && e.target; if (t && (t.tagName === 'AUDIO' || t.tagName === 'VIDEO')) return;
         // resource (script/img) load failures have no e.message
-        if (e && e.target && e.target.src) { show('FAILED TO LOAD:\n' + e.target.src + '\n\nThe JS bundle did not load — the build output (www/index.html) was not deployed; this looks like the un-built dev file.'); return; }
+        if (t && t.src) { show('FAILED TO LOAD:\n' + t.src + '\n\nThe JS bundle did not load — the build output (www/index.html) was not deployed; this looks like the un-built dev file.'); return; }
         show('STARTUP ERROR:\n' + (e.message || e.type) + '\n' + (e.filename || '') + ':' + (e.lineno || '') + '\n\n' + ((e.error && e.error.stack) || ''));
       }, true);
       window.addEventListener('unhandledrejection', function (e) {
