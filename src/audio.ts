@@ -153,6 +153,63 @@ class BattleAudioImpl {
     this.horn('defeat');
   }
 
+  // ---- UI feedback (menus) — each ensures the context so the FIRST tap unlocks audio ----
+  tap(vol = 1) {                          // soft, premium button press
+    this.ensure(); if (!this.ctx || !this.rl('tap', 0.02)) return; const t = this.now();
+    const out = this.bus(0.12 * vol, 0); const eg = this.g(0); eg.connect(out);
+    const o = this.osc('triangle', 560, t, 0.08); o.frequency.exponentialRampToValueAtTime(360, t + 0.06); o.connect(eg);
+    this.noise(0.012).connect(this.bq('highpass', 2600)).connect(this.gWith(0.22, eg)); // a clean tick edge
+    this.env(eg.gain, t, 1, 0.001, 0.06);
+  }
+  select(vol = 1) {                       // brighter tick for selecting a unit
+    this.ensure(); if (!this.ctx || !this.rl('select', 0.02)) return; const t = this.now();
+    const out = this.bus(0.13 * vol, 0); const eg = this.g(0); eg.connect(out);
+    const o = this.osc('triangle', 860, t, 0.07); o.frequency.exponentialRampToValueAtTime(1200, t + 0.05); o.connect(eg);
+    this.env(eg.gain, t, 1, 0.001, 0.06);
+  }
+  coin(vol = 1) {                         // bright two-note "ka-ching" for a purchase
+    this.ensure(); if (!this.ctx || !this.rl('coin', 0.04)) return; const t = this.now();
+    const out = this.bus(0.22 * vol, 0);
+    for (const [f, off] of [[1318.5, 0], [1975.5, 0.06]] as const) { const tt = t + off; const eg = this.g(0); eg.connect(out);
+      for (const [m, a] of [[1, 1], [2.01, 0.4], [3.0, 0.16]] as const) { const o = this.osc('sine', f * m, tt, 0.22); o.connect(this.gWith(a, eg)); }
+      this.env(eg.gain, tt, 1, 0.002, 0.18); }
+  }
+  reward(vol = 1) {                       // celebratory ascending bell arpeggio (spoils/victory)
+    this.ensure(); if (!this.ctx) return; const t = this.now();
+    const out = this.bus(0.26 * vol, 0);
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => { const tt = t + i * 0.09; const eg = this.g(0); eg.connect(out);
+      for (const [m, a] of [[1, 1], [2.0, 0.45], [3.01, 0.2], [4.2, 0.08]] as const) { const o = this.osc('sine', f * m, tt, 0.5); o.connect(this.gWith(a, eg)); }
+      this.env(eg.gain, tt, 1, 0.003, 0.42); });
+  }
+  unlock(vol = 1) {                       // sparkle when a new conquest opens up
+    this.ensure(); if (!this.ctx) return; const t = this.now();
+    const out = this.bus(0.2 * vol, 0);
+    [784, 988, 1175, 1568].forEach((f, i) => { const tt = t + i * 0.06; const eg = this.g(0); eg.connect(out);
+      this.osc('sine', f, tt, 0.3).connect(eg); this.osc('sine', f * 2.01, tt, 0.3).connect(this.gWith(0.3, eg));
+      this.env(eg.gain, tt, 1, 0.002, 0.26); });
+  }
+  denied(vol = 1) {                       // soft "nuh-uh" for a blocked action
+    this.ensure(); if (!this.ctx || !this.rl('denied', 0.06)) return; const t = this.now();
+    const out = this.bus(0.16 * vol, 0);
+    for (const [f, off] of [[300, 0], [235, 0.1]] as const) { const tt = t + off; const eg = this.g(0); eg.connect(out);
+      const o = this.osc('square', f, tt, 0.1); o.connect(this.bq('lowpass', 900)).connect(eg);
+      this.env(eg.gain, tt, 1, 0.004, 0.09); }
+  }
+  commit(vol = 1) {                       // determined low thud for "march / lay siege"
+    this.ensure(); if (!this.ctx || !this.rl('commit', 0.05)) return; const t = this.now();
+    const out = this.bus(0.32 * vol, 0); const eg = this.g(0); eg.connect(out);
+    const o = this.osc('sine', 150, t, 0.22); o.frequency.exponentialRampToValueAtTime(70, t + 0.2); o.connect(eg);
+    this.noise(0.05).connect(this.bq('lowpass', 600)).connect(this.gWith(0.3, eg));
+    this.env(eg.gain, t, 1, 0.003, 0.2);
+  }
+  whoosh(up = true, vol = 1) {            // overlay open / close
+    this.ensure(); if (!this.ctx || !this.rl('whoosh', 0.05)) return; const t = this.now();
+    const out = this.bus(0.14 * vol, 0); const eg = this.g(0); eg.connect(out);
+    const bp = this.bq('bandpass', 600, 0.8); this.noise(0.26).connect(bp).connect(eg);
+    bp.frequency.setValueAtTime(up ? 380 : 1500, t); bp.frequency.exponentialRampToValueAtTime(up ? 1700 : 320, t + 0.22);
+    this.env(eg.gain, t, 1, 0.04, 0.2);
+  }
+
   // gain-of helper: make a gain with value v feeding `dest`, return it for connecting a source into
   private gWith(v: number, dest: AudioNode) { const n = this.g(v); n.connect(dest); return n; }
 

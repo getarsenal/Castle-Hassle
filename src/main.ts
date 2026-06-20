@@ -7,6 +7,7 @@ import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
 import { openMuster } from './muster';
 import { battleAudio } from './audio';
+import { feedback, installFeedback } from './feedback';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -239,7 +240,8 @@ function showEnd() {
   restartBtn.textContent = inCampaign ? (activeCastle && win ? 'March On' : 'Back to the Map') : 'Fight Again';
   document.getElementById('hud')?.classList.add('over'); // hide the live HUD behind the end card
   banner.classList.add('show');
-  battleAudio.stopAmbience(); if (win) battleAudio.victory(); else battleAudio.defeat();
+  battleAudio.stopAmbience();
+  if (win) { battleAudio.victory(); setTimeout(() => feedback.reward(), 550); } else battleAudio.defeat();
 }
 
 // ---------------- Input ----------------
@@ -334,9 +336,9 @@ function openMap() {
   map = new WorldMap3D(canvas, castles, progress, enterCastle);
   resumeMenuMusic(); // the menu theme carries on across the map (until a battle)
 }
-document.getElementById('warCouncilBtn')?.addEventListener('click', () => openUpgrades(progress, refreshGoldLabel));
-document.getElementById('raidsBtn')?.addEventListener('click', () => openRaids(progress, raids, enterRaid, refreshGoldLabel));
-document.getElementById('musterMapBtn')?.addEventListener('click', () => openMuster(progress, computeBuffs(progress.upg).recruitDiscount, refreshGoldLabel));
+document.getElementById('warCouncilBtn')?.addEventListener('click', () => { feedback.open(); openUpgrades(progress, refreshGoldLabel); });
+document.getElementById('raidsBtn')?.addEventListener('click', () => { feedback.open(); openRaids(progress, raids, enterRaid, refreshGoldLabel); });
+document.getElementById('musterMapBtn')?.addEventListener('click', () => { feedback.open(); openMuster(progress, computeBuffs(progress.upg).recruitDiscount, refreshGoldLabel); });
 
 // the most you can field of a kind: your standing army, plus the free light levy
 // and any free engineer-corps trebuchets
@@ -353,6 +355,7 @@ function enterCastle(c: CampaignCastle) {
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
   show('map', false);
   ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `${c.name} · ${c.region}`);
+  feedback.open();
   buildMuster(); $('muster').classList.add('show');
   newGame(); // backdrop of the actual castle while mustering
 }
@@ -368,6 +371,7 @@ function enterRaid(r: Raid) {
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
   show('map', false);
   ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `Raid · ${r.name}`);
+  feedback.open();
   buildMuster(); $('muster').classList.add('show');
   newGame();
 }
@@ -462,6 +466,7 @@ function startIntro() {
 
 buildMuster();
 newGame(); // a quiet backdrop sim behind the menus
+installFeedback(); // game-wide click/press sounds + haptics
 loading.remove();
 startIntro();
 (window as any).__running = true;
