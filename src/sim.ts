@@ -65,7 +65,7 @@ export interface Ladder { seg: number; along: number; bx: number; bz: number; ho
 // attackers and is knocked out when the wall section under it (`seg`) is destroyed.
 export interface Ballista { x: number; z: number; y: number; seg: number; horiz: boolean; outer: number; }
 export interface CastleLayout {
-  W: number; D: number; gate: { x: number; z: number };
+  W: number; D: number; front: number; gate: { x: number; z: number };
   wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
   buildings: { x: number; z: number; w: number; d: number }[]; citadel: Citadel | null;
   round: boolean; concentric: boolean; ballistae: Ballista[];
@@ -80,6 +80,7 @@ export interface CastleStyle {
   round: boolean;      // round drum towers instead of square ones
   strongKeep: boolean; // force a substantial inner citadel/keep
   town: number;        // building density 0..1 (higher = denser bailey)
+  shape?: 'rect' | 'barbican' | 'twin';  // outer footprint: plain, fronted by a barbican bailey, or a flanking twin bailey (non-square)
 }
 
 export const T = 4, WH = 9, SEG = 8;
@@ -124,9 +125,9 @@ export function generateCastle(seed: number, style?: CastleStyle) {
     return lines;
   };
 
-  // ----- outer compound (size & shape from the style) -----
-  const W = Math.max(40, Math.min(90, Math.round(rr(54, 64) * st.scale * Math.sqrt(st.aspect) / 2) * 2));
-  const D = Math.max(36, Math.min(78, Math.round(rr(48, 56) * st.scale / Math.sqrt(st.aspect) / 2) * 2));
+  // ----- outer compound (size & shape from the style; bigger later castles) -----
+  const W = Math.max(40, Math.min(106, Math.round(rr(54, 64) * st.scale * Math.sqrt(st.aspect) / 2) * 2));
+  const D = Math.max(36, Math.min(88, Math.round(rr(48, 56) * st.scale / Math.sqrt(st.aspect) / 2) * 2));
   const GH = 9, gateX = Math.round(rr(-W * 0.22, W * 0.22) / SEG) * SEG;
   // Concentric castles get a lower outer curtain (the inner ring towers over it).
   const outerWH = st.concentric ? WH - 2 : WH;
@@ -136,6 +137,23 @@ export function generateCastle(seed: number, style?: CastleStyle) {
   for (let x = -W + tSpace; x < W - 18; x += tSpace) { tower(x, -D, false); if (Math.abs(x - gateX) > GH + 7) tower(x, D, false); }
   for (let z = -D + tSpace; z < D - 18; z += tSpace) { tower(-W, z, false); tower(W, z, false); }
   tower(gateX - GH - 3, D, true); tower(gateX + GH + 3, D, true); // gatehouse
+
+  // ----- non-square footprint: a walled barbican bailey thrust out in front of
+  // the gate (the attacker must storm it, cross the killing-ground, then the main
+  // gate). 'twin' makes it broad like a second forebailey. -----
+  let front = D, outerGateX = gateX;
+  if (st.shape === 'barbican' || st.shape === 'twin') {
+    const bhw = Math.min(W - 6, Math.round((st.shape === 'twin' ? rr(0.5, 0.66) : rr(0.32, 0.44)) * W));
+    const bd = Math.round(st.shape === 'twin' ? rr(28, 40) : rr(20, 30));
+    const bx0 = Math.max(-W, gateX - bhw), bx1 = Math.min(W, gateX + bhw), bz1 = D + bd;
+    for (let x = bx0; x < bx1 - 0.1; x += SEG) { const e = Math.min(x + SEG, bx1), c = (x + e) / 2; wall(x, e, bz1 - T, bz1, Math.abs(c - gateX) < GH ? 'gate' : 'wall'); } // south face + outer gate
+    for (let z = D; z < bz1 - 0.1; z += SEG) { const e = Math.min(z + SEG, bz1); wall(bx0, bx0 + T, z, e, 'wall'); wall(bx1 - T, bx1, z, e, 'wall'); } // flanks (north side stays open to the main gate)
+    wallLines.push({ x0: bx0, z0: bz1 - T / 2, x1: bx1, z1: bz1 - T / 2, horiz: true, outer: 1, gapC: gateX, gapH: GH });
+    wallLines.push({ x0: bx0 + T / 2, z0: D, x1: bx0 + T / 2, z1: bz1, horiz: false, outer: -1, gapC: 1e9, gapH: 0 });
+    wallLines.push({ x0: bx1 - T / 2, z0: D, x1: bx1 - T / 2, z1: bz1, horiz: false, outer: 1, gapC: 1e9, gapH: 0 });
+    tower(bx0, bz1, false); tower(bx1, bz1, false); tower(gateX - GH - 3, bz1, true); tower(gateX + GH + 3, bz1, true);
+    front = bz1; outerGateX = gateX;
+  }
 
   // ----- inner stronghold -----
   let citadel: Citadel | null = null;
@@ -199,7 +217,7 @@ export function generateCastle(seed: number, style?: CastleStyle) {
   placeBallistae(wallLines, 30, outerCap);
   if (citadel) placeBallistae(citadel.wallLines, 22, ballistae.length + 3);
 
-  LAYOUT = { W, D, gate: { x: gateX, z: D }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae };
+  LAYOUT = { W, D, front, gate: { x: outerGateX, z: front }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae };
   rebuildBlocked();
 }
 
@@ -502,11 +520,12 @@ export class Sim {
     const S = (n: number) => Math.max(0, Math.round(n * scale));
 
     // ---------------- ATTACKERS (south of the castle, player) ----------------
-    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, S(C.heavy), block(0, D + 22, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(S(C.heavy)) });
-    if (C.light) this.addUnit(Faction.Attacker, UType.Light, S(C.light), block(-W * 0.7, D + 30, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(S(C.light)) });
-    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, S(C.archer), block(0, D + 42, cols(C.archer), 1.5), { name: 'Archers', cols: cols(S(C.archer)) });
-    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, S(C.cavalry), block(W * 0.8, D + 30, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(S(C.cavalry)) });
-    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, D + 58, C.siege, 13), { name: 'Trebuchets', cols: C.siege });
+    const F = L.front; // southern extent (past any barbican) — deploy beyond it
+    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, S(C.heavy), block(0, F + 22, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(S(C.heavy)) });
+    if (C.light) this.addUnit(Faction.Attacker, UType.Light, S(C.light), block(-W * 0.7, F + 30, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(S(C.light)) });
+    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, S(C.archer), block(0, F + 42, cols(C.archer), 1.5), { name: 'Archers', cols: cols(S(C.archer)) });
+    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, S(C.cavalry), block(W * 0.8, F + 30, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(S(C.cavalry)) });
+    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 58, C.siege, 13), { name: 'Trebuchets', cols: C.siege });
 
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });

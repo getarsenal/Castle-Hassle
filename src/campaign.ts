@@ -47,13 +47,16 @@ export function styleFor(name: string, region: string, tier: number, seed: numbe
   const h = hashStr(name + ':' + seed);
   const u = (shift: number) => ((h >>> shift) & 0xff) / 255;
   const east = region === 'France' || region === 'The Holy Land' || region === 'Anatolia';
+  // grows markedly toward Jerusalem; a non-square footprint on a good share of them
+  const sh = u(12);
   const base: CastleStyle = {
-    scale: Math.min(1.4, 0.85 + tier * 0.4 + u(0) * 0.18),
+    scale: Math.min(1.75, 0.9 + tier * 0.66 + u(0) * 0.16),
     aspect: 1 + u(8) * 0.6,
     concentric: u(16) < 0.14 + tier * 0.16,
     round: ((h >> 7) & 1) === 1 || east,
     strongKeep: u(24) < 0.42,
     town: 0.45 + u(4) * 0.3,
+    shape: sh < 0.28 ? 'barbican' : sh < 0.46 ? 'twin' : 'rect',
   };
   return { ...base, ...(NAMED[name] || {}) };
 }
