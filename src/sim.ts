@@ -363,7 +363,7 @@ export class Sim {
 
   private addUnit(faction: Faction, type: UType, count: number,
                   place: (i: number) => [number, number, number], opts: Partial<Unit> = {}): Unit {
-    if (this.n + count > this.MAX) throw new Error(`Soldier cap exceeded: need ${this.n + count}, MAX is ${this.MAX}. Raise Sim.MAX.`);
+    count = Math.max(0, Math.min(count, this.MAX - this.n)); // clamp to the hard cap (never crash)
     const s0 = this.n;
     let sx = 0, sz = 0;
     for (let i = 0; i < count; i++) {
@@ -374,7 +374,7 @@ export class Sim {
       this.unit[id] = this.units.length; this.fac[id] = faction; this.typ[id] = type;
       this.alive[id] = 1; this.slot[id] = this.typeCount[type]++;
     }
-    const ax = sx / count, az = sz / count;
+    const ax = count ? sx / count : 0, az = count ? sz / count : 0;
     const u: Unit = {
       id: this.units.length, faction, type, s0, count, alive: count,
       morale: 100, routing: false, hold: !!opts.hold,
@@ -415,13 +415,7 @@ export class Sim {
     };
 
     const L = LAYOUT, W = L.W, D = L.D;
-    // ---------------- ATTACKERS (south of the castle, player) ----------------
     const C = this.comp; const cols = (n: number) => Math.max(8, Math.round(Math.sqrt(n) * 1.7));
-    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, C.heavy, block(0, D + 22, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(C.heavy) });
-    if (C.light) this.addUnit(Faction.Attacker, UType.Light, C.light, block(-W * 0.7, D + 30, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(C.light) });
-    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, C.archer, block(0, D + 42, cols(C.archer), 1.5), { name: 'Archers', cols: cols(C.archer) });
-    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, C.cavalry, block(W * 0.8, D + 30, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(C.cavalry) });
-    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, D + 58, C.siege, 13), { name: 'Trebuchets', cols: C.siege });
 
     // ---------------- DEFENDERS (generated from the layout) ----------------
     // archers lined along a set of wall-lines (two ranks, inset from corners/gate)
@@ -439,16 +433,6 @@ export class Sim {
       }
       return pts;
     };
-    const wallPts = archersOnLines(L.wallLines, 2.6, 6);
-    this.addUnit(Faction.Defender, UType.Archer, wallPts.length, (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
-    // tower archers (flaming) on every tower top
-    const NT = TOWERS.length;
-    this.addUnit(Faction.Defender, UType.Archer, NT * 4, (i) => {
-      const tw = TOWERS[Math.floor(i / 4) % NT], k = i % 4;
-      return [tw.x + (k % 2 - 0.5) * 2.2, tw.z + (Math.floor(k / 2) - 0.5) * 2.2, tw.big ? WH + 6 : WH + 4];
-    }, { hold: true, fireArrows: true, name: 'Tower Archers' });
-    // garrison + reserves scattered through the open bailey (rejection-sampled
-    // off the buildings/walls/citadel), holding their ground
     const cit = L.citadel;
     const openBailey = (): [number, number, number] => {
       let x = 0, z = 0;
@@ -460,19 +444,45 @@ export class Sim {
       }
       return [x, z, 0];
     };
+    const inCit = (): [number, number, number] => {
+      let x = 0, z = 0;
+      for (let t = 0; t < 40; t++) { x = R(cit!.x0 + T + 1, cit!.x1 - T - 1); z = R(cit!.z0 + T + 1, cit!.z1 - T - 1); if (!blockedAt(x, z)) return [x, z, 0]; }
+      return [x, z, 0];
+    };
+    // pre-compute every defender count, then scale BOTH armies to a total cap so
+    // huge late-campaign sieges stay performant (and never blow the soldier cap).
+    const wallPts = archersOnLines(L.wallLines, 2.6, 6);
+    const NT = TOWERS.length;
     const garr = Math.round(Math.max(280, Math.min(560, Math.round(W * D / 14))) * this.difficulty);
-    this.addUnit(Faction.Defender, UType.Heavy, garr, openBailey, { hold: true, name: 'Garrison' });
-    this.addUnit(Faction.Defender, UType.Light, Math.round(garr * 0.6), openBailey, { hold: true, name: 'Reserves' });
+    const reserves = Math.round(garr * 0.6);
+    const citGuard = cit ? Math.round(220 * this.difficulty) : 0;
+    const cPts = cit ? archersOnLines(cit.wallLines, 2.4, 4) : [];
+    const attReq = C.heavy + C.light + C.archer + C.cavalry;
+    const defReq = wallPts.length + NT * 4 + garr + reserves + citGuard + cPts.length;
+    const TARGET = 3900; // total foot soldiers (trebuchets excluded) — big but smooth
+    const scale = Math.min(1, TARGET / Math.max(1, attReq + defReq));
+    const S = (n: number) => Math.max(0, Math.round(n * scale));
+
+    // ---------------- ATTACKERS (south of the castle, player) ----------------
+    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, S(C.heavy), block(0, D + 22, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(S(C.heavy)) });
+    if (C.light) this.addUnit(Faction.Attacker, UType.Light, S(C.light), block(-W * 0.7, D + 30, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(S(C.light)) });
+    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, S(C.archer), block(0, D + 42, cols(C.archer), 1.5), { name: 'Archers', cols: cols(S(C.archer)) });
+    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, S(C.cavalry), block(W * 0.8, D + 30, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(S(C.cavalry)) });
+    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, D + 58, C.siege, 13), { name: 'Trebuchets', cols: C.siege });
+
+    // wall archers, then flaming tower archers on every tower top
+    this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
+    this.addUnit(Faction.Defender, UType.Archer, S(NT * 4), (i) => {
+      const tw = TOWERS[Math.floor(i / 4) % NT], k = i % 4;
+      return [tw.x + (k % 2 - 0.5) * 2.2, tw.z + (Math.floor(k / 2) - 0.5) * 2.2, tw.big ? WH + 6 : WH + 4];
+    }, { hold: true, fireArrows: true, name: 'Tower Archers' });
+    // garrison + reserves scattered through the open bailey, holding their ground
+    this.addUnit(Faction.Defender, UType.Heavy, S(garr), openBailey, { hold: true, name: 'Garrison' });
+    this.addUnit(Faction.Defender, UType.Light, S(reserves), openBailey, { hold: true, name: 'Reserves' });
     // citadel garrison + its own wall archers (the last redoubt)
     if (cit) {
-      const inCit = (): [number, number, number] => {
-        let x = 0, z = 0;
-        for (let t = 0; t < 40; t++) { x = R(cit.x0 + T + 1, cit.x1 - T - 1); z = R(cit.z0 + T + 1, cit.z1 - T - 1); if (!blockedAt(x, z)) return [x, z, 0]; }
-        return [x, z, 0];
-      };
-      this.addUnit(Faction.Defender, UType.Heavy, Math.round(220 * this.difficulty), inCit, { hold: true, name: 'Citadel Guard' });
-      const cPts = archersOnLines(cit.wallLines, 2.4, 4);
-      this.addUnit(Faction.Defender, UType.Archer, cPts.length, (i) => cPts[i], { hold: true, name: 'Citadel Archers' });
+      this.addUnit(Faction.Defender, UType.Heavy, S(citGuard), inCit, { hold: true, name: 'Citadel Guard' });
+      this.addUnit(Faction.Defender, UType.Archer, S(cPts.length), (i) => cPts[i], { hold: true, name: 'Citadel Archers' });
     }
 
     for (const u of this.units) {

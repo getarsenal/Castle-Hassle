@@ -336,7 +336,7 @@ function frame(now: number) {
     if (perfEl) perfEl.textContent = `${fps.toFixed(0)}fps · sim ${(simMs / perfFrames).toFixed(0)} · gfx ${(gfxMs / perfFrames).toFixed(0)}ms · ${sim.n}u · ${Math.round(q * 100)}%`;
     // adaptive resolution: ease down when struggling, back up when there's room
     if (adaptCooldown > 0) adaptCooldown--;
-    else if (fps < 26 && q > 0.6) { renderer.setQuality(q - 0.1); adaptCooldown = 3; }
+    else if (fps < 30 && q > 0.45) { renderer.setQuality(q - 0.12); adaptCooldown = 3; }
     else if (fps > 54 && q < 1) { renderer.setQuality(q + 0.1); adaptCooldown = 3; }
     perfAcc = 0; perfFrames = 0; simMs = 0; gfxMs = 0;
   }

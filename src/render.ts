@@ -604,13 +604,20 @@ export class Renderer {
         this.dummy.scale.set(s * 0.95, s * 0.95, s * 0.95); this.dummy.updateMatrix();
         mesh.setMatrixAt(slot, this.dummy.matrix); sa[o + 13] = -1000; continue;
       }
-      // marching bob + side sway so soldiers feel alive (not flat & static)
-      const sp = Math.abs(sim.vx[i]) + Math.abs(sim.vz[i]); const m = sp > 0.5 ? 1 : 0.28;
-      const w = Math.sin(tm + i * 1.7);
-      const yb = w * 0.17 * m * s, h2 = (1 + Math.abs(w) * 0.06 * m); // bounce + slight stretch
-      this._roll.setFromAxisAngle(this._zAxis, w * 0.13 * m);
-      this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s * h2) / 2 + yb, sim.pz[i]);
-      this.dummy.quaternion.copy(this.billboard).multiply(this._roll); this.dummy.scale.set(s, s * h2, s); this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
+      // marching bob + side sway so soldiers feel alive (not flat & static).
+      // Idle soldiers (the many holding defenders) take a cheaper path: just the
+      // billboard, no per-unit roll quaternion or bounce maths.
+      if (Math.abs(sim.vx[i]) + Math.abs(sim.vz[i]) > 0.5) {
+        const w = Math.sin(tm + i * 1.7);
+        const yb = w * 0.17 * s, h2 = (1 + Math.abs(w) * 0.06); // bounce + slight stretch
+        this._roll.setFromAxisAngle(this._zAxis, w * 0.13);
+        this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s * h2) / 2 + yb, sim.pz[i]);
+        this.dummy.quaternion.copy(this.billboard).multiply(this._roll); this.dummy.scale.set(s, s * h2, s);
+      } else {
+        this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s) / 2, sim.pz[i]);
+        this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(s, s, s);
+      }
+      this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
       // shadow: only the translation changes (scale/rotation baked at build)
       sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i]; anyLive = true;
     }
