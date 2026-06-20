@@ -47,6 +47,11 @@ const ARTY_SPLASH = 2.6;       // anti-personnel blast radius (very little spill
 const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
 const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
+// Per-soldier damage when a melee company batters a wall/gate it's pressed against.
+// A section ~8m wide takes ~6-10 men in contact, so a company opens a stone wall in
+// ~50s, a gate (weaker) in ~25s — the way an army forces an entry once the engines
+// are spent, so a citadel doesn't come down to a single-file ladder trickle.
+const WALL_BATTER = 0.5;
 const OBST_DIR: [number, number][] = Array.from({ length: 8 }, (_, a) => [Math.cos(a * Math.PI / 4), Math.sin(a * Math.PI / 4)]);
 
 export function maxHp(t: UType) { return HP[t]; }
@@ -372,6 +377,11 @@ export interface Unit {
   fireArrows: boolean; // tower archers loose flaming arrows
   holdFire: boolean;   // ceasefire — ranged unit won't auto-loose (saves ammo)
   assault: boolean;    // committed to storm the keep (vs holding its deployed line)
+  // What an attacking arm is ordered to do, and against what. 'hold' = stand on the
+  // ordered ground; 'storm' = make for the keep through whatever's open; 'breach' =
+  // break in at a specific wall/gate section, then push on to the keep.
+  objKind: 'hold' | 'storm' | 'breach';
+  objSeg: number;      // the wall/gate section a 'breach' order targets (-1 otherwise)
   name: string;
 }
 
@@ -419,7 +429,7 @@ export class Sim {
   // per-frame sound-effect tallies; main drains these to drive procedural audio
   sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 };
   drainSfx() { const s = this.sfx; this.sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 }; return s; }
-  private keepX = 0; private keepZ = 0; private captureR = 20;
+  keepX = 0; keepZ = 0; private captureR = 20;
   n = 0;
   units: Unit[] = [];
   typeCount = [0, 0, 0, 0, 0];
@@ -476,7 +486,7 @@ export class Sim {
       cx: ax, cz: az, siegeTargetSeg: -1,
       ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
       focusX: 0, focusZ: 0, hasFocus: false, fireArrows: !!opts.fireArrows,
-      holdFire: false, assault: false,
+      holdFire: false, assault: false, objKind: 'hold', objSeg: -1,
       name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
@@ -719,7 +729,7 @@ export class Sim {
       const col = k % across, row = Math.floor(k / across);
       const t = across > 1 ? (col + 0.5) / across : 0.5;
       const cx = ox + dx * t - fx * row * 10, cz = oz + dz * t - fz * row * 10;  // rows stack behind
-      const u = comps[k]; u.assault = false; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
+      const u = comps[k]; u.assault = false; u.objKind = 'hold'; u.objSeg = -1; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
     }
   }
   // southernmost line you may muster on during deploy (just outside the walls)
@@ -775,12 +785,40 @@ export class Sim {
     const fz = LAYOUT.front + 6; // archers' standoff, just short of the gate
     for (const u of this.divCompanies(div)) {
       if (u.type === UType.Siege || u.routing) continue;
-      u.hold = false; u.assault = true;
+      u.hold = false; u.assault = true; u.objKind = 'storm'; u.objSeg = -1;
       if (u.type === UType.Archer) {
         const ax = Math.max(WORLD.minX + 4, Math.min(WORLD.maxX - 4, u.ax));
         u.ax = ax; u.az = fz; let c = cellOf(ax, fz); if (BLOCKED[c]) c = cellOf(ax, fz + 6); u.goal = c;
       } else { u.goal = keep; u.ax = this.keepX; u.az = this.keepZ; }
     }
+  }
+  // "Break in HERE": send a melee arm to force a specific wall/gate section — march
+  // to it, batter it down and scale it — then push on to the keep once it's open.
+  // Archers move up to a firing line facing the section to support the escalade.
+  breachSegDiv(div: number, seg: number) {
+    const g = CASTLE[seg]; if (!g || g.kind === 'keep') { this.assaultDiv(div); return; }
+    const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
+    // a foot just OUTSIDE the section (on the side facing the keep's challenger)
+    const horiz = (g.x1 - g.x0) >= (g.z1 - g.z0);
+    for (const u of this.divCompanies(div)) {
+      if (u.type === UType.Siege || u.routing) continue;
+      u.hold = false; u.assault = true;
+      if (u.type === UType.Archer) {
+        u.objKind = 'storm'; // archers don't batter — they shoot from a standoff by the breach
+        const perp = horiz ? Math.sign(u.cz - cz) || 1 : Math.sign(u.cx - cx) || 1;
+        const ax = horiz ? cx : cx + perp * 10, az = horiz ? cz + perp * 10 : cz;
+        u.ax = Math.max(WORLD.minX + 4, Math.min(WORLD.maxX - 4, ax)); u.az = Math.max(WORLD.minZ + 4, Math.min(WORLD.maxZ - 4, az));
+        let c = cellOf(u.ax, u.az); if (BLOCKED[c]) c = cellOf(u.ax, u.az + 6); u.goal = c;
+      } else {
+        u.objKind = 'breach'; u.objSeg = seg; u.ax = cx; u.az = cz; u.goal = cellOf(this.keepX, this.keepZ);
+      }
+    }
+    this.field(cellOf(this.keepX, this.keepZ));
+  }
+  // Did a tap land on the keep itself (the prize)? Used to issue a Storm order.
+  keepTapped(x: number, z: number): boolean {
+    for (let s = 0; s < CASTLE.length; s++) { const g = CASTLE[s]; if (g.kind !== 'keep') continue; if (x >= g.x0 - 3 && x <= g.x1 + 3 && z >= g.z0 - 3 && z <= g.z1 + 3) return true; }
+    return (x - this.keepX) ** 2 + (z - this.keepZ) ** 2 < 14 * 14;
   }
   // Toggle an arm's assault. Pulling out halts it where it stands.
   toggleAssaultDiv(div: number): boolean {
@@ -791,7 +829,7 @@ export class Sim {
   assaultingDiv(div: number): boolean { return this.divCompanies(div).some(u => u.assault); }
   // Halt an arm on its current ground (cancels an assault/advance order).
   holdDiv(div: number) {
-    for (const u of this.divCompanies(div)) { u.assault = false; this.setAnchor(u, u.cx, u.cz, u.facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4))); }
+    for (const u of this.divCompanies(div)) { u.assault = false; u.objKind = 'hold'; u.objSeg = -1; this.setAnchor(u, u.cx, u.cz, u.facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4))); }
   }
 
   // ---- spatial hash for neighbour queries ----
@@ -846,11 +884,13 @@ export class Sim {
       this.attInsideCount = attInside; // wall defenders abandon the walls once this is high
       // capture meter: fills while you hold the keep ground with its guard cleared,
       // drains while the defenders still contest it.
-      // A town falls once your men dominate its centre (more lenient and quicker
-      // than holding a castle keep); a castle keep must be cleared of its guard.
+      // A town falls once your men dominate its centre; a keep, once you hold its
+      // ground with a local MAJORITY over its remaining guard. (It used to demand a
+      // 2.5:1 edge at the keep, which — against a massed garrison you can never fully
+      // clear under fire — made a stormed citadel impossible to actually take.)
       const pal = LAYOUT.palisade;
-      if (attKeep >= (pal ? 5 : 6) && defKeep <= attKeep * (pal ? 1.0 : 0.4)) this.captureProgress = Math.min(1, this.captureProgress + dt / (pal ? CAPTURE_TIME * 0.7 : CAPTURE_TIME));
-      else if (defKeep > attKeep * (pal ? 1.4 : 1)) this.captureProgress = Math.max(0, this.captureProgress - dt * 0.6);
+      if (attKeep >= (pal ? 5 : 6) && defKeep < attKeep * (pal ? 1.2 : 1.0)) this.captureProgress = Math.min(1, this.captureProgress + dt / (pal ? CAPTURE_TIME * 0.7 : CAPTURE_TIME));
+      else if (defKeep > attKeep * (pal ? 1.4 : 1.15)) this.captureProgress = Math.max(0, this.captureProgress - dt * 0.6);
       // only the last shattered survivors break and run
       if (defFrac < 0.12) for (const u of this.units) if (u.faction === Faction.Defender) u.routing = true;
     }
@@ -984,15 +1024,13 @@ export class Sim {
             // chase a *reachable* enemy — but only once the company has reached its
             // ordered ground, so a marching arm isn't dragged off course en route
             const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
+          } else if (!u.hold && u.faction === Faction.Attacker && (u.objKind === 'storm' || u.objKind === 'breach')) {
+            // Storming/breaching: drive at the objective and break through the wall
+            // standing in the way — march to its foot, batter it down and scale it.
+            this.assaultMove(i, u, t); dx = this._dir[0]; dz = this._dir[1];
           } else if (!u.hold) {
             this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
             if (this._stuck && t !== UType.Cavalry) {
-              // The flow field can't thread us to the goal: a standing ring (the
-              // inner ward of a concentric castle, or the outer curtain) is in the
-              // way. Head for a breach that actually leads INWARD toward the keep;
-              // if none has been opened on the ring ahead of us, scale it. (Never
-              // double back to a breach behind us — that's how the keep became
-              // unreachable.)
               const br = this.breachToward(this.px[i], this.pz[i]);
               if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; dx = bx / bl; dz = bz / bl; }
               else { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
@@ -1212,8 +1250,57 @@ export class Sim {
     }
     return this.nearestClimbWall(x, z);
   }
-  private useLadder(i: number) {
-    const seg = this.wallTowardGoal(i);
+  // The standing wall/gate section directly between the soldier and its anchor, or
+  // -1 if the straight route is clear (a tower/keep in the way returns -1 too — the
+  // flow field steers around those rather than trying to breach them).
+  private wallBlockingGoal(i: number): number {
+    const u = this.units[this.unit[i]];
+    const x = this.px[i], z = this.pz[i];
+    const ddx = u.ax - x, ddz = u.az - z, gl = Math.hypot(ddx, ddz) || 1, sx = ddx / gl, sz = ddz / gl;
+    for (let d = 1.5; d < Math.min(gl + 2, 90); d += 1.5) {
+      const qx = x + sx * d, qz = z + sz * d;
+      if (qx < WORLD.minX || qx > WORLD.maxX || qz < WORLD.minZ || qz > WORLD.maxZ) break;
+      if (blockedAt(qx, qz)) { const s = this.wallSegAtPoint(qx, qz); if (s >= 0) return s; }
+    }
+    return -1;
+  }
+  // Drive an attacking soldier at its objective, breaking through the wall in the
+  // way: march to the section's foot, batter it down, and scale it (infantry).
+  private assaultMove(i: number, u: Unit, t: UType) {
+    let seg = -1;
+    if (u.objKind === 'breach' && u.objSeg >= 0 && CASTLE[u.objSeg] && !CASTLE[u.objSeg].dead) seg = u.objSeg;
+    else seg = this.wallBlockingGoal(i);
+    if (seg < 0) { // clear route to the keep — flow toward it (around towers/buildings)
+      this.formMove(u, i);
+      if (this._stuck) { // enclosed with no straight wall ahead: seek an inward breach, else scale
+        const br = this.breachToward(this.px[i], this.pz[i]);
+        if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
+        else if (t !== UType.Cavalry) this.useLadder(i);
+      }
+      return;
+    }
+    const g = CASTLE[seg];
+    const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
+    const dxw = cpx - this.px[i], dzw = cpz - this.pz[i], dw = Math.hypot(dxw, dzw);
+    if (dw <= this.CLIMB + 1.5) {           // at the wall: batter it, and (infantry) scale it
+      this.batterSeg(i, seg, t, u);
+      if (t === UType.Cavalry) { const l = dw || 1; this._dir[0] = dxw / l * 0.25; this._dir[1] = dzw / l * 0.25; } // can't climb — press & wait for a gap
+      else this.useLadder(i, seg);
+    } else { const l = dw || 1; this._dir[0] = dxw / l; this._dir[1] = dzw / l; } // march to its foot
+  }
+  // A soldier pressed against a wall/gate batters it down (the way an army forces an
+  // entry once the engines are spent). Gates give way faster than stone curtain.
+  private batterSeg(i: number, seg: number, t: UType, u: Unit) {
+    if (this.cd[i] > 0) return;
+    const g = CASTLE[seg]; if (!g || g.dead || (g.kind !== 'wall' && g.kind !== 'gate' && g.kind !== 'tower')) return;
+    const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
+    if ((cpx - this.px[i]) ** 2 + (cpz - this.pz[i]) ** 2 > 2.4 * 2.4) return; // must be in contact
+    const mul = u.faction === Faction.Attacker ? this.atk.melee : 1;
+    g.hp -= MELEE[t] * WALL_BATTER * mul * (g.kind === 'gate' ? 1.7 : 1);
+    this.cd[i] = ATKCD[t]; this.sfx.melee++;
+    if (g.hp <= 0) this.breach(seg);
+  }
+  private useLadder(i: number, seg = this.wallTowardGoal(i)) {
     if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
     const L = this.findOrMakeLadder(seg, i);
     if (L < 0) { // couldn't get a ladder: just press toward the wall and retry
@@ -1359,6 +1446,15 @@ export class Sim {
   // Anti-personnel blast: the man at the point of impact is killed outright; a
   // very small radius around him takes a fraction (so it's a precise strike, not
   // a fireball). Trebuchets won't friendly-fire (skips its own faction).
+  // Apply a ranged hit, with SHIELDS for ground attackers: a storming column raises
+  // shields against the plunging fire from the walls, so an assault isn't simply
+  // annihilated crossing the killing ground before it can force an entry. (Melee is
+  // unaffected — this only blunts arrows and bolts, and only for attackers on foot.)
+  private applyRangedHit(j: number, dmg: number, bolt: boolean) {
+    if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5) dmg *= bolt ? 0.62 : 0.45;
+    this.hp[j] -= dmg;
+    if (this.hp[j] <= 0) this.kill(j, this.units[this.unit[j]]);
+  }
   private artySplash(x: number, z: number, fac: Faction, dmg: number, radius: number) {
     const r2 = radius * radius;
     const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((x - WORLD.minX) / this.hCell)));
@@ -1369,8 +1465,7 @@ export class Sim {
       for (const j of this.buckets[rr * this.hCols + cc]) {
         if (this.fac[j] === fac || this.typ[j] === UType.Siege || !this.alive[j]) continue;
         const d2 = (this.px[j] - x) ** 2 + (this.pz[j] - z) ** 2; if (d2 > r2) continue;
-        this.hp[j] -= d2 < 2.0 ? dmg : dmg * 0.2;        // direct hit lethal, very little spill
-        if (this.hp[j] <= 0) this.kill(j, this.units[this.unit[j]]);
+        this.applyRangedHit(j, d2 < 2.0 ? dmg : dmg * 0.2, true); // direct hit lethal, very little spill
       }
     }
   }
@@ -1434,7 +1529,7 @@ export class Sim {
             const b = this.buckets[rr * this.hCols + cc];
             for (const j of b) { if (this.fac[j] === p.fac) continue; const d2 = (this.px[j] - p.tx) ** 2 + (this.pz[j] - p.tz) ** 2; if (d2 < bd2) { bd2 = d2; best = j; } }
           }
-          if (best >= 0) { this.hp[best] -= p.dmg; if (this.hp[best] <= 0) this.kill(best, this.units[this.unit[best]]); }
+          if (best >= 0) this.applyRangedHit(best, p.dmg, false);
         }
         p.active = false;
       }

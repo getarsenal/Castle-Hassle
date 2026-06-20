@@ -151,7 +151,7 @@ function updateHint() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
   if (a && a.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
   else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
-  else if (a) hintEl.textContent = 'Tap to send the arm · DRAG to set its line · ASSAULT to storm the keep';
+  else if (a) hintEl.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
   else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
   else hintEl.textContent = 'Select an arm and tap Assault to commit it — engines batter the walls on their own.';
 }
@@ -168,7 +168,7 @@ function updateTools() {
   if (canAssault) {
     const on = sim.assaultingDiv(selected);
     const ab = document.createElement('button'); ab.className = 'tool' + (on ? ' on' : '');
-    ab.textContent = on ? 'Assaulting' : a.type === UType.Archer ? 'Advance' : 'Assault';
+    ab.textContent = a.type === UType.Archer ? (on ? 'Advancing' : 'Advance') : (on ? 'Storming' : 'Storm Keep');
     ab.addEventListener('click', () => { sim.toggleAssaultDiv(selected); refreshCards(); updateTools(); });
     toolsEl.appendChild(ab);
   }
@@ -312,6 +312,15 @@ function handleTap(cx: number, cy: number) {
     const a = sim.divAgg(selected);
     if (a.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); return; } sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }
     else if (a.type === UType.Archer) { sim.setFocusDiv(selected, p.x, p.z); updateTools(); }
+    else if (sim.phase === 'battle' && sim.wallSegAt(p.x, p.z, 9) >= 0) {
+      // tapped a standing wall/gate with a melee arm → break in HERE
+      const seg = sim.wallSegAt(p.x, p.z, 9); sim.breachSegDiv(selected, seg);
+      const [sx, sz] = sim.segCenter(seg); renderer.pingMove(sx, sz); refreshCards(); updateTools();
+    }
+    else if (sim.phase === 'battle' && sim.keepTapped(p.x, p.z)) {
+      // tapped the keep itself → storm it
+      sim.assaultDiv(selected); renderer.pingMove(sim.keepX, sim.keepZ); refreshCards(); updateTools();
+    }
     else { sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }
   }
 }
@@ -515,6 +524,9 @@ function frame(now: number) {
   // aim marker + range fan for the selected ranged arm (driven by a representative company)
   if (a && a.type === UType.Siege && rep && rep.siegeTargetSeg >= 0) { const [tx, tz] = sim.segCenter(rep.siegeTargetSeg); renderer.setTargetMarker(tx, tz); }
   else if (a && a.type === UType.Archer && rep && rep.hasFocus) renderer.setTargetMarker(rep.focusX, rep.focusZ);
+  // melee order marker: a 'break in here' target on the wall, or the keep when storming
+  else if (a && rep && rep.objKind === 'breach' && rep.objSeg >= 0) { const [tx, tz] = sim.segCenter(rep.objSeg); renderer.setTargetMarker(tx, tz); }
+  else if (a && rep && rep.objKind === 'storm') renderer.setTargetMarker(sim.keepX, sim.keepZ);
   else renderer.setTargetMarker(null, null);
   if (a && a.alive > 0 && (a.type === UType.Archer || a.type === UType.Siege) && showRange && rep) renderer.setRangeFan(a.cx, a.cz, sim.unitRange(rep.id));
   else renderer.setRangeFan(null, null);
