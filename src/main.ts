@@ -82,7 +82,7 @@ function updateMuster() {
   const g = $('musterGold'), t = $('musterTotal'); if (g) g.textContent = String(progress.gold); if (t) t.textContent = String(total);
   ($('musterBtn') as HTMLButtonElement).disabled = (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
 }
-$('musterBtn').addEventListener('click', () => { $('muster').classList.remove('show'); newGame(); });
+$('musterBtn').addEventListener('click', () => { stopMenuMusic(); $('muster').classList.remove('show'); newGame(); });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
 // ---------------- New game ----------------
@@ -329,6 +329,7 @@ function openMap() {
   if (map) map.destroy();
   const canvas = $('mapCanvas') as HTMLCanvasElement; // re-fetch (destroy swaps the node)
   map = new WorldMap3D(canvas, castles, progress, enterCastle);
+  resumeMenuMusic(); // the menu theme carries on across the map (until a battle)
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => openUpgrades(progress, refreshGoldLabel));
 document.getElementById('raidsBtn')?.addEventListener('click', () => openRaids(progress, raids, enterRaid, refreshGoldLabel));
@@ -369,30 +370,44 @@ function enterRaid(r: Raid) {
 }
 
 // Title → start
-// ---- title theme music: drop the file at public/theme.mp3 (see MUSIC_SRC) ----
+// ---- menu music: plays across the title AND the campaign map (stops once a
+// battle begins). Drop the track at public/theme.mp3; only its first
+// MUSIC_LOOP_END seconds are used, looped. ----
 const titleMusic = document.getElementById('titleMusic') as HTMLAudioElement | null;
 const MUSIC_SRC = './theme.mp3';   // served from the deploy root, like intro.mp4
-const MUSIC_VOL = 0.55;            // title themes shouldn't blast
+const MUSIC_VOL = 0.55;
+const MUSIC_LOOP_END = 38;         // loop just the first 38 seconds of the track
 let musicArmed = false;
+// loop the opening MUSIC_LOOP_END seconds rather than the whole file
+titleMusic?.addEventListener('timeupdate', () => { if (titleMusic.currentTime >= MUSIC_LOOP_END) titleMusic.currentTime = 0; });
 function rampVolume(a: HTMLAudioElement, to: number, ms: number, thenPause = false) {
   const from = a.volume, t0 = performance.now();
   const tick = () => { const k = Math.min(1, (performance.now() - t0) / ms); a.volume = Math.max(0, Math.min(1, from + (to - from) * k)); if (k < 1) requestAnimationFrame(tick); else if (thenPause) a.pause(); };
   requestAnimationFrame(tick);
 }
-function startTitleMusic() {
+// first start (on the title) — handles the browser autoplay-gesture gate
+function startMenuMusic() {
   if (!titleMusic || musicArmed) return;
   const tryPlay = () => {
     if (musicArmed) return;
     if (!titleMusic.src) titleMusic.src = MUSIC_SRC;
     titleMusic.volume = 0;
     titleMusic.play().then(() => { musicArmed = true; rampVolume(titleMusic, MUSIC_VOL, 1600); })
-      .catch(() => { document.addEventListener('pointerdown', tryPlay, { once: true }); }); // autoplay blocked → start on first touch
+      .catch(() => { document.addEventListener('pointerdown', tryPlay, { once: true }); }); // blocked → start on first touch
   };
   tryPlay();
 }
-function stopTitleMusic() { if (titleMusic && musicArmed) rampVolume(titleMusic, 0, 700, true); }
+// keep the menu music going (or revive it) when back on the map after a battle
+function resumeMenuMusic() {
+  if (!titleMusic) return;
+  if (!musicArmed) { startMenuMusic(); return; }
+  if (titleMusic.paused) titleMusic.play().catch(() => { /* ignore */ });
+  rampVolume(titleMusic, MUSIC_VOL, 900);
+}
+// fade the menu music out when the fighting starts
+function stopMenuMusic() { if (titleMusic && !titleMusic.paused) rampVolume(titleMusic, 0, 700, true); }
 
-$('startGameBtn')?.addEventListener('click', () => { stopTitleMusic(); openMap(); });
+$('startGameBtn')?.addEventListener('click', () => openMap()); // music carries on into the map
 // Intro: after the splash (video or fallback), go to title
 function startIntro() {
   show('intro', true);
@@ -405,11 +420,11 @@ function startIntro() {
   const go = () => {
     if (advanced) return; advanced = true; vid?.pause?.();
     const black = document.getElementById('fadeBlack');
-    if (!black) { show('intro', false); show('titleScreen', true); startTitleMusic(); return; }
+    if (!black) { show('intro', false); show('titleScreen', true); startMenuMusic(); return; }
     black.classList.add('on');
     setTimeout(() => {
       show('intro', false); show('titleScreen', true);
-      startTitleMusic();
+      startMenuMusic();
       black.classList.remove('on');
     }, 720);
   };
