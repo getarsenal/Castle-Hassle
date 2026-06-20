@@ -5,6 +5,7 @@ import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, 
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
+import { openMuster } from './muster';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -329,6 +330,7 @@ function openMap() {
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => openUpgrades(progress, refreshGoldLabel));
 document.getElementById('raidsBtn')?.addEventListener('click', () => openRaids(progress, raids, enterRaid, refreshGoldLabel));
+document.getElementById('musterMapBtn')?.addEventListener('click', () => openMuster(progress, computeBuffs(progress.upg).recruitDiscount, refreshGoldLabel));
 
 // the most you can field of a kind: your standing army, plus the free light levy
 // and any free engineer-corps trebuchets

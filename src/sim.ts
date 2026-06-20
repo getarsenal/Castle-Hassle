@@ -507,7 +507,7 @@ export class Sim {
 
     // ---------------- DEFENDERS (generated from the layout) ----------------
     // archers lined along a set of wall-lines (two ranks, inset from corners/gate)
-    const archersOnLines = (lines: WallLine[], spacing: number, inset: number): [number, number, number][] => {
+    const archersOnLines = (lines: WallLine[], spacing: number, inset: number, wallTop = WH): [number, number, number][] => {
       const pts: [number, number, number][] = [];
       for (const ln of lines) {
         const a0 = (ln.horiz ? ln.x0 : ln.z0) + inset, a1 = (ln.horiz ? ln.x1 : ln.z1) - inset;
@@ -515,7 +515,7 @@ export class Sim {
           if (Math.abs(a - ln.gapC) < ln.gapH + 1) continue; // leave the gate clear
           for (let rk = 0; rk < 2; rk++) {
             const off = -ln.outer * rk * 1.3;
-            pts.push(ln.horiz ? [a, ln.z0 + off, WH] : [ln.x0 + off, a, WH]);
+            pts.push(ln.horiz ? [a, ln.z0 + off, wallTop] : [ln.x0 + off, a, wallTop]);
           }
         }
       }
@@ -543,7 +543,7 @@ export class Sim {
     // it can't hide behind unreachable archers), and the militia fights on the
     // ground where your infantry can cut it down — a raid you win by routing the
     // defenders, not by a grinding siege.
-    const wallPts = archersOnLines(L.wallLines, L.palisade ? 16 : 2.6, 6);
+    const wallPts = archersOnLines(L.wallLines, L.palisade ? 16 : 2.6, 6, L.palisade ? 5 : WH);
     const NT = TOWERS.length;
     const garr = Math.round((L.palisade ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(560, Math.round(W * D / 14)))) * this.difficulty);
     const reserves = Math.round(garr * (L.palisade ? 0.35 : 0.6));
