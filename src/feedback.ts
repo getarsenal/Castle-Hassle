@@ -2,20 +2,17 @@
 // so the whole UI feels alive. Built on the procedural audio engine plus
 // Capacitor Haptics (native iOS Taptic Engine) with a web Vibration fallback.
 import { battleAudio } from './audio';
+import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 
 type Hap = 'light' | 'medium' | 'heavy' | 'success' | 'warning';
 function haptic(kind: Hap) {
+  // Real Taptic Engine on the native iOS app; the plugin's web build falls back
+  // to the Vibration API (Android) and no-ops where unsupported (iOS Safari).
   try {
-    const cap = (window as any).Capacitor;
-    if (cap?.isNativePlatform?.() && cap.Plugins?.Haptics) {
-      const H = cap.Plugins.Haptics;
-      if (kind === 'success' || kind === 'warning') H.notification({ type: kind.toUpperCase() });
-      else H.impact({ style: kind.toUpperCase() });
-    } else if ((navigator as any).vibrate) {
-      const v = kind === 'success' ? [10, 35, 10] : kind === 'warning' ? [8, 26, 8] : kind === 'medium' ? 16 : kind === 'heavy' ? 24 : 7;
-      (navigator as any).vibrate(v);
-    }
-  } catch { /* haptics are best-effort */ }
+    if (kind === 'success') Haptics.notification({ type: NotificationType.Success }).catch(() => {});
+    else if (kind === 'warning') Haptics.notification({ type: NotificationType.Warning }).catch(() => {});
+    else Haptics.impact({ style: kind === 'medium' ? ImpactStyle.Medium : kind === 'heavy' ? ImpactStyle.Heavy : ImpactStyle.Light }).catch(() => {});
+  } catch { /* best-effort */ }
 }
 
 // Named feedbacks for moments the global dispatcher can't infer.

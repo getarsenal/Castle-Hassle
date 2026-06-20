@@ -466,6 +466,7 @@ function startIntro() {
 
 buildMuster();
 newGame(); // a quiet backdrop sim behind the menus
+battleAudio.installUnlock(); // unlock Web Audio on the first real touch (esp. iOS)
 installFeedback(); // game-wide click/press sounds + haptics
 loading.remove();
 startIntro();

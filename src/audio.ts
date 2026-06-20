@@ -19,30 +19,47 @@ class BattleAudioImpl {
   // Build the context + ambience graph. Must be called from a user gesture the
   // first time (browsers start audio suspended); idempotent and re-resumes.
   ensure() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
-    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!AC) return;
-    const ctx: AudioContext = new AC(); this.ctx = ctx;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14; comp.knee.value = 26; comp.ratio.value = 4.5; comp.attack.value = 0.003; comp.release.value = 0.25;
-    this.master = ctx.createGain(); this.master.gain.value = this.vol;
-    this.master.connect(comp).connect(ctx.destination);
-    // 2s of white noise, reused everywhere
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    this.noiseBuf = buf;
-    // --- battle din: looping noise → roar bandpass + low rumble → breathing LFO gain → level gain ---
-    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-    const roar = this.bq('bandpass', 500, 0.7), rumble = this.bq('lowpass', 150);
-    const mix = this.g(1), rg = this.g(0.85), lg = this.g(0.6);
-    src.connect(roar).connect(rg).connect(mix); src.connect(rumble).connect(lg).connect(mix);
-    const breathe = this.g(0.85);          // LFO sits around 0.85 ± 0.15 so the din swells
-    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.12; const lfoG = this.g(0.15);
-    lfo.connect(lfoG).connect(breathe.gain); lfo.start();
-    this.ambGain = this.g(0);
-    mix.connect(breathe).connect(this.ambGain).connect(this.master);
-    src.start();
-    if (ctx.state === 'suspended') ctx.resume();
+    if (!this.ctx) {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return;
+      const ctx: AudioContext = new AC(); this.ctx = ctx;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.knee.value = 26; comp.ratio.value = 4.5; comp.attack.value = 0.003; comp.release.value = 0.25;
+      this.master = ctx.createGain(); this.master.gain.value = this.vol;
+      this.master.connect(comp).connect(ctx.destination);
+      // 2s of white noise, reused everywhere
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      this.noiseBuf = buf;
+      // --- battle din: looping noise → roar bandpass + low rumble → breathing LFO gain → level gain ---
+      const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+      const roar = this.bq('bandpass', 500, 0.7), rumble = this.bq('lowpass', 150);
+      const mix = this.g(1), rg = this.g(0.85), lg = this.g(0.6);
+      src.connect(roar).connect(rg).connect(mix); src.connect(rumble).connect(lg).connect(mix);
+      const breathe = this.g(0.85);          // LFO sits around 0.85 ± 0.15 so the din swells
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.12; const lfoG = this.g(0.15);
+      lfo.connect(lfoG).connect(breathe.gain); lfo.start();
+      this.ambGain = this.g(0);
+      mix.connect(breathe).connect(this.ambGain).connect(this.master);
+      src.start();
+    }
+    this.kick();
+  }
+  // iOS/Safari won't make a sound until the context is resumed AND a buffer is
+  // played inside a real touch gesture — do both, every gesture, until it sticks.
+  private kick() {
+    const ctx = this.ctx; if (!ctx) return;
+    if (ctx.state !== 'running') {
+      ctx.resume().catch(() => { /* ignore */ });
+      try { const b = ctx.createBufferSource(); b.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); b.connect(ctx.destination); b.start(0); } catch { /* ignore */ }
+    }
+  }
+  // Wire global gesture + visibility listeners so audio unlocks on the first real
+  // tap anywhere and recovers after the app is backgrounded. Call once at startup.
+  installUnlock() {
+    const kick = () => this.ensure();
+    for (const ev of ['touchend', 'pointerup', 'pointerdown', 'mousedown', 'click', 'keydown']) window.addEventListener(ev, kick, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && this.ctx && this.ctx.state !== 'running') this.ctx.resume().catch(() => { /* ignore */ }); });
   }
   setVolume(v: number) { this.vol = v; if (this.master) this.master.gain.value = v; }
 
