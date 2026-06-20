@@ -514,12 +514,17 @@ export class Sim {
       const tw = TOWERS[Math.floor(i / 4) % NT], k = i % 4;
       return [tw.x + (k % 2 - 0.5) * 2.2, tw.z + (Math.floor(k / 2) - 0.5) * 2.2, tw.big ? WH + 6 : WH + 4];
     }, { hold: true, fireArrows: true, name: 'Tower Archers' });
-    // garrison + reserves scattered through the open bailey, holding their ground
-    this.addUnit(Faction.Defender, UType.Heavy, S(garr), openBailey, { hold: true, name: 'Garrison' });
-    this.addUnit(Faction.Defender, UType.Light, S(reserves), openBailey, { hold: true, name: 'Reserves' });
-    // citadel garrison + its own wall archers (the last redoubt)
+    // garrison + reserves: split into small companies (30–50 men) so the defence
+    // manoeuvres, counter-attacks and BREAKS company-by-company, not as one blob.
+    const companies = (total: number, type: UType, place: (i: number) => [number, number, number], name: string) => {
+      let left = total, idx = 0;
+      while (left > 0) { const c = Math.min(left, 30 + Math.floor(this.rnd() * 21)); this.addUnit(Faction.Defender, type, c, place, { hold: true, name: `${name} ${++idx}` }); left -= c; }
+    };
+    companies(S(garr), UType.Heavy, openBailey, 'Garrison');
+    companies(S(reserves), UType.Light, openBailey, 'Reserves');
+    // citadel garrison (in companies) + its own wall archers (the last redoubt)
     if (cit) {
-      this.addUnit(Faction.Defender, UType.Heavy, S(citGuard), inCit, { hold: true, name: 'Citadel Guard' });
+      companies(S(citGuard), UType.Heavy, inCit, 'Citadel Guard');
       this.addUnit(Faction.Defender, UType.Archer, S(cPts.length), (i) => cPts[i], { hold: true, name: 'Citadel Archers' });
     }
 
@@ -766,9 +771,16 @@ export class Sim {
             this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
             // no breach to filter through → march to the wall in front and scale it
             if (this._stuck && t !== UType.Cavalry) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
-          } else if (u.hold && nearest >= 0 && dist < 24 && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
-            // garrison surges off its hold to engage enemies that get inside the walls
-            const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
+          } else if (u.hold && u.faction === Faction.Defender && this.py[i] < 3) {
+            // Ground companies manoeuvre as a body: a battered company makes a
+            // fighting retreat toward the keep; a fresh one sorties to meet the
+            // nearest attackers that have got in (within ~38m, path permitting).
+            if (u.alive < u.count * 0.45 && !u.routing) {
+              const ex = this.keepX - this.px[i], ez = this.keepZ - this.pz[i]; const l = Math.hypot(ex, ez) || 1;
+              if (l > 7) { dx = ex / l; dz = ez / l; }
+            } else if (nearest >= 0 && dist < 38 && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
+              const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
+            }
           }
         }
       }
