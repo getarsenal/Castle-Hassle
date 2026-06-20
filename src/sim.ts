@@ -416,6 +416,9 @@ export class Sim {
   private ladderMinPy: number[] = []; // lowest occupied height per ladder (single-file gating)
   private attInsideCount = 0;         // attackers standing inside the walls
   captureProgress = 0;                // 0..1 — your banner rising over the keep
+  // per-frame sound-effect tallies; main drains these to drive procedural audio
+  sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0 };
+  drainSfx() { const s = this.sfx; this.sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0 }; return s; }
   private keepX = 0; private keepZ = 0; private captureR = 20;
   n = 0;
   units: Unit[] = [];
@@ -973,7 +976,7 @@ export class Sim {
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
           const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1);
           if (nearest >= 0 && dist <= mrng) {
-            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; this.sfx.melee++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
           } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
                      && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
             // chase a *reachable* enemy — but only once the company has reached its
@@ -1261,6 +1264,7 @@ export class Sim {
   }
 
   private shoot(i: number, target: number) {
+    this.sfx.arrows++;
     const p = this.getProj();
     const atkShot = this.fac[i] === Faction.Attacker;
     const fire = this.units[this.unit[i]].fireArrows || (atkShot && this.atk.fire);
@@ -1303,6 +1307,7 @@ export class Sim {
   }
 
   private lobBoulder(i: number, segIdx: number) {
+    this.sfx.boulders++;
     const seg = CASTLE[segIdx];
     const p = this.getProj();
     const sx = this.px[i], sz = this.pz[i], sy = 3;
@@ -1318,6 +1323,7 @@ export class Sim {
   private breach(segIdx: number) {
     const seg = CASTLE[segIdx];
     if (seg.dead) return;
+    this.sfx.breaches++;
     seg.dead = true;
     rebuildBlocked();
     this.fields.clear(); // passability changed — recompute flow fields on demand
@@ -1353,6 +1359,7 @@ export class Sim {
     }
   }
   private fireBolt(e: Emplacement, target: number) {
+    this.sfx.bolts++;
     const p = this.getProj();
     const sx = e.x, sz = e.z, sy = e.y + 1.2;
     const d0 = Math.hypot(this.px[target] - sx, this.pz[target] - sz) || 1;
@@ -1395,7 +1402,7 @@ export class Sim {
           let hit = structureAt(p.x, p.z);
           if (hit < 0) hit = p.wall;
           const seg = CASTLE[hit];
-          if (seg && !seg.dead) { seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(hit); }
+          if (seg && !seg.dead) { this.sfx.hits++; seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(hit); }
           if (p.splash > 0) this.artySplash(p.x, p.z, p.fac, p.dmg * 0.5, p.splash); // also scatters troops at the wall
         } else if (p.splash > 0) {
           // ballista bolt / anti-personnel shot: kill the man it strikes, little spill

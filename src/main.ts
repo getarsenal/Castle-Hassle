@@ -6,6 +6,7 @@ import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
 import { openMuster } from './muster';
+import { battleAudio } from './audio';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -82,7 +83,7 @@ function updateMuster() {
   const g = $('musterGold'), t = $('musterTotal'); if (g) g.textContent = String(progress.gold); if (t) t.textContent = String(total);
   ($('musterBtn') as HTMLButtonElement).disabled = (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
 }
-$('musterBtn').addEventListener('click', () => { stopMenuMusic(); $('muster').classList.remove('show'); newGame(); });
+$('musterBtn').addEventListener('click', () => { battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame(); });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
 // ---------------- New game ----------------
@@ -99,6 +100,7 @@ function newGame() {
   selected = -1; showRange = true; paused = false;
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.textContent = 'Pause'; }
   banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
+  battleAudio.stopAmbience(); // silence any prior battle's din behind the new setup
   buildCards(); updateHint(); updateTools();
 }
 
@@ -185,7 +187,7 @@ function updateTools() {
   }
 }
 
-startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); });
+startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); });
 restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if (activeCastle || activeRaid) openMap(); else { buildMuster(); $('muster').classList.add('show'); } });
 
 function showEnd() {
@@ -237,6 +239,7 @@ function showEnd() {
   restartBtn.textContent = inCampaign ? (activeCastle && win ? 'March On' : 'Back to the Map') : 'Fight Again';
   document.getElementById('hud')?.classList.add('over'); // hide the live HUD behind the end card
   banner.classList.add('show');
+  battleAudio.stopAmbience(); if (win) battleAudio.victory(); else battleAudio.defeat();
 }
 
 // ---------------- Input ----------------
@@ -404,8 +407,8 @@ function resumeMenuMusic() {
   if (titleMusic.paused) titleMusic.play().catch(() => { /* ignore */ });
   rampVolume(titleMusic, MUSIC_VOL, 900);
 }
-// fade the menu music out when the fighting starts
-function stopMenuMusic() { if (titleMusic && !titleMusic.paused) rampVolume(titleMusic, 0, 700, true); }
+// fade the menu music out (slowly) when the fighting starts
+function stopMenuMusic() { if (titleMusic && !titleMusic.paused) rampVolume(titleMusic, 0, 2200, true); }
 
 $('startGameBtn')?.addEventListener('click', () => openMap()); // music carries on into the map
 // Intro: after the splash (video or fallback), go to title
@@ -479,6 +482,13 @@ function frame(now: number) {
   acc += dt; if (!paused && acc >= SIM_DT) { sim.step(SIM_DT); acc = Math.min(acc - SIM_DT, SIM_DT); }
   if (paused) acc = 0;
   simMs += performance.now() - ts;
+
+  // procedural battle audio: aggregate the frame's combat tallies into sound
+  const sf = sim.drainSfx();
+  if (sim.phase === 'battle' && !paused) {
+    const intensity = Math.min(1, (sf.melee + sf.arrows * 0.5 + sf.hits * 3) / 35);
+    battleAudio.update(dt, sf, intensity);
+  }
 
   perfAcc += dt; perfFrames++;
   if (perfAcc >= 0.5) {
