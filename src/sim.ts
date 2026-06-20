@@ -350,6 +350,7 @@ export interface Unit {
   focusX: number; focusZ: number; hasFocus: boolean; // archer aim point (focus fire)
   fireArrows: boolean; // tower archers loose flaming arrows
   holdFire: boolean;   // ceasefire — ranged unit won't auto-loose (saves ammo)
+  assault: boolean;    // committed to storm the keep (vs holding its deployed line)
   name: string;
 }
 
@@ -446,7 +447,7 @@ export class Sim {
       cx: ax, cz: az, siegeTargetSeg: -1,
       ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
       focusX: 0, focusZ: 0, hasFocus: false, fireArrows: !!opts.fireArrows,
-      holdFire: false,
+      holdFire: false, assault: false,
       name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
@@ -676,7 +677,7 @@ export class Sim {
       const col = k % across, row = Math.floor(k / across);
       const t = across > 1 ? (col + 0.5) / across : 0.5;
       const cx = ox + dx * t - fx * row * 10, cz = oz + dz * t - fz * row * 10;  // rows stack behind
-      const u = comps[k]; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
+      const u = comps[k]; u.assault = false; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
     }
   }
   setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.holdFire = false; } }
@@ -718,24 +719,36 @@ export class Sim {
   begin() {
     if (this.phase !== 'deploy') return;
     this.phase = 'battle';
-    this.autoOrders();
+    // The army holds its deployed line. The player commits each arm to the
+    // assault when ready — a deliberate, per-arm choice, not all-or-nothing.
+    // Trebuchets batter the walls on their own from the moment battle is joined.
   }
-  // Sound the general assault again (re-issue the auto-advance to every company).
-  assaultAll() { this.autoOrders(); }
-  // Auto-assault orders: infantry & cavalry storm the keep on their own; archers
-  // hold a firing line just outside the wall — behind the assault but still in
-  // range — so you aren't forced to nurse every order. Drag any arm to override.
-  private autoOrders() {
+  // Sound the general assault — commit every arm at once (a convenience button).
+  assaultAll() { for (const d of this.playerDivs()) this.assaultDiv(d); }
+  // Commit one arm to storm the keep. Infantry & cavalry advance on the keep;
+  // archers move up to a firing line just short of the gate; engines never charge.
+  assaultDiv(div: number) {
     const keep = cellOf(this.keepX, this.keepZ); this.field(keep);
     const fz = LAYOUT.front + 6; // archers' standoff, just short of the gate
-    for (const u of this.units) {
-      if (u.faction !== Faction.Attacker || u.type === UType.Siege || u.routing) continue;
-      u.hold = false;
+    for (const u of this.divCompanies(div)) {
+      if (u.type === UType.Siege || u.routing) continue;
+      u.hold = false; u.assault = true;
       if (u.type === UType.Archer) {
         const ax = Math.max(WORLD.minX + 4, Math.min(WORLD.maxX - 4, u.ax));
         u.ax = ax; u.az = fz; let c = cellOf(ax, fz); if (BLOCKED[c]) c = cellOf(ax, fz + 6); u.goal = c;
       } else { u.goal = keep; u.ax = this.keepX; u.az = this.keepZ; }
     }
+  }
+  // Toggle an arm's assault. Pulling out halts it where it stands.
+  toggleAssaultDiv(div: number): boolean {
+    const cs = this.divCompanies(div); if (!cs.length) return false;
+    if (cs.some(u => u.assault)) { this.holdDiv(div); return false; }
+    this.assaultDiv(div); return true;
+  }
+  assaultingDiv(div: number): boolean { return this.divCompanies(div).some(u => u.assault); }
+  // Halt an arm on its current ground (cancels an assault/advance order).
+  holdDiv(div: number) {
+    for (const u of this.divCompanies(div)) { u.assault = false; this.setAnchor(u, u.cx, u.cz, u.facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4))); }
   }
 
   // ---- spatial hash for neighbour queries ----

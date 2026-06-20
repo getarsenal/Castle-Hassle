@@ -116,6 +116,7 @@ function refreshCards() {
   for (const card of Array.from(cardsEl.children) as HTMLElement[]) {
     const div = Number(card.dataset.div); const a = sim.divAgg(div);
     card.classList.toggle('sel', selected === div); card.classList.toggle('routing', a.routing);
+    card.classList.toggle('assault', sim.assaultingDiv(div));
     (card.querySelector('.count') as HTMLElement).textContent = String(a.alive);
     const frac = a.count ? a.alive / a.count : 0, bar = card.querySelector('.bar > i') as HTMLElement;
     bar.style.width = `${Math.round(frac * 100)}%`;
@@ -144,18 +145,29 @@ function updateTopbar() {
 function updateHint() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
   if (a && a.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
-  else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to set a focus target · drag to reposition';
-  else if (a) hintEl.textContent = 'Tap to send the arm · DRAG to set its line & facing · two fingers = camera';
-  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms (they snap into formation), then Begin Assault.';
-  else hintEl.textContent = 'Breach the walls, storm the keep and hold it — or grind the garrison to nothing';
+  else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
+  else if (a) hintEl.textContent = 'Tap to send the arm · DRAG to set its line · ASSAULT to storm the keep';
+  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
+  else hintEl.textContent = 'Select an arm and tap Assault to commit it — engines batter the walls on their own.';
 }
 function updateTools() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
   const ranged = a && (a.type === UType.Archer || a.type === UType.Siege);
+  // every arm but the engines gets its own assault toggle, so committing to the
+  // storm is a per-arm decision (this is a strategy game, not all-or-nothing)
+  const canAssault = !!a && a.type !== UType.Siege && sim.phase === 'battle';
   toolsEl.innerHTML = '';
-  if (!ranged) { toolsEl.classList.remove('show'); return; }
+  if (!a || (!ranged && !canAssault)) { toolsEl.classList.remove('show'); return; }
   toolsEl.classList.add('show');
   const comps = sim.divCompanies(selected);
+  if (canAssault) {
+    const on = sim.assaultingDiv(selected);
+    const ab = document.createElement('button'); ab.className = 'tool' + (on ? ' on' : '');
+    ab.textContent = on ? 'Assaulting' : a.type === UType.Archer ? 'Advance' : 'Assault';
+    ab.addEventListener('click', () => { sim.toggleAssaultDiv(selected); refreshCards(); updateTools(); });
+    toolsEl.appendChild(ab);
+  }
+  if (!ranged) return;
   const rb = document.createElement('button'); rb.className = 'tool' + (showRange ? ' on' : ''); rb.textContent = 'Range';
   rb.addEventListener('click', () => { showRange = !showRange; updateTools(); });
   toolsEl.appendChild(rb);

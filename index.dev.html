@@ -106,6 +106,8 @@
     .card .ammo > i { display: block; height: 100%; background: #6fc3e8; }
     .card.routing { opacity: 0.55; }
     .card.routing .name::after { content: " ⚑"; color: #ffb03a; }
+    .card.assault { border-color: #e8893a; box-shadow: 0 0 10px rgba(232,137,58,0.55); }
+    .card.assault.sel { border-color: #ffd24a; }
 
     #tools { position: absolute; bottom: calc(var(--safe-bottom) + 96px); left: 50%; transform: translateX(-50%); display: none; gap: 8px; pointer-events: auto; }
     #tools.show { display: flex; }
@@ -277,7 +279,7 @@
       <span class="stat"><span class="dot def"></span><span id="defCount">0</span></span>
       <span style="opacity:.4; margin-left:6px;" id="phase">DEPLOY</span>
     </div>
-    <div id="startbar"><button id="startbtn">Begin Assault</button></div>
+    <div id="startbar"><button id="startbtn">Begin Battle</button></div>
     <div id="keepBar"><div id="keepLabel">HOLD THE KEEP</div><div id="keepTrack"><div id="keepFill"></div></div></div>
     <div id="hint">Tap a unit card, then tap the field to send them. Drag to pan, pinch to zoom.</div>
     <div id="tools"></div>
