@@ -50,6 +50,13 @@
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
     }
     #perf.hidden { display: none; }
+    #pauseBtn, #assaultBtn { position: absolute; top: calc(var(--safe-top) + 10px); pointer-events: auto;
+      border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86); color: #ffe6a6;
+      font: 700 13px 'Cinzel', Georgia, serif; padding: 8px 13px; border-radius: 11px; cursor: pointer; display: none; }
+    #pauseBtn { right: 12px; }
+    #assaultBtn { right: 92px; background: rgba(120,40,30,0.86); color: #ffdcc0; }
+    #pauseBtn.show, #assaultBtn.show { display: block; }
+    #pauseBtn.on { background: rgba(200,150,40,0.92); color: #241600; }
 
     #topbar {
       position: absolute; top: calc(var(--safe-top) + 10px); left: 50%; transform: translateX(-50%);
@@ -256,6 +263,8 @@
   <div id="hud">
     <div id="title">CASTLE HASSLE</div>
     <div id="perf" title="Tap to hide">– fps</div>
+    <button id="pauseBtn">Pause</button>
+    <button id="assaultBtn">Assault</button>
     <div id="topbar">
       <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>
       <span style="opacity:.4">vs</span>

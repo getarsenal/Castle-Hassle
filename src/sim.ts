@@ -533,11 +533,17 @@ export class Sim {
       const tw = TOWERS[Math.floor(i / 4) % NT], k = i % 4;
       return [tw.x + (k % 2 - 0.5) * 2.2, tw.z + (Math.floor(k / 2) - 0.5) * 2.2, tw.big ? WH + 6 : WH + 4];
     }, { hold: true, fireArrows: true, name: 'Tower Archers' });
-    // garrison + reserves: split into small companies (30–50 men) so the defence
-    // manoeuvres, counter-attacks and BREAKS company-by-company, not as one blob.
-    const companies = (total: number, type: UType, place: (i: number) => [number, number, number], name: string) => {
+    // garrison + reserves: split into small companies (30–50 men) drawn up in
+    // neat grid blocks (like the attackers), each manoeuvring, counter-attacking
+    // and BREAKING as its own body — an army of companies, not one blob.
+    const companies = (total: number, type: UType, anchor: () => [number, number, number], name: string) => {
       let left = total, idx = 0;
-      while (left > 0) { const c = Math.min(left, 30 + Math.floor(this.rnd() * 21)); this.addUnit(Faction.Defender, type, c, place, { hold: true, name: `${name} ${++idx}` }); left -= c; }
+      while (left > 0) {
+        const c = Math.min(left, 30 + Math.floor(this.rnd() * 21)); const [ax, az] = anchor();
+        const cols = Math.max(4, Math.round(Math.sqrt(c) * 1.4));
+        this.addUnit(Faction.Defender, type, c, block(ax, az, cols, type === UType.Light ? 1.4 : 1.6), { hold: true, name: `${name} ${++idx}`, cols });
+        left -= c;
+      }
     };
     companies(S(garr), UType.Heavy, openBailey, 'Garrison');
     companies(S(reserves), UType.Light, openBailey, 'Reserves');
@@ -571,6 +577,23 @@ export class Sim {
     if (BLOCKED[cell]) cell = cellOf(u.ax, u.az + 5); // nudge the flow goal off walls
     u.goal = cell;
     this.field(cell);
+    // During pre-battle setup, don't make the player wait for the column to
+    // march — snap the company straight into its formation where it's placed.
+    if (this.phase === 'deploy') this.snapUnit(u);
+  }
+
+  // Teleport every soldier of a unit onto its formation slot (used in deploy).
+  private snapUnit(u: Unit) {
+    const t = u.type, sp = SPACING[t], cols = Math.max(1, u.cols), rows = Math.ceil(u.count / cols);
+    const ffx = Math.sin(u.facing), ffz = Math.cos(u.facing), rrx = Math.cos(u.facing), rrz = -Math.sin(u.facing);
+    for (let i = u.s0; i < u.s0 + u.count; i++) {
+      if (!this.alive[i]) continue;
+      const k = i - u.s0, col = k % cols, row = (k - col) / cols;
+      const lr = (col - (cols - 1) / 2) * sp, lf = ((rows - 1) / 2 - row) * sp;
+      this.px[i] = u.ax + rrx * lr + ffx * lf; this.pz[i] = u.az + rrz * lr + ffz * lf;
+      this.vx[i] = 0; this.vz[i] = 0;
+    }
+    u.cx = u.ax; u.cz = u.az;
   }
 
   // Quick move: form up centred on a point, facing the castle (origin).
@@ -628,7 +651,26 @@ export class Sim {
   unitRange(unitId: number): number { return RANGE[this.units[unitId].type]; }
   isRanged(unitId: number): boolean { const t = this.units[unitId]?.type; return t === UType.Archer || t === UType.Siege; }
 
-  begin() { if (this.phase === 'deploy') this.phase = 'battle'; }
+  begin() {
+    if (this.phase !== 'deploy') return;
+    this.phase = 'battle';
+    // Auto-assault: every infantry/cavalry company advances on the keep on its
+    // own (so you aren't forced to nurse every order). Trebuchets hold & bombard.
+    // You can still drag any company to redirect it.
+    const goal = cellOf(this.keepX, this.keepZ); this.field(goal);
+    for (const u of this.units) {
+      if (u.faction !== Faction.Attacker || u.type === UType.Siege || u.routing) continue;
+      u.hold = false; u.goal = goal; u.ax = this.keepX; u.az = this.keepZ;
+    }
+  }
+  // Sound the general assault again (re-issue the auto-advance to every company).
+  assaultAll() {
+    const goal = cellOf(this.keepX, this.keepZ); this.field(goal);
+    for (const u of this.units) {
+      if (u.faction !== Faction.Attacker || u.type === UType.Siege || u.routing) continue;
+      u.hold = false; u.goal = goal; u.ax = this.keepX; u.az = this.keepZ;
+    }
+  }
 
   // ---- spatial hash for neighbour queries ----
   private hCell = 6;

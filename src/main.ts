@@ -17,6 +17,10 @@ const $ = (id: string) => document.getElementById(id)!;
 let sim: Sim;
 let renderer: Renderer;
 let selected = -1;
+let paused = false;
+const pauseBtn = document.getElementById('pauseBtn'), assaultBtn = document.getElementById('assaultBtn');
+pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
+assaultBtn?.addEventListener('click', () => { sim.assaultAll(); renderer.pingMove(0, -10); });
 let showRange = true;
 
 // ---------------- HUD refs ----------------
@@ -73,7 +77,8 @@ function newGame() {
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
   renderer = new Renderer(sim, app);
   bindInput();
-  selected = -1; showRange = true;
+  selected = -1; showRange = true; paused = false;
+  if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.textContent = 'Pause'; }
   banner.classList.remove('show'); startbar.style.display = 'block';
   buildCards(); updateHint(); updateTools();
 }
@@ -107,6 +112,9 @@ function updateTopbar() {
   defCountEl.textContent = String(sim.countAlive(Faction.Defender));
   phaseEl.textContent = sim.phase === 'deploy' ? 'DEPLOY' : sim.phase === 'battle' ? 'BATTLE' : 'OVER';
   // keep-capture meter: only meaningful once the assault is underway
+  const inBattle = sim.phase === 'battle';
+  pauseBtn?.classList.toggle('show', inBattle);
+  assaultBtn?.classList.toggle('show', inBattle);
   const cp = sim.captureProgress;
   if (keepBar && keepFill && keepLabel) {
     const showBar = sim.phase === 'battle' && cp > 0.001;
@@ -326,7 +334,8 @@ function frame(now: number) {
   // slow frame triggers extra steps that slow it further (a death spiral). Under
   // heavy load the battle just runs slightly slow-mo instead of locking up.
   const ts = performance.now();
-  acc += dt; if (acc >= SIM_DT) { sim.step(SIM_DT); acc = Math.min(acc - SIM_DT, SIM_DT); }
+  acc += dt; if (!paused && acc >= SIM_DT) { sim.step(SIM_DT); acc = Math.min(acc - SIM_DT, SIM_DT); }
+  if (paused) acc = 0;
   simMs += performance.now() - ts;
 
   perfAcc += dt; perfFrames++;
