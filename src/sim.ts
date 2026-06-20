@@ -4,7 +4,7 @@
 // flow field per destination (no per-agent A*). Fixed-timestep & seeded so it's
 // deterministic (replays / future PvP come cheap).
 
-export const WORLD = { minX: -130, maxX: 130, minZ: -120, maxZ: 175 };
+export const WORLD = { minX: -148, maxX: 148, minZ: -120, maxZ: 215 };
 export const CELL = 2;
 export const COLS = Math.round((WORLD.maxX - WORLD.minX) / CELL); // 100
 export const ROWS = Math.round((WORLD.maxZ - WORLD.minZ) / CELL); // 90
@@ -229,6 +229,19 @@ function blockedAt(x: number, z: number): boolean {
   }
   return false;
 }
+// The standing castle section a point falls inside, or -1 for open ground. Towers
+// win ties over the walls they abut (they're the solid mass actually in the way),
+// so a boulder coming down on a tower hits the tower, not a wall behind it. The
+// keep is never returned (it's the prize, not a bombardment target).
+function structureAt(x: number, z: number): number {
+  let hit = -1, towerHit = -1;
+  for (let i = 0; i < CASTLE.length; i++) {
+    const b = CASTLE[i];
+    if (b.dead || b.kind === 'keep') continue;
+    if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) { if (b.kind === 'tower') towerHit = i; else if (hit < 0) hit = i; }
+  }
+  return towerHit >= 0 ? towerHit : hit;
+}
 // Height of the tallest standing structure covering a point (0 if open ground).
 function heightAt(x: number, z: number): number {
   let h = 0;
@@ -357,6 +370,11 @@ export interface Unit {
 // per-type formation spacing
 const SPACING = [1.5, 1.3, 1.4, 2.1, 10];
 const ENGAGE = 9; // range at which troops break formation to fight
+// How close a company's body must be to its ordered ground before its men will
+// peel off to chase a nearby enemy. While still marching to an objective they
+// hold course (and only trade blows with whatever they make actual contact with),
+// so an ordered move isn't derailed by every skirmisher along the way.
+const CHASE_LEASH = 22;
 
 export interface Projectile {
   active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number;
@@ -537,17 +555,17 @@ export class Sim {
       while (left > 0) {
         const c = Math.min(left, 30 + Math.floor(this.rnd() * 21));
         const col = k % across, row = Math.floor(k / across);
-        const ax = cx + (col - (across - 1) / 2) * 15, az = cz + row * 11;
+        const ax = cx + (col - (across - 1) / 2) * 17, az = cz + row * 13;
         const ccols = Math.max(3, Math.round(Math.sqrt(c) * 1.4));
         this.addUnit(Faction.Attacker, type, c, block(ax, az, ccols, gap), { name: `${name} ${++idx}`, cols: ccols, div: type });
         left -= c; k++;
       }
     };
-    division(S(C.heavy), UType.Heavy, 0, F + 22, 1.6, 'Heavy Inf');
-    division(S(C.light), UType.Light, -W * 0.62, F + 34, 1.4, 'Light Inf');
-    division(S(C.archer), UType.Archer, 0, F + 50, 1.5, 'Archers');
-    division(S(C.cavalry), UType.Cavalry, W * 0.7, F + 34, 2.2, 'Cavalry');
-    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 64, C.siege, 13), { name: 'Trebuchets', cols: C.siege, div: UType.Siege });
+    division(S(C.heavy), UType.Heavy, 0, F + 40, 1.6, 'Heavy Inf');
+    division(S(C.light), UType.Light, -W * 0.78, F + 56, 1.4, 'Light Inf');
+    division(S(C.archer), UType.Archer, 0, F + 74, 1.5, 'Archers');
+    division(S(C.cavalry), UType.Cavalry, W * 0.86, F + 56, 2.2, 'Cavalry');
+    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 92, C.siege, 13), { name: 'Trebuchets', cols: C.siege, div: UType.Siege });
 
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
@@ -896,8 +914,18 @@ export class Sim {
             this.pz[i] < WORLD.minZ + 3 || this.pz[i] > WORLD.maxZ - 3) { this.kill(i, u); continue; }
       } else if (t === UType.Siege) {
         let seg = u.siegeTargetSeg;
-        if (seg < 0 || CASTLE[seg].dead) { seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]); if (u.siegeTargetSeg >= 0 && CASTLE[u.siegeTargetSeg].dead) u.siegeTargetSeg = -1; }
-        else if (((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + ((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2 > RANGE[t] * RANGE[t]) seg = -1;
+        if (seg >= 0 && CASTLE[seg].dead) {
+          // the wall you ordered them to break is rubble — stand the battery down
+          // rather than auto-roaming to another target (that was the annoying bit).
+          // The player picks the next target; tapping a wall resumes fire.
+          u.siegeTargetSeg = -1; u.holdFire = true; seg = -1;
+        } else if (seg >= 0) {
+          // ordered target still standing — hold fire until it's in range
+          if (((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + ((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2 > RANGE[t] * RANGE[t]) seg = -1;
+        } else if (!u.holdFire) {
+          // no specific orders and not stood down → batter the nearest wall on their own
+          seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]);
+        }
         if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0 && !u.holdFire) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t] * this.atk.reload; this.ammo[i]--; }
         if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
@@ -917,13 +945,21 @@ export class Sim {
           const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1);
           if (nearest >= 0 && dist <= mrng) {
             if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
-          } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])) {
-            // chase only a *reachable* enemy — never walk into a wall after one
+          } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
+                     && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
+            // chase a *reachable* enemy — but only once the company has reached its
+            // ordered ground, so a marching arm isn't dragged off course en route
             const ex = this.px[nearest] - this.px[i], ez = this.pz[nearest] - this.pz[i]; const l = dist || 1; dx = ex / l; dz = ez / l;
           } else if (!u.hold) {
             this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
-            // no breach to filter through → march to the wall in front and scale it
-            if (this._stuck && t !== UType.Cavalry) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
+            if (this._stuck && t !== UType.Cavalry) {
+              // The flow field can't thread us to the goal. Make for the nearest
+              // breach (broken-down walls are the way in); only scale a standing
+              // wall as a last resort when nothing has been broken open yet.
+              const br = this.nearestBreach(this.px[i], this.pz[i]);
+              if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; dx = bx / bl; dz = bz / bl; }
+              else { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
+            }
           } else if (u.hold && u.faction === Faction.Defender && this.py[i] < 3) {
             // Ground companies manoeuvre as a body: a battered company makes a
             // fighting retreat toward the keep; a fresh one sorties to meet the
@@ -1035,6 +1071,17 @@ export class Sim {
 
   // ---- wall scaling (ladders) ----
   private CLIMB = 4.5; // distance from a wall section's box at which a soldier mounts the ladder
+  // Nearest breach (a fallen wall/gate section, now an open gap) — the entry point
+  // attackers should make for when the flow field can't thread them to their goal.
+  private nearestBreach(x: number, z: number): number {
+    let best = -1, bd = 1e9;
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s]; if (!g.dead || (g.kind !== 'wall' && g.kind !== 'gate')) continue;
+      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2, d2 = (cx - x) ** 2 + (cz - z) ** 2;
+      if (d2 < bd) { bd = d2; best = s; }
+    }
+    return best;
+  }
   private nearestClimbWall(x: number, z: number): number {
     let best = -1, bd = 1e9;
     for (let s = 0; s < CASTLE.length; s++) {
@@ -1309,9 +1356,14 @@ export class Sim {
       const dxz = Math.hypot(p.x - p.tx, p.z - p.tz);
       if (p.y <= 0 || dxz < 1.4) {
         if (p.wall >= 0) {
-          // boulder: damage the wall section; crumble it into a breach at 0 hp
-          const seg = CASTLE[p.wall];
-          if (!seg.dead) { seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(p.wall); }
+          // Boulder: damage whatever solid section it actually comes down on —
+          // walls AND towers are real objects, so a shot scattered onto a tower
+          // breaks the tower instead of passing through to the wall behind it. If
+          // it lands in open ground, count it against the ordered wall.
+          let hit = structureAt(p.x, p.z);
+          if (hit < 0) hit = p.wall;
+          const seg = CASTLE[hit];
+          if (seg && !seg.dead) { seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(hit); }
           if (p.splash > 0) this.artySplash(p.x, p.z, p.fac, p.dmg * 0.5, p.splash); // also scatters troops at the wall
         } else if (p.splash > 0) {
           // ballista bolt / anti-personnel shot: kill the man it strikes, little spill

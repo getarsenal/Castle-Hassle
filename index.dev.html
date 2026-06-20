@@ -43,28 +43,27 @@
 
     /* perf readout (fps / ms / unit count) — for device testing; tap to hide */
     #perf {
-      position: absolute; top: calc(var(--safe-top) + 12px); left: 10px;
-      font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      color: #b6f3c0; background: rgba(12,18,28,0.6); border-radius: 7px;
-      padding: 4px 7px; pointer-events: auto; letter-spacing: 0.2px;
+      position: absolute; bottom: calc(var(--safe-bottom) + 160px); left: 10px;
+      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #b6f3c0; background: rgba(12,18,28,0.55); border-radius: 6px;
+      padding: 3px 6px; pointer-events: auto; letter-spacing: 0.2px;
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
     }
     #perf.hidden { display: none; }
-    #pauseBtn, #assaultBtn { position: absolute; top: calc(var(--safe-top) + 10px); pointer-events: auto;
+    #pauseBtn, #retreatBtn { position: absolute; top: calc(var(--safe-top) + 10px); pointer-events: auto;
       border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86); color: #ffe6a6;
       font: 700 13px 'Cinzel', Georgia, serif; padding: 8px 13px; border-radius: 11px; cursor: pointer; display: none; }
     #pauseBtn { right: 12px; }
-    #assaultBtn { right: 92px; background: rgba(120,40,30,0.86); color: #ffdcc0; }
-    #retreatBtn { right: 178px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
-    #pauseBtn.show, #assaultBtn.show, #retreatBtn.show { display: block; }
+    #retreatBtn { right: 92px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
+    #pauseBtn.show, #retreatBtn.show { display: block; }
     #pauseBtn.on { background: rgba(200,150,40,0.92); color: #241600; }
 
     #topbar {
-      position: absolute; top: calc(var(--safe-top) + 10px); left: 50%; transform: translateX(-50%);
-      display: flex; gap: 10px; align-items: center;
+      position: absolute; top: calc(var(--safe-top) + 10px); left: 12px;
+      display: flex; gap: 8px; align-items: center;
       background: rgba(20,28,42,0.82); border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 14px; padding: 8px 14px; pointer-events: auto;
-      font-size: 13px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap;
+      border-radius: 14px; padding: 7px 12px; pointer-events: auto;
+      font-size: 12.5px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap;
     }
     #topbar .stat { display: flex; gap: 6px; align-items: center; }
     #topbar .dot { width: 10px; height: 10px; border-radius: 50%; }
@@ -187,7 +186,7 @@
         linear-gradient(#0e1622, #0e1622) 0 16px / 100% 104px no-repeat;
       opacity: 0.55;
     }
-    #muster h1 { font-size: 27px; font-weight: 800; color: #ffd24a; letter-spacing: 1.5px; text-shadow: 0 3px 16px rgba(0,0,0,.5); }
+    #muster h1 { font-size: 26px; font-weight: 800; color: #ffd24a; letter-spacing: 1px; text-shadow: 0 3px 16px rgba(0,0,0,.5); margin-top: 30px; }
     #muster .sub { font-size: 12.5px; color: rgba(255,255,255,0.66); margin: 4px 0 18px; }
     #musterBar { width: 100%; max-width: 440px; z-index: 1; display: flex; justify-content: space-between;
       font-size: 13px; font-weight: 700; margin-bottom: 18px; color: #ffe6b0; }
@@ -271,7 +270,6 @@
     <div id="title">CASTLE HASSLE</div>
     <div id="perf" title="Tap to hide">– fps</div>
     <button id="pauseBtn">Pause</button>
-    <button id="assaultBtn">Assault</button>
     <button id="retreatBtn">Retreat</button>
     <div id="topbar">
       <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>

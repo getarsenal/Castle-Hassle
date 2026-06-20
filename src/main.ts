@@ -18,9 +18,8 @@ let sim: Sim;
 let renderer: Renderer;
 let selected = -1;
 let paused = false;
-const pauseBtn = document.getElementById('pauseBtn'), assaultBtn = document.getElementById('assaultBtn'), retreatBtn = document.getElementById('retreatBtn');
+const pauseBtn = document.getElementById('pauseBtn'), retreatBtn = document.getElementById('retreatBtn');
 pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
-assaultBtn?.addEventListener('click', () => { sim.assaultAll(); renderer.pingMove(0, -10); });
 retreatBtn?.addEventListener('click', () => { if (confirm('Sound the retreat? Your surviving troops withdraw; the castle is not taken.')) sim.retreat(); });
 let showRange = true;
 
@@ -133,7 +132,6 @@ function updateTopbar() {
   // keep-capture meter: only meaningful once the assault is underway
   const inBattle = sim.phase === 'battle';
   pauseBtn?.classList.toggle('show', inBattle);
-  assaultBtn?.classList.toggle('show', inBattle);
   retreatBtn?.classList.toggle('show', inBattle);
   const cp = sim.captureProgress;
   if (keepBar && keepFill && keepLabel) {
@@ -404,7 +402,7 @@ function frame(now: number) {
   if (perfAcc >= 0.5) {
     const fps = perfFrames / perfAcc;
     const q = renderer.quality;
-    if (perfEl) perfEl.textContent = `${fps.toFixed(0)}fps · sim ${(simMs / perfFrames).toFixed(0)} · gfx ${(gfxMs / perfFrames).toFixed(0)}ms · ${sim.n}u · ${Math.round(q * 100)}%`;
+    if (perfEl) perfEl.textContent = `${fps.toFixed(0)}fps · ${sim.n}u · ${Math.round(q * 100)}%`;
     // adaptive resolution: ease down when struggling, back up when there's room
     if (adaptCooldown > 0) adaptCooldown--;
     else if (fps < 30 && q > 0.45) { renderer.setQuality(q - 0.12); adaptCooldown = 3; }

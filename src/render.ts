@@ -131,9 +131,9 @@ export class Renderer {
     this.previewArrow = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.9 }));
     this.previewArrow.visible = false; this.scene.add(this.previewArrow);
 
-    // frame the whole siege: between the castle centre and the attacker camp
-    this.camTarget.set(LAYOUT.gate.x * 0.5, 0, LAYOUT.D * 0.5);
-    this.camDist = Math.min(228, Math.hypot(LAYOUT.W, LAYOUT.D) * 2.3 + 60);
+    // frame the whole siege: between the castle centre and the (roomier) camp
+    this.camTarget.set(LAYOUT.gate.x * 0.5, 0, LAYOUT.D * 0.5 + 48);
+    this.camDist = Math.min(250, Math.hypot(LAYOUT.W, LAYOUT.D) * 2.3 + 92);
 
     window.addEventListener('resize', () => this.onResize());
   }
@@ -733,7 +733,7 @@ export class Renderer {
   clampTarget() {
     this.camTarget.x = Math.max(WORLD.minX, Math.min(WORLD.maxX, this.camTarget.x));
     this.camTarget.z = Math.max(WORLD.minZ - 10, Math.min(WORLD.maxZ + 10, this.camTarget.z));
-    this.camDist = Math.max(30, Math.min(230, this.camDist));
+    this.camDist = Math.max(30, Math.min(252, this.camDist));
     this.camPitch = Math.max(0.3, Math.min(1.46, this.camPitch));
   }
 }
