@@ -947,10 +947,16 @@ export class Sim {
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
         if (t === UType.Archer && this.ammo[i] > 0) {
-          // active archer: volley enemies in range (within the focus area if set)
-          if (nearest >= 0 && dist <= RANGE[t] && !u.holdFire && this.focusOk(u, nearest)) {
-            if (this.cd[i] <= 0) { this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--; }
-          } else if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; } }
+          // Archers always dress toward their firing-line slot, so the company
+          // keeps its ranks (this steering is what counters the separation push
+          // that otherwise melts a halted firing line into a scattered blob).
+          // They loose only once roughly in position, so the line forms up at the
+          // wall first instead of every man freezing where he first sees a target.
+          if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; } }
+          const settled = dx * dx + dz * dz < 0.5; // within ~1.7m of its slot
+          if (settled && this.cd[i] <= 0 && nearest >= 0 && dist <= RANGE[t] && !u.holdFire && this.focusOk(u, nearest)) {
+            this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--;
+          }
         } else {
           // melee — including archers who've spent all their arrows
           // Defender reserves rush to MOUNT a wall the enemy is scaling.
