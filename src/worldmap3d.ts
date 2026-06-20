@@ -120,7 +120,7 @@ export class WorldMap3D {
     this.heights = this.smoothHeights(raw, mask, 4);
     // 3) geometry
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
-    const green = new THREE.Color('#6fa148'), tan = new THREE.Color('#ccb06a');
+    const green = new THREE.Color('#6fa148'), tan = new THREE.Color('#ccb06a'), haze = new THREE.Color('#cfe1ef');
     for (let gy = 0; gy < GH; gy++) {
       const lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       for (let gx = 0; gx < GW; gx++) {
@@ -133,6 +133,13 @@ export class WorldMap3D {
         else if (y < 14) c.set('#83864c');                                   // upland
         else if (y < 19) c.set('#8e8068');                                   // bare mountain rock
         else c.set('#efeae0');                                               // snow
+        // gentle per-vertex shade jitter so the flat colour bands don't read blocky
+        if (land && y >= 0.05) c.offsetHSL((hash(gx * 1.3, gy * 2.7) - 0.5) * 0.012, (hash(gx * 2.1, gy * 0.7) - 0.5) * 0.05, (hash(gx * 1.7, gy * 2.3) - 0.5) * 0.05);
+        // dissolve the map edge into haze along a wavy, noisy border (not a hard rectangle)
+        const ex = gx / (GW - 1), ey = gy / (GH - 1);
+        const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(gx * 0.8, gy * 1.1) - 0.5) * 0.07;
+        const fade = Math.max(0, Math.min(1, dEdge / 0.14));
+        if (fade < 1) c.lerp(haze, (1 - fade) * (1 - fade));
         col.push(c.r, c.g, c.b);
       }
     }
@@ -196,7 +203,7 @@ export class WorldMap3D {
   private buildWater(mask: Uint8Array) {
     const { GW, GH, bb } = this; const WX = 150, WZ = 104;
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
-    const deep = new THREE.Color('#2f6391'), shallow = new THREE.Color('#62c2cf');
+    const deep = new THREE.Color('#2f6391'), shallow = new THREE.Color('#62c2cf'), haze = new THREE.Color('#cfe1ef');
     const landNear = (lon: number, lat: number) => {
       const gx = (lon - bb.w) / (bb.e - bb.w) * (GW - 1), gy = (lat - bb.s) / (bb.n - bb.s) * (GH - 1);
       let near = 0; const R = 3;
@@ -209,7 +216,13 @@ export class WorldMap3D {
     for (let j = 0; j < WZ; j++) for (let i = 0; i < WX; i++) {
       const lon = bb.w + (bb.e - bb.w) * (i / (WX - 1)), lat = bb.s + (bb.n - bb.s) * (j / (WZ - 1));
       pos.push(this.wX(lon), 0.3, this.wZ(lat));
-      c.copy(deep).lerp(shallow, Math.min(1, landNear(lon, lat) * 1.15)); col.push(c.r, c.g, c.b);
+      c.copy(deep).lerp(shallow, Math.min(1, landNear(lon, lat) * 1.15));
+      // fade the sea's rectangular rim into haze along the same wavy border
+      const ex = i / (WX - 1), ey = j / (WZ - 1);
+      const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(i * 0.7, j * 1.3) - 0.5) * 0.07;
+      const fade = Math.max(0, Math.min(1, dEdge / 0.16));
+      if (fade < 1) c.lerp(haze, (1 - fade) * (1 - fade));
+      col.push(c.r, c.g, c.b);
     }
     for (let j = 0; j < WZ - 1; j++) for (let i = 0; i < WX - 1; i++) { const a = j * WX + i, b = a + 1, d = a + WX, e = d + 1; idx.push(a, b, d, b, e, d); }
     const g = new THREE.BufferGeometry();
@@ -223,9 +236,10 @@ export class WorldMap3D {
 
   private buildTrees(mask: Uint8Array) {
     const { GW, GH, bb } = this;
-    const trunk = new THREE.CylinderGeometry(0.18, 0.26, 1.2, 5).translate(0, 0.6, 0);
-    const fol = new THREE.ConeGeometry(1.1, 2.6, 6).translate(0, 2.2, 0);
-    const treeGeo = mergeGeometries([trunk, fol], false)!;
+    const trunk = new THREE.CylinderGeometry(0.16, 0.28, 1.1, 6).translate(0, 0.55, 0);
+    const fol1 = new THREE.ConeGeometry(1.25, 2.0, 7).translate(0, 1.7, 0);
+    const fol2 = new THREE.ConeGeometry(0.92, 1.7, 7).translate(0, 2.75, 0); // layered crown reads softer than one stark cone
+    const treeGeo = mergeGeometries([trunk, fol1, fol2], false)!;
     const places: number[] = [];
     for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
       const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 4.0 || y > 21) continue;
@@ -239,7 +253,7 @@ export class WorldMap3D {
     const d = new THREE.Object3D(), c = new THREE.Color();
     for (let k = 0; k < n; k++) {
       d.position.set(places[k * 3], places[k * 3 + 1], places[k * 3 + 2]); const s = 0.8 + hash(k, k * 3) * 0.7; d.scale.set(s, s, s); d.rotation.y = hash(k, 7) * 6; d.updateMatrix(); tm.setMatrixAt(k, d.matrix);
-      c.setRGB(0.22 + hash(k, 2) * 0.14, 0.42 + hash(k, 3) * 0.16, 0.16); tm.setColorAt(k, c);
+      c.setHSL(0.30 + (hash(k, 2) - 0.5) * 0.05, 0.5, 0.24 + hash(k, 3) * 0.08); tm.setColorAt(k, c); // forest greens, slight variation
     }
     tm.instanceColor!.needsUpdate = true; this.scene.add(tm);
   }
@@ -254,10 +268,19 @@ export class WorldMap3D {
       const done = this.prog.completed.includes(node.id), current = node.id === this.prog.unlocked, locked = node.id > this.prog.unlocked;
       const g = new THREE.Group();
       const wm = locked ? lockM : done ? doneM : wallM;
-      // a little walled town: a few houses + a keep
-      for (let h = 0; h < 4; h++) { const a = h / 4 * 6.28; const house = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), wm); house.position.set(Math.cos(a) * 1.7, 0.55, Math.sin(a) * 1.7); g.add(house); }
-      const keep = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.6, 1.8), wm); keep.position.y = 1.3; g.add(keep);
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.7, 4), locked ? lockM : roofM); roof.position.y = 3.5; roof.rotation.y = Math.PI / 4; g.add(roof);
+      const rm = locked ? lockM : roofM;
+      // a little round castle: a crenellated curtain ring, four drum towers with
+      // conical roofs, and a central keep — reads as a castle, not a box pile
+      const curtain = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.7, 1.5, 8), wm); curtain.position.y = 0.75; g.add(curtain);
+      const merlons = new THREE.Mesh(new THREE.TorusGeometry(2.55, 0.16, 4, 8).rotateX(Math.PI / 2), wm); merlons.position.y = 1.5; g.add(merlons);
+      for (let h = 0; h < 4; h++) {
+        const a = h / 4 * 6.28 + Math.PI / 4, tx = Math.cos(a) * 2.5, tz = Math.sin(a) * 2.5;
+        const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.74, 2.7, 8), wm); tw.position.set(tx, 1.35, tz); g.add(tw);
+        const tr = new THREE.Mesh(new THREE.ConeGeometry(0.72, 0.95, 8), rm); tr.position.set(tx, 3.25, tz); g.add(tr);
+      }
+      const keep = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.35, 3.6, 10), wm); keep.position.y = 1.8; g.add(keep);
+      const keepRing = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.17, 4, 10).rotateX(Math.PI / 2), wm); keepRing.position.y = 3.6; g.add(keepRing);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.18, 1.5, 10), rm); roof.position.y = 4.4; g.add(roof);
       // a banner on the keep: your colours once taken/under siege, the enemy's while it holds out
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.4), new THREE.MeshLambertMaterial({ color: '#5a4326' })); pole.position.set(0, 5.4, 0); g.add(pole);
       const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.95).translate(0.75, 0, 0), new THREE.MeshLambertMaterial({ color: locked ? '#7c2b27' : done ? '#caa53c' : '#c43d34', side: THREE.DoubleSide }));
