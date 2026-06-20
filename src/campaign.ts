@@ -111,3 +111,23 @@ export function garrisonStrength(style: CastleStyle, difficulty: number): number
 
 // Gold awarded for taking a castle — scales with how late/hard it is.
 export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }
+
+// ---- Raids: optional, repeatable side-battles to fund the army ----
+// Smaller, weaker holdings you can choose to storm for gold. They cost you the
+// same permanent casualties as a siege, so they're a risk/reward grind, not a
+// free purse — but a careful raider can fatten the war chest before a hard siege.
+export interface Raid { id: number; name: string; blurb: string; difficulty: number; reward: number; seedBase: number; style: CastleStyle; }
+export function generateRaids(): Raid[] {
+  return [
+    { id: 0, name: 'Bandit Stockade', difficulty: 0.45, reward: 90, seedBase: 50101,
+      blurb: 'Brigands behind a timber palisade. Thinly held — easy coin for a real army.',
+      style: { scale: 0.55, aspect: 1.0, concentric: false, round: false, strongKeep: false, town: 0.1, shape: 'rect' } },
+    { id: 1, name: "Rival Baron's Keep", difficulty: 0.7, reward: 175, seedBase: 50102,
+      blurb: 'A minor lord who will not bend the knee. Break his keep and take his silver.',
+      style: { scale: 0.78, aspect: 1.1, concentric: false, round: true, strongKeep: true, town: 0.2, shape: 'rect' } },
+    { id: 2, name: 'Fortified Caravanserai', difficulty: 0.95, reward: 280, seedBase: 50103,
+      blurb: 'A walled trading post heavy with silver — and the hired guards to match.',
+      style: { scale: 0.92, aspect: 1.3, concentric: false, round: true, strongKeep: false, town: 0.45, shape: 'twin' } },
+  ];
+}
+export function raidResistance(d: number): string { return d < 0.55 ? 'Light' : d < 0.85 ? 'Moderate' : 'Heavy'; }

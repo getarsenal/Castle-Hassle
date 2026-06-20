@@ -1,9 +1,10 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid } from './campaign';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
+import { openRaids } from './raids';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -183,16 +184,18 @@ function updateTools() {
 }
 
 startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); });
-restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if (activeCastle) openMap(); else { buildMuster(); $('muster').classList.add('show'); } });
+restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if (activeCastle || activeRaid) openMap(); else { buildMuster(); $('muster').classList.add('show'); } });
 
 function showEnd() {
   const win = sim.winner === Faction.Attacker;
-  // Persistent army, keep-survivors-lose-dead: the survivors of this siege rejoin
+  const inCampaign = !!(activeCastle || activeRaid);
+  // Persistent army, keep-survivors-lose-dead: the survivors of this battle rejoin
   // your host, the fallen are gone for good. Apply the per-arm survival rate to
   // your standing army (the free levy / engineer trebuchets sit above it and just
-  // disperse). Casualties stick whether you win, retreat, or are broken.
+  // disperse). Casualties stick whether you win, retreat, or are broken — raids
+  // cost just as dearly, so they aren't a free purse.
   let casualtyLine = '';
-  if (activeCastle) {
+  if (inCampaign) {
     const sp = sim.attackerSpawned(), al = sim.attackerAlive();
     let brought = 0, fell = 0;
     for (let i = 0; i < ARMY_KEYS.length; i++) {
@@ -203,7 +206,12 @@ function showEnd() {
     }
     casualtyLine = fell > 0 ? `  ${fell} of ${brought} fell and will not rise again.` : '  Not a single man was lost.';
   }
-  if (win) {
+  if (win && activeRaid) {
+    bannerTitle.textContent = 'RAID SUCCESSFUL';
+    bannerTitle.style.color = '#5fd16a';
+    progress.gold += activeRaid.reward;
+    bannerText.textContent = `You sack ${activeRaid.name} and ride off with the spoils.  +${activeRaid.reward} gold.`;
+  } else if (win) {
     bannerTitle.textContent = 'CASTLE TAKEN';
     bannerTitle.style.color = '#5fd16a';
     bannerText.textContent = sim.captureProgress >= 0.999 ? 'Your banner flies over the keep — the castle is yours.' : 'The garrison is shattered — the castle is yours.';
@@ -216,15 +224,15 @@ function showEnd() {
   } else if (sim.retreated) {
     bannerTitle.textContent = 'RETREAT SOUNDED';
     bannerTitle.style.color = '#e8c54a';
-    bannerText.textContent = 'Your survivors withdraw in good order — the castle stands, unconquered.';
+    bannerText.textContent = activeRaid ? 'You break off the raid and withdraw your survivors.' : 'Your survivors withdraw in good order — the castle stands, unconquered.';
   } else {
-    bannerTitle.textContent = 'ASSAULT BROKEN';
+    bannerTitle.textContent = activeRaid ? 'RAID REPULSED' : 'ASSAULT BROKEN';
     bannerTitle.style.color = '#e8513a';
-    bannerText.textContent = 'Your assault was thrown back from the walls.';
+    bannerText.textContent = activeRaid ? 'They drove your raiders off empty-handed.' : 'Your assault was thrown back from the walls.';
   }
   bannerText.textContent += casualtyLine;
-  if (activeCastle) saveProgress(progress);
-  restartBtn.textContent = activeCastle ? (win ? 'March On' : 'Back to the Map') : 'Fight Again';
+  if (inCampaign) saveProgress(progress);
+  restartBtn.textContent = inCampaign ? (activeCastle && win ? 'March On' : 'Back to the Map') : 'Fight Again';
   banner.classList.add('show');
 }
 
@@ -299,15 +307,17 @@ function handleTap(cx: number, cy: number) {
 
 // ---------------- Campaign screens ----------------
 const castles = generateCastles();
+const raids = generateRaids();
 let progress: Progress = loadProgress();
 let activeCastle: CampaignCastle | null = null;
+let activeRaid: Raid | null = null;
 let map: WorldMap3D | null = null;
 
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
 function refreshGoldLabel() { const g = document.getElementById('wcGold'); if (g) g.textContent = ` · ${progress.gold} gold`; }
 function openMap() {
-  activeCastle = null;
+  activeCastle = null; activeRaid = null;
   show('intro', false); show('titleScreen', false); show('muster', false); show('map', true);
   banner.classList.remove('show');
   refreshGoldLabel();
@@ -316,6 +326,7 @@ function openMap() {
   map = new WorldMap3D(canvas, castles, progress, enterCastle);
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => openUpgrades(progress, refreshGoldLabel));
+document.getElementById('raidsBtn')?.addEventListener('click', () => openRaids(progress, raids, enterRaid, refreshGoldLabel));
 
 // the most you can field of a kind: your standing army, plus the free light levy
 // and any free engineer-corps trebuchets
@@ -325,7 +336,7 @@ function bringable(key: ArmyKey): number {
   return progress.army[key];
 }
 function enterCastle(c: CampaignCastle) {
-  activeCastle = c;
+  activeCastle = c; activeRaid = null;
   const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
   // default: bring your whole army
@@ -334,6 +345,19 @@ function enterCastle(c: CampaignCastle) {
   ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `${c.name} · ${c.region}`);
   buildMuster(); $('muster').classList.add('show');
   newGame(); // backdrop of the actual castle while mustering
+}
+// A raid: a smaller, weaker holding. Same muster → battle flow, but on a win it
+// pays its gold reward (repeatable) instead of unlocking the next siege. A fresh
+// seed each time so the fort varies from raid to raid.
+function enterRaid(r: Raid) {
+  activeRaid = r; activeCastle = null;
+  const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
+  currentSeed = (r.seedBase + (Date.now() & 0x3ff)) >>> 0; currentDifficulty = r.difficulty; currentStyle = r.style;
+  for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
+  show('map', false);
+  ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `Raid · ${r.name}`);
+  buildMuster(); $('muster').classList.add('show');
+  newGame();
 }
 
 // Title → start
