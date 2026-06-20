@@ -69,13 +69,34 @@ export function generateCastles(): CampaignCastle[] {
   });
 }
 
-export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; }
+// ---- the persistent, gold-funded army ----
+export interface Army { heavy: number; light: number; archer: number; cavalry: number; siege: number; }
+export type ArmyKey = keyof Army;
+export const ARMY_KEYS: ArmyKey[] = ['heavy', 'light', 'archer', 'cavalry', 'siege'];
+export const STARTING_ARMY: Army = { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 };
+export const STARTING_GOLD = 250;
+// gold to raise one soldier / engine of each kind
+export const RECRUIT_COST: Army = { heavy: 0.6, light: 0.4, archer: 0.5, cavalry: 1.0, siege: 32 };
+// you can always field a free peasant levy of this many light foot, so a wiped
+// army never softlocks the campaign — but they're conscript fodder.
+export const LEVY_LIGHT = 250;
+
+export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; }
 const KEY = 'castlehassle.campaign.v1';
 export function loadProgress(): Progress {
-  try { const p = JSON.parse(localStorage.getItem(KEY) || ''); if (p && typeof p.unlocked === 'number') return { unlocked: p.unlocked, completed: p.completed || [], gold: p.gold || 0, upg: p.upg || {} }; } catch { /* ignore */ }
-  return { unlocked: 0, completed: [], gold: 0, upg: {} };
+  try {
+    const p = JSON.parse(localStorage.getItem(KEY) || '');
+    if (p && typeof p.unlocked === 'number') {
+      const army: Army = { ...STARTING_ARMY, ...(p.army || {}) };           // migrate old saves → a fresh army
+      const gold = typeof p.gold === 'number' ? p.gold : STARTING_GOLD;
+      return { unlocked: p.unlocked, completed: p.completed || [], gold, upg: p.upg || {}, army };
+    }
+  } catch { /* ignore */ }
+  return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY } };
 }
 export function saveProgress(p: Progress) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+// recruitment price, with the Quartermaster discount applied
+export function recruitPrice(key: ArmyKey, n: number, discount: number): number { return Math.ceil(RECRUIT_COST[key] * n * discount); }
 
 // Defender strength shown on the castle panel — mirrors the sim's garrison
 // formula (garrison + reserves + a citadel guard + wall/tower archers) using the
@@ -89,4 +110,4 @@ export function garrisonStrength(style: CastleStyle, difficulty: number): number
 }
 
 // Gold awarded for taking a castle — scales with how late/hard it is.
-export function goldReward(tier: number): number { return Math.round(90 + 360 * tier); }
+export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }

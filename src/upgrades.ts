@@ -9,9 +9,9 @@ export interface UpgTree { key: string; title: string; nodes: UpgNode[]; }
 
 export const TREES: UpgTree[] = [
   { key: 'quartermaster', title: 'Quartermaster', nodes: [
-    { name: 'Supply Lines', desc: '+8% army budget', cost: 120 },
-    { name: 'War Chest', desc: '+16% army budget', cost: 280 },
-    { name: 'Grand Logistics', desc: '+24% army budget', cost: 520 },
+    { name: 'Supply Lines', desc: '−8% recruitment cost', cost: 120 },
+    { name: 'War Chest', desc: '−16% recruitment cost', cost: 280 },
+    { name: 'Grand Logistics', desc: '−24% recruitment cost', cost: 520 },
   ] },
   { key: 'armorer', title: 'Armorer', nodes: [
     { name: 'Hardened Mail', desc: '+12% infantry health', cost: 120 },
@@ -35,7 +35,7 @@ export const TREES: UpgTree[] = [
   ] },
 ];
 
-export function computeBuffs(upg: Record<string, number>): { atk: AtkBuff; budgetMult: number; extraTrebs: number } {
+export function computeBuffs(upg: Record<string, number>): { atk: AtkBuff; recruitDiscount: number; extraTrebs: number } {
   const L = (k: string) => upg[k] || 0;
   return {
     atk: {
@@ -46,8 +46,8 @@ export function computeBuffs(upg: Record<string, number>): { atk: AtkBuff; budge
       siege: 1 + 0.22 * L('engineer'),
       reload: L('engineer') >= 3 ? 0.8 : 1,
     },
-    budgetMult: 1 + 0.08 * L('quartermaster'),
-    extraTrebs: L('engineer') >= 2 ? 2 : 0,
+    recruitDiscount: 1 - 0.08 * L('quartermaster'), // cheaper troops
+    extraTrebs: L('engineer') >= 2 ? 2 : 0,          // free trebuchets fielded each siege
   };
 }
 

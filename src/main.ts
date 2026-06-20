@@ -1,7 +1,7 @@
-import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost, AtkBuff, NO_BUFF } from './sim';
+import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT } from './campaign';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import * as THREE from 'three';
@@ -18,9 +18,10 @@ let sim: Sim;
 let renderer: Renderer;
 let selected = -1;
 let paused = false;
-const pauseBtn = document.getElementById('pauseBtn'), assaultBtn = document.getElementById('assaultBtn');
+const pauseBtn = document.getElementById('pauseBtn'), assaultBtn = document.getElementById('assaultBtn'), retreatBtn = document.getElementById('retreatBtn');
 pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
 assaultBtn?.addEventListener('click', () => { sim.assaultAll(); renderer.pingMove(0, -10); });
+retreatBtn?.addEventListener('click', () => { if (confirm('Sound the retreat? Your surviving troops withdraw; the castle is not taken.')) sim.retreat(); });
 let showRange = true;
 
 // ---------------- HUD refs ----------------
@@ -37,32 +38,47 @@ const ROSTER = [
   { key: 'cavalry', name: 'Cavalry', dsc: 'Shock charge, weak in a grind', step: 20 },
   { key: 'siege', name: 'Trebuchets', dsc: 'Smash walls, few boulders', step: 1 },
 ] as const;
-let budget = BUDGET;       // per-battle muster budget (grows across the campaign)
-($('ptsMax')).textContent = String(budget);
 
+const RECRUIT_STEP: Record<string, number> = { heavy: 50, light: 50, archer: 50, cavalry: 25, siege: 1 };
 function buildMuster() {
   const rows = $('rosterRows'); rows.innerHTML = '';
   for (const r of ROSTER) {
+    const k = r.key as ArmyKey; const step = RECRUIT_STEP[k];
     const row = document.createElement('div'); row.className = 'rrow';
-    row.innerHTML = `<div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc} · ${(COST as any)[r.key]}p each</div></div>
-      <button class="rbtn minus">−</button><div class="ct" data-k="${r.key}">0</div><button class="rbtn plus">+</button>`;
+    row.innerHTML = `<div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc}</div>
+        <div class="own" data-k="${k}"></div></div>
+      <button class="rbtn rec" data-k="${k}">Recruit</button>
+      <button class="rbtn minus">−</button><div class="ct" data-k="${k}">0</div><button class="rbtn plus">+</button>`;
     const ct = row.querySelector('.ct') as HTMLElement;
-    row.querySelector('.minus')!.addEventListener('click', () => { (comp as any)[r.key] = Math.max(0, (comp as any)[r.key] - r.step); ct.textContent = String((comp as any)[r.key]); updateBudget(); });
-    row.querySelector('.plus')!.addEventListener('click', () => {
-      const next = { ...comp, [r.key]: (comp as any)[r.key] + r.step };
-      if (compCost(next) <= budget) { (comp as any)[r.key] += r.step; ct.textContent = String((comp as any)[r.key]); updateBudget(); }
+    row.querySelector('.minus')!.addEventListener('click', () => { (comp as any)[k] = Math.max(0, (comp as any)[k] - step); ct.textContent = String((comp as any)[k]); updateMuster(); });
+    row.querySelector('.plus')!.addEventListener('click', () => { (comp as any)[k] = Math.min(bringable(k), (comp as any)[k] + step); ct.textContent = String((comp as any)[k]); updateMuster(); });
+    row.querySelector('.rec')!.addEventListener('click', () => {
+      const price = recruitPrice(k, step, currentDiscount);
+      if (progress.gold < price) return;
+      progress.gold -= price; progress.army[k] += step; saveProgress(progress);
+      (comp as any)[k] = Math.min(bringable(k), (comp as any)[k] + step); // bring the new recruits too
+      buildMuster();
     });
     rows.appendChild(row);
   }
-  syncMusterCounts(); updateBudget();
+  updateMuster();
 }
-function syncMusterCounts() { for (const el of Array.from(document.querySelectorAll('#rosterRows .ct')) as HTMLElement[]) el.textContent = String((comp as any)[el.dataset.k!]); }
-function updateBudget() {
-  const used = Math.round(compCost(comp));
-  $('ptsUsed').textContent = String(used); ($('ptsMax')).textContent = String(budget);
-  const bar = $('budgetBar'); (bar.firstElementChild as HTMLElement).style.width = `${Math.min(100, used / budget * 100)}%`;
-  bar.classList.toggle('over', used > budget);
-  ($('musterBtn') as HTMLButtonElement).disabled = used > budget || (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
+function updateMuster() {
+  for (const el of Array.from(document.querySelectorAll('#rosterRows .ct')) as HTMLElement[]) el.textContent = String((comp as any)[el.dataset.k!]);
+  for (const el of Array.from(document.querySelectorAll('#rosterRows .own')) as HTMLElement[]) {
+    const k = el.dataset.k as ArmyKey;
+    const levy = k === 'light' ? Math.max(0, LEVY_LIGHT - progress.army.light) : 0;
+    const free = k === 'siege' ? currentExtraTrebs : 0;
+    el.textContent = `In your host: ${progress.army[k]}`
+      + (levy ? ` (+${levy} levy)` : '') + (free ? ` (+${free} free)` : '');
+  }
+  for (const el of Array.from(document.querySelectorAll('#rosterRows .rec')) as HTMLButtonElement[]) {
+    const k = el.dataset.k as ArmyKey; const price = recruitPrice(k, RECRUIT_STEP[k], currentDiscount);
+    el.textContent = `+${RECRUIT_STEP[k]} · ${price}g`; el.disabled = progress.gold < price;
+  }
+  const total = comp.heavy + comp.light + comp.archer + comp.cavalry + comp.siege;
+  const g = $('musterGold'), t = $('musterTotal'); if (g) g.textContent = String(progress.gold); if (t) t.textContent = String(total);
+  ($('musterBtn') as HTMLButtonElement).disabled = (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
 }
 $('musterBtn').addEventListener('click', () => { $('muster').classList.remove('show'); newGame(); });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
@@ -72,6 +88,7 @@ let currentSeed = (Date.now() & 0xffff) >>> 0;
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
 let currentBuff: AtkBuff = NO_BUFF;
+let currentDiscount = 1, currentExtraTrebs = 0;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
@@ -116,6 +133,7 @@ function updateTopbar() {
   const inBattle = sim.phase === 'battle';
   pauseBtn?.classList.toggle('show', inBattle);
   assaultBtn?.classList.toggle('show', inBattle);
+  retreatBtn?.classList.toggle('show', inBattle);
   const cp = sim.captureProgress;
   if (keepBar && keepFill && keepLabel) {
     const showBar = sim.phase === 'battle' && cp > 0.001;
@@ -159,18 +177,43 @@ restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if
 
 function showEnd() {
   const win = sim.winner === Faction.Attacker;
-  bannerTitle.textContent = win ? 'CASTLE TAKEN' : 'ASSAULT BROKEN';
-  bannerTitle.style.color = win ? '#5fd16a' : '#e8513a';
-  bannerText.textContent = win
-    ? (sim.captureProgress >= 0.999 ? 'Your banner flies over the keep — the castle is yours.' : 'The garrison is shattered — the castle is yours.')
-    : 'Your assault was thrown back from the walls.';
-  if (win && activeCastle) {
-    const firstTake = !progress.completed.includes(activeCastle.id);
-    if (firstTake) progress.completed.push(activeCastle.id);
-    progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
-    if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} gold.`; }
-    saveProgress(progress);
+  // Persistent army, keep-survivors-lose-dead: the survivors of this siege rejoin
+  // your host, the fallen are gone for good. Apply the per-arm survival rate to
+  // your standing army (the free levy / engineer trebuchets sit above it and just
+  // disperse). Casualties stick whether you win, retreat, or are broken.
+  let casualtyLine = '';
+  if (activeCastle) {
+    const sp = sim.attackerSpawned(), al = sim.attackerAlive();
+    let brought = 0, fell = 0;
+    for (let i = 0; i < ARMY_KEYS.length; i++) {
+      const k = ARMY_KEYS[i];
+      const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
+      progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
+      if (i < 4) { brought += sp[i]; fell += Math.max(0, sp[i] - al[i]); }   // count men, not engines
+    }
+    casualtyLine = fell > 0 ? `  ${fell} of ${brought} fell and will not rise again.` : '  Not a single man was lost.';
   }
+  if (win) {
+    bannerTitle.textContent = 'CASTLE TAKEN';
+    bannerTitle.style.color = '#5fd16a';
+    bannerText.textContent = sim.captureProgress >= 0.999 ? 'Your banner flies over the keep — the castle is yours.' : 'The garrison is shattered — the castle is yours.';
+    if (activeCastle) {
+      const firstTake = !progress.completed.includes(activeCastle.id);
+      if (firstTake) progress.completed.push(activeCastle.id);
+      progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
+      if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} gold in spoils.`; }
+    }
+  } else if (sim.retreated) {
+    bannerTitle.textContent = 'RETREAT SOUNDED';
+    bannerTitle.style.color = '#e8c54a';
+    bannerText.textContent = 'Your survivors withdraw in good order — the castle stands, unconquered.';
+  } else {
+    bannerTitle.textContent = 'ASSAULT BROKEN';
+    bannerTitle.style.color = '#e8513a';
+    bannerText.textContent = 'Your assault was thrown back from the walls.';
+  }
+  bannerText.textContent += casualtyLine;
+  if (activeCastle) saveProgress(progress);
   restartBtn.textContent = activeCastle ? (win ? 'March On' : 'Back to the Map') : 'Fight Again';
   banner.classList.add('show');
 }
@@ -264,16 +307,19 @@ function openMap() {
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => openUpgrades(progress, refreshGoldLabel));
 
+// the most you can field of a kind: your standing army, plus the free light levy
+// and any free engineer-corps trebuchets
+function bringable(key: ArmyKey): number {
+  if (key === 'light') return Math.max(progress.army.light, LEVY_LIGHT);
+  if (key === 'siege') return progress.army.siege + currentExtraTrebs;
+  return progress.army[key];
+}
 function enterCastle(c: CampaignCastle) {
   activeCastle = c;
-  const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk;
+  const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
-  // bigger castles cost more troops; the Quartermaster tree swells the war chest
-  budget = Math.round(BUDGET * (1 + c.tier * 0.7) * buffs.budgetMult);
-  // a sensible default army scaled to the budget
-  const k = budget / BUDGET;
-  Object.assign(comp, { heavy: Math.round(600 * k), light: Math.round(480 * k), archer: Math.round(460 * k), cavalry: Math.round(220 * k), siege: Math.max(6, Math.round(8 * k)) + buffs.extraTrebs });
-  while (compCost(comp) > budget && comp.light > 0) comp.light -= 10;
+  // default: bring your whole army
+  for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
   show('map', false);
   ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `${c.name} · ${c.region}`);
   buildMuster(); $('muster').classList.add('show');

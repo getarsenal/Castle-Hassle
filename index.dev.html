@@ -55,7 +55,8 @@
       font: 700 13px 'Cinzel', Georgia, serif; padding: 8px 13px; border-radius: 11px; cursor: pointer; display: none; }
     #pauseBtn { right: 12px; }
     #assaultBtn { right: 92px; background: rgba(120,40,30,0.86); color: #ffdcc0; }
-    #pauseBtn.show, #assaultBtn.show { display: block; }
+    #retreatBtn { right: 178px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
+    #pauseBtn.show, #assaultBtn.show, #retreatBtn.show { display: block; }
     #pauseBtn.on { background: rgba(200,150,40,0.92); color: #241600; }
 
     #topbar {
@@ -186,12 +187,16 @@
     }
     #muster h1 { font-size: 27px; font-weight: 800; color: #ffd24a; letter-spacing: 1.5px; text-shadow: 0 3px 16px rgba(0,0,0,.5); }
     #muster .sub { font-size: 12.5px; color: rgba(255,255,255,0.66); margin: 4px 0 18px; }
-    #budgetWrap { width: 100%; max-width: 440px; z-index: 1; }
-    #budgetLine { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; margin-bottom: 6px; color: #ffe6b0; }
-    #budgetBar { height: 10px; border-radius: 6px; background: rgba(0,0,0,0.35); overflow: hidden; margin-bottom: 18px; border: 1px solid rgba(255,255,255,0.1); }
-    #budgetBar > i { display: block; height: 100%; background: linear-gradient(90deg,#ffd24a,#ffb03a); transition: width .12s; }
-    #budgetBar.over > i { background: linear-gradient(90deg,#e8513a,#c0392b); }
+    #musterBar { width: 100%; max-width: 440px; z-index: 1; display: flex; justify-content: space-between;
+      font-size: 13px; font-weight: 700; margin-bottom: 18px; color: #ffe6b0; }
+    #musterBar #musterGold { color: #ffd24a; }
+    #musterBar b { color: #ffe6b0; }
     #rosterRows { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 10px; z-index: 1; }
+    .rrow .own { font-size: 10.5px; font-weight: 700; color: #9fd0ff; margin-top: 3px; }
+    .rbtn.rec { width: auto; min-width: 78px; height: 40px; padding: 0 10px; font-size: 12.5px; font-weight: 800;
+      background: linear-gradient(180deg,#8fe07a,#4faa3a); box-shadow: 0 3px 0 #2f7a24; color: #0e2408; white-space: nowrap; }
+    .rbtn.rec:active { box-shadow: 0 1px 0 #2f7a24; }
+    .rbtn.rec:disabled { opacity: 0.3; box-shadow: 0 3px 0 #2f5a24; }
     .rrow {
       display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 14px;
       background: linear-gradient(180deg, rgba(56,72,100,0.55), rgba(30,41,66,0.7));
@@ -215,7 +220,7 @@
   
     /* ---- Typography: Cinzel for headings/chrome, EB Garamond for body ---- */
     #title, #mapHeader, #introMark, #introSub, #keepLabel, #bannerTitle, #musterTitle,
-    #startbtn, #restartbtn, #musterBtn, #warCouncilBtn, .rbtn, #pts, #ptsMax,
+    #startbtn, #restartbtn, #musterBtn, #warCouncilBtn, .rbtn, #musterBar,
     .castlePanel h3, .castlePanel .reg, .castlePanel button, .upgTop h2, .upgTree h3,
     .upgClose, .upgNode .nm, .upgNode .buy {
       font-family: 'Cinzel', Georgia, serif !important; }
@@ -265,6 +270,7 @@
     <div id="perf" title="Tap to hide">– fps</div>
     <button id="pauseBtn">Pause</button>
     <button id="assaultBtn">Assault</button>
+    <button id="retreatBtn">Retreat</button>
     <div id="topbar">
       <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>
       <span style="opacity:.4">vs</span>
@@ -281,10 +287,10 @@
   <div id="muster">
     <button id="musterBack">◂ Map</button>
     <h1>MUSTER YOUR ARMY</h1>
-    <div class="sub" id="musterTitle">Spend your muster points — then deploy and lay siege.</div>
-    <div id="budgetWrap">
-      <div id="budgetLine"><span>Muster points</span><span><b id="ptsUsed">0</b> / <span id="ptsMax">1600</span></span></div>
-      <div id="budgetBar"><i></i></div>
+    <div class="sub" id="musterTitle">Recruit with your gold, then march the host you can afford.</div>
+    <div id="musterBar">
+      <span><span id="musterGold">0</span> gold in the war chest</span>
+      <span>Marching: <b id="musterTotal">0</b> strong</span>
     </div>
     <div id="rosterRows"></div>
     <button id="musterBtn">Muster &amp; Deploy</button>

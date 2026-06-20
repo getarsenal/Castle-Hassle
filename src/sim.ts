@@ -400,6 +400,7 @@ export class Sim {
   private _frame = 0;
   phase: 'deploy' | 'battle' | 'over' = 'deploy';
   winner: Faction | null = null;
+  retreated = false;   // the player sounded the retreat (vs being beaten outright)
   private seed: number;
   private comp: ArmyComp;
   attackerAliveStart = 0; defenderAliveStart = 0;
@@ -1327,12 +1328,17 @@ export class Sim {
     let attActive = 0, defAlive = 0;
     for (const u of this.units) {
       if (u.faction === Faction.Defender) defAlive += u.alive;
-      else if (!u.routing) attActive += u.alive;
+      else if (!u.routing && u.type !== UType.Siege) attActive += u.alive; // trebuchets alone can't carry it
     }
     const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
     if (this.captureProgress >= 1 || defFrac <= 0.1) { this.phase = 'over'; this.winner = Faction.Attacker; }
     else if (attActive === 0) { this.phase = 'over'; this.winner = Faction.Defender; }
   }
+  // Sound the retreat — end now; survivors are saved, the castle stands.
+  retreat() { if (this.phase === 'battle') { this.phase = 'over'; this.winner = Faction.Defender; this.retreated = true; } }
+  // Attacker soldiers by unit type — committed (spawned) vs still alive.
+  attackerSpawned(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker) a[u.type] += u.count; return a; }
+  attackerAlive(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker) a[u.type] += u.alive; return a; }
 
   // aggregate counts for HUD
   countAlive(faction: Faction): number { let n = 0; for (const u of this.units) if (u.faction === faction) n += u.alive; return n; }
