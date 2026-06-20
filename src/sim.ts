@@ -690,6 +690,12 @@ export class Sim {
   // Lay the whole arm out across the dragged line as a grid of company blocks.
   orderDivision(div: number, x0: number, z0: number, x1: number, z1: number) {
     const comps = this.divCompanies(div); const n = comps.length; if (!n) return;
+    if (this.phase === 'deploy') {
+      // while mustering you may only draw up OUTSIDE the enemy walls — clamp the
+      // order south of the castle's frontage so troops can't pre-deploy inside it
+      const line = LAYOUT.front + 8;
+      z0 = Math.max(z0, line); z1 = Math.max(z1, line);
+    }
     let dx = x1 - x0, dz = z1 - z0, w = Math.hypot(dx, dz);
     let facing: number, ox = x0, oz = z0;
     if (w < 4) { // a tap: build a line centred on the point, facing the castle
@@ -711,8 +717,9 @@ export class Sim {
       const u = comps[k]; u.assault = false; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
     }
   }
-  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.holdFire = false; } }
-  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
+  // southernmost line you may muster on during deploy (just outside the walls)
+  deployLine(): number { return LAYOUT.front + 8; }
+  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.holdFire = false; } }  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
   clearFocusDiv(div: number) { for (const u of this.divCompanies(div)) u.hasFocus = false; }
   toggleHoldFireDiv(div: number): boolean { const cs = this.divCompanies(div); if (!cs.length) return false; const v = !cs[0].holdFire; for (const u of cs) u.holdFire = v; return v; }
   // the player's arms present in this battle, in roster order
