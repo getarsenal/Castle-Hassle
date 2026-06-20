@@ -39,6 +39,11 @@ const ARCHER_PROJ_DMG = 12;
 const ARCHER_PROJ_SPEED = 32;
 const BOULDER_DMG = 200;       // damage a trebuchet boulder does to a wall section
 const BOULDER_SPEED = 30;
+const BALLISTA_RANGE = 78;     // defensive ballista reach
+const BALLISTA_DMG = 260;      // a bolt kills any infantryman it strikes
+const BALLISTA_CD = 3.4;       // reload time
+const BOLT_SPEED = 52;
+const ARTY_SPLASH = 2.6;       // anti-personnel blast radius (very little spill)
 const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
 const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
@@ -56,11 +61,14 @@ export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: n
 // A scaling ladder raised against a wall section. Attackers queue at the foot
 // and climb it single-file; `raise` animates it swinging up (0..1).
 export interface Ladder { seg: number; along: number; bx: number; bz: number; horiz: boolean; outer: number; raise: number; }
+// A defensive ballista emplacement on a stretch of wall: it shoots bolts at the
+// attackers and is knocked out when the wall section under it (`seg`) is destroyed.
+export interface Ballista { x: number; z: number; y: number; seg: number; horiz: boolean; outer: number; }
 export interface CastleLayout {
   W: number; D: number; gate: { x: number; z: number };
   wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
   buildings: { x: number; z: number; w: number; d: number }[]; citadel: Citadel | null;
-  round: boolean; concentric: boolean;
+  round: boolean; concentric: boolean; ballistae: Ballista[];
 }
 // Per-castle architectural style. Drives generateCastle so each real castle in
 // the campaign has a distinguishable shape/silhouette (concentric double walls,
@@ -167,7 +175,31 @@ export function generateCastle(seed: number, style?: CastleStyle) {
     }
   }
 
-  LAYOUT = { W, D, gate: { x: gateX, z: D }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric };
+  // ----- wall-mounted ballistae: spaced along the curtain (and citadel), each
+  // tied to the wall segment beneath it so a breach knocks it out -----
+  const segAt = (x: number, z: number): number => {
+    for (let i = 0; i < segs.length; i++) { const b = segs[i]; if ((b.kind === 'wall' || b.kind === 'gate') && x >= b.x0 - 0.6 && x <= b.x1 + 0.6 && z >= b.z0 - 0.6 && z <= b.z1 + 0.6) return i; }
+    return -1;
+  };
+  const ballistae: Ballista[] = [];
+  const placeBallistae = (lines: WallLine[], step: number, cap: number) => {
+    for (const ln of lines) {
+      const a0 = (ln.horiz ? ln.x0 : ln.z0), a1 = (ln.horiz ? ln.x1 : ln.z1);
+      for (let a = a0 + step * 0.6; a < a1 - step * 0.4 && ballistae.length < cap; a += step) {
+        if (Math.abs(a - ln.gapC) < ln.gapH + 4) continue;            // not over the gate
+        const x = ln.horiz ? a : ln.x0, z = ln.horiz ? ln.z0 : a;
+        const seg = segAt(x, z); if (seg < 0) continue;
+        // widen that wall section into a firing platform so the engine fits
+        const b = segs[seg]; if (ln.horiz) { b.x0 -= 1.6; b.x1 += 1.6; } else { b.z0 -= 1.6; b.z1 += 1.6; }
+        ballistae.push({ x, z: z - ln.outer * 0.6, y: WH, seg, horiz: ln.horiz, outer: ln.outer });
+      }
+    }
+  };
+  const outerCap = Math.round(rr(3, 5) + W * D / 1700); // more on bigger castles
+  placeBallistae(wallLines, 30, outerCap);
+  if (citadel) placeBallistae(citadel.wallLines, 22, ballistae.length + 3);
+
+  LAYOUT = { W, D, gate: { x: gateX, z: D }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae };
   rebuildBlocked();
 }
 
@@ -311,7 +343,12 @@ export interface Projectile {
   wall: number;   // target wall-segment index for boulders, else -1
   big: boolean;   // boulder vs arrow (render size)
   fire: boolean;  // flaming arrow (tower archers)
+  splash: number; // anti-personnel blast radius on impact (0 = single arrow)
+  bolt: boolean;  // ballista bolt (render as a big bolt, not an arrow)
 }
+// A defensive ballista on the wall: fires bolts at the attackers; dead once the
+// wall segment beneath it is breached.
+export interface Emplacement { x: number; z: number; y: number; seg: number; cd: number; recoil: number; horiz: boolean; outer: number; aimX: number; aimZ: number; }
 
 export class Sim {
   // Must exceed the total soldier count (currently ~2,220). If it's too small,
@@ -338,6 +375,7 @@ export class Sim {
   typeCount = [0, 0, 0, 0, 0];
   fields = new Map<number, Float32Array>();
   projectiles: Projectile[] = [];
+  ballistae: Emplacement[] = [];
   phase: 'deploy' | 'battle' | 'over' = 'deploy';
   winner: Faction | null = null;
   private seed: number;
@@ -494,6 +532,8 @@ export class Sim {
     this.keepX = citd ? citd.cx : keep ? (keep.x0 + keep.x1) / 2 : 0;
     this.keepZ = citd ? citd.cz : keep ? (keep.z0 + keep.z1) / 2 : 0;
     this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : 20;
+    // defensive ballistae from the layout (staggered initial reload)
+    this.ballistae = LAYOUT.ballistae.map(b => ({ x: b.x, z: b.z, y: b.y, seg: b.seg, cd: this.rnd() * BALLISTA_CD, recoil: 0, horiz: b.horiz, outer: b.outer, aimX: b.x, aimZ: b.z + b.outer * 40 }));
   }
 
   private setAnchor(u: Unit, x: number, z: number, facing: number, cols: number) {
@@ -779,7 +819,7 @@ export class Sim {
       this.pz[i] = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, nz));
     }
 
-    if (!deploy) { this.stepProjectiles(dt); this.checkVictory(); }
+    if (!deploy) { this.stepBallistae(dt); this.stepProjectiles(dt); this.checkVictory(); }
   }
 
   // Archers only fire at enemies inside their ordered focus area (if one is set),
@@ -993,7 +1033,7 @@ export class Sim {
     }
     if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
-    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1); p.wall = -1; p.big = false; p.fire = fire;
+    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1); p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
@@ -1019,7 +1059,7 @@ export class Sim {
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
-    p.dmg = BOULDER_DMG * this.atk.siege; p.wall = segIdx; p.big = true; p.fire = false;
+    p.dmg = BOULDER_DMG * this.atk.siege; p.wall = segIdx; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
   }
 
@@ -1039,8 +1079,52 @@ export class Sim {
 
   private getProj(): Projectile {
     for (const p of this.projectiles) if (!p.active) return p;
-    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, ty: 0, dmg: 0, fac: 0, wall: -1, big: false, fire: false };
+    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, ty: 0, dmg: 0, fac: 0, wall: -1, big: false, fire: false, splash: 0, bolt: false };
     this.projectiles.push(p); return p;
+  }
+  // Anti-personnel blast: the man at the point of impact is killed outright; a
+  // very small radius around him takes a fraction (so it's a precise strike, not
+  // a fireball). Trebuchets won't friendly-fire (skips its own faction).
+  private artySplash(x: number, z: number, fac: Faction, dmg: number, radius: number) {
+    const r2 = radius * radius;
+    const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((x - WORLD.minX) / this.hCell)));
+    const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((z - WORLD.minZ) / this.hCell)));
+    const span = Math.ceil(radius / this.hCell) + 1;
+    for (let rr = hr - span; rr <= hr + span; rr++) for (let cc = hc - span; cc <= hc + span; cc++) {
+      if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
+      for (const j of this.buckets[rr * this.hCols + cc]) {
+        if (this.fac[j] === fac || this.typ[j] === UType.Siege || !this.alive[j]) continue;
+        const d2 = (this.px[j] - x) ** 2 + (this.pz[j] - z) ** 2; if (d2 > r2) continue;
+        this.hp[j] -= d2 < 2.0 ? dmg : dmg * 0.2;        // direct hit lethal, very little spill
+        if (this.hp[j] <= 0) this.kill(j, this.units[this.unit[j]]);
+      }
+    }
+  }
+  private fireBolt(e: Emplacement, target: number) {
+    const p = this.getProj();
+    const sx = e.x, sz = e.z, sy = e.y + 1.2;
+    const tx = this.px[target], tz = this.pz[target], ty = 1;
+    const d = Math.hypot(tx - sx, tz - sz) || 1, tof = d / BOLT_SPEED;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = Faction.Defender;
+    p.dmg = BALLISTA_DMG; p.wall = -1; p.big = false; p.fire = false; p.bolt = true; p.splash = ARTY_SPLASH;
+    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof;
+    e.aimX = tx; e.aimZ = tz;
+  }
+  private stepBallistae(dt: number) {
+    for (const e of this.ballistae) {
+      if (CASTLE[e.seg].dead) continue;          // wall breached -> engine destroyed
+      if (e.recoil > 0) e.recoil = Math.max(0, e.recoil - dt);
+      e.cd -= dt; if (e.cd > 0) continue;
+      // nearest attacker on the ground within reach
+      let best = -1, bd = BALLISTA_RANGE * BALLISTA_RANGE;
+      for (let i = 0; i < this.n; i++) {
+        if (!this.alive[i] || this.fac[i] !== Faction.Attacker || this.typ[i] === UType.Siege || this.py[i] > 4) continue;
+        const dx = this.px[i] - e.x, dz = this.pz[i] - e.z, d2 = dx * dx + dz * dz;
+        if (d2 < bd) { bd = d2; best = i; }
+      }
+      if (best >= 0) { this.fireBolt(e, best); e.cd = BALLISTA_CD; e.recoil = 0.45; }
+      else e.cd = 0.6; // nothing in range — look again shortly
+    }
   }
   private stepProjectiles(dt: number) {
     for (const p of this.projectiles) {
@@ -1052,6 +1136,10 @@ export class Sim {
           // boulder: damage the wall section; crumble it into a breach at 0 hp
           const seg = CASTLE[p.wall];
           if (!seg.dead) { seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(p.wall); }
+          if (p.splash > 0) this.artySplash(p.x, p.z, p.fac, p.dmg * 0.5, p.splash); // also scatters troops at the wall
+        } else if (p.splash > 0) {
+          // ballista bolt / anti-personnel shot: kill the man it strikes, little spill
+          this.artySplash(p.x, p.z, p.fac, p.dmg, p.splash);
         } else {
           // arrow: damage nearest enemy soldier to the impact point
           let best = -1, bd2 = 6.25;

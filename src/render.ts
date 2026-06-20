@@ -100,6 +100,7 @@ export class Renderer {
     this.buildShadows();
     this.buildProjectiles();
     this.buildTrebuchets();
+    this.buildBallistae();
     this.buildEffects();
 
     const ringGeo = new THREE.RingGeometry(2.6, 3.4, 40); ringGeo.rotateX(-Math.PI / 2);
@@ -487,6 +488,29 @@ export class Renderer {
     }
   }
 
+  // Defensive ballistae mounted on the widened wall sections.
+  private ballistaModels: { group: THREE.Group; stock: THREE.Group; bolt: THREE.Mesh; e: number }[] = [];
+  private makeBallista() {
+    const g = new THREE.Group();
+    const wood = this.stone('#6e4d28'), dark = this.stone('#4a3219'), iron = this.stone('#9a958c');
+    const base = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, 2.4), wood); base.position.y = 0.25; g.add(base);
+    for (const sx of [-0.9, 0.9]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), dark); leg.position.set(sx, 0.6, -0.6); g.add(leg); }
+    const stock = new THREE.Group(); stock.position.set(0, 1.05, 0); g.add(stock);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.3, 3.0), wood); rail.position.z = 0.5; stock.add(rail);
+    const bow = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.28, 0.28), dark); bow.position.z = 1.4; stock.add(bow);
+    for (const sx of [-1.7, 1.7]) { const tip = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.9), dark); tip.position.set(sx, 0, 1.0); stock.add(tip); }
+    const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 2.6, 6).rotateX(Math.PI / 2), iron); bolt.position.z = 0.7; stock.add(bolt);
+    g.add(stock); return { group: g, stock, bolt };
+  }
+  private buildBallistae() {
+    const list = (this.sim as any).ballistae as { x: number; z: number; y: number }[];
+    for (let i = 0; i < list.length; i++) {
+      const { group, stock, bolt } = this.makeBallista();
+      group.position.set(list[i].x, list[i].y, list[i].z);
+      this.scene.add(group); this.ballistaModels.push({ group, stock, bolt, e: i });
+    }
+  }
+
   setSelection(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.selRing.visible = false; return; } this.selRing.visible = true; this.selRing.position.set(cx, 0.06, cz); }
   setTargetMarker(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.targetRing.visible = false; return; } this.targetRing.visible = true; this.targetRing.position.set(cx, 0.5, cz); }
   // flash a move-order marker at a ground point for ~1.6s
@@ -664,6 +688,17 @@ export class Renderer {
       tr.rock.visible = tr.ang > -0.4;
     }
 
+    // defensive ballistae: aim at their target, recoil on firing, vanish when the
+    // wall section beneath them is breached
+    for (const bm of this.ballistaModels) {
+      const e = sim.ballistae[bm.e]; const seg = CASTLE[e.seg];
+      const dead = !seg || seg.dead; bm.group.visible = !dead;
+      if (dead) continue;
+      bm.group.rotation.y = Math.atan2(e.aimX - e.x, e.aimZ - e.z);
+      bm.bolt.position.z = 0.7 - e.recoil * 2.2;   // yanked back as it looses
+      bm.stock.position.z = -e.recoil * 0.4;
+    }
+
     let ac = 0, bc = 0, fc = 0; const up = new THREE.Vector3(0, 1, 0); const v = new THREE.Vector3();
     for (const p of sim.projectiles) {
       if (!p.active) continue;
@@ -678,7 +713,7 @@ export class Renderer {
       } else {
         if (ac >= 1400) continue;
         this.dummy.position.set(p.x, Math.max(0.1, p.y), p.z); v.set(p.vx, p.vy, p.vz); if (v.lengthSq() > 0.0001) { v.normalize(); this.dummy.quaternion.setFromUnitVectors(up, v); }
-        this.dummy.scale.set(1, 1, 1); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(ac++, this.dummy.matrix);
+        const bs = p.bolt ? 2.0 : 1; this.dummy.scale.set(bs, bs, bs); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(ac++, this.dummy.matrix);
       }
     }
     for (let k = ac; k < 1400; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(k, this.dummy.matrix); }
