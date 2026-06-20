@@ -47,6 +47,7 @@ const ARTY_SPLASH = 2.6;       // anti-personnel blast radius (very little spill
 const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
 const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
+const OBST_DIR: [number, number][] = Array.from({ length: 8 }, (_, a) => [Math.cos(a * Math.PI / 4), Math.sin(a * Math.PI / 4)]);
 
 export function maxHp(t: UType) { return HP[t]; }
 
@@ -395,6 +396,8 @@ export class Sim {
   fields = new Map<number, Float32Array>();
   projectiles: Projectile[] = [];
   ballistae: Emplacement[] = [];
+  private _near = new Int32Array(this.MAX).fill(-1); // cached target per soldier (throttled re-scan)
+  private _frame = 0;
   phase: 'deploy' | 'battle' | 'over' = 'deploy';
   winner: Faction | null = null;
   private seed: number;
@@ -754,6 +757,7 @@ export class Sim {
   step(dt: number) {
     if (this.phase === 'over') return;
     const deploy = this.phase === 'deploy'; // positioning phase: move, but no combat
+    this._frame++;
     this.rebuildHash();
 
     // morale / routing per unit + centroids + live ammo
@@ -817,19 +821,31 @@ export class Sim {
       // ---- nearest reachable enemy (skipped during deploy & for siege) ----
       let nearest = -1, nd2 = SENSE[t] * SENSE[t];
       if (!deploy && t !== UType.Siege) {
-        const sr = SRAD[t]; const isMelee = t === UType.Heavy || t === UType.Light || t === UType.Cavalry;
+        const isMelee = t === UType.Heavy || t === UType.Light || t === UType.Cavalry;
         const my = this.py[i];
-        for (let rr = hr - sr; rr <= hr + sr; rr++) for (let cc = hc - sr; cc <= hc + sr; cc++) {
-          if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-          const b = this.buckets[rr * this.hCols + cc];
-          for (let bi = 0; bi < b.length; bi++) {
-            const j = b[bi];
-            if (this.fac[j] === this.fac[i]) continue;
-            if (isMelee && Math.abs(this.py[j] - my) > 2.5) continue; // can't reach wall-top troops
-            const ex = this.px[j] - this.px[i], ez = this.pz[j] - this.pz[i];
-            const d2 = ex * ex + ez * ez;
-            if (d2 < nd2) { nd2 = d2; nearest = j; }
+        // Re-scan only every few frames (staggered by index); the rest of the time
+        // reuse the cached target if it's still alive and in reach. Combined with a
+        // capped search radius/bucket, this keeps the gate pile from melting fps.
+        const cached = this._near[i];
+        let scanned = false;
+        if (cached >= 0 && this.alive[cached] && this.fac[cached] !== this.fac[i] && (i + this._frame) % 4 !== 0) {
+          const ex = this.px[cached] - this.px[i], ez = this.pz[cached] - this.pz[i], d2 = ex * ex + ez * ez;
+          if (d2 < nd2 && !(isMelee && Math.abs(this.py[cached] - my) > 2.5)) { nearest = cached; nd2 = d2; scanned = true; }
+        }
+        if (!scanned) {
+          const sr = Math.min(SRAD[t], 4); let done = false;
+          for (let rr = hr - sr; rr <= hr + sr && !done; rr++) for (let cc = hc - sr; cc <= hc + sr && !done; cc++) {
+            if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
+            const b = this.buckets[rr * this.hCols + cc]; const bn = b.length < 18 ? b.length : 18;
+            for (let bi = 0; bi < bn; bi++) {
+              const j = b[bi];
+              if (this.fac[j] === this.fac[i]) continue;
+              if (isMelee && Math.abs(this.py[j] - my) > 2.5) continue; // can't reach wall-top troops
+              const ex = this.px[j] - this.px[i], ez = this.pz[j] - this.pz[i], d2 = ex * ex + ez * ez;
+              if (d2 < nd2) { nd2 = d2; nearest = j; if (d2 < 6.0) { done = true; break; } } // adjacent → good enough
+            }
           }
+          this._near[i] = nearest;
         }
       }
 
@@ -913,7 +929,10 @@ export class Sim {
       for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
         if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
         const b = this.buckets[rr * this.hCols + cc];
-        for (let bi = 0; bi < b.length; bi++) {
+        // cap neighbours sampled per bucket — separation is a soft force, so a
+        // sample suffices and it keeps the gate pile from melting the frame-rate
+        const cap = b.length < 22 ? b.length : 22;
+        for (let bi = 0; bi < cap; bi++) {
           const j = b[bi]; if (j === i || this.fac[j] !== this.fac[i] || this.climbState[j] > 0) continue;
           const ex = this.px[i] - this.px[j], ez = this.pz[i] - this.pz[j];
           // separation radius kept BELOW formation spacing so soldiers settled
@@ -929,8 +948,8 @@ export class Sim {
       if (this.py[i] < 1) {
         const OR = 2.6;
         for (let a = 0; a < 8; a++) {
-          const ang = a * (Math.PI / 4), spx = this.px[i] + Math.cos(ang) * OR, spz = this.pz[i] + Math.sin(ang) * OR;
-          if (spx < WORLD.minX || spx > WORLD.maxX || spz < WORLD.minZ || spz > WORLD.maxZ || BLOCKED[cellOf(spx, spz)]) { ox -= Math.cos(ang); oz -= Math.sin(ang); }
+          const c = OBST_DIR[a], cx2 = c[0], cz2 = c[1]; const spx = this.px[i] + cx2 * OR, spz = this.pz[i] + cz2 * OR;
+          if (spx < WORLD.minX || spx > WORLD.maxX || spz < WORLD.minZ || spz > WORLD.maxZ || BLOCKED[cellOf(spx, spz)]) { ox -= cx2; oz -= cz2; }
         }
       }
 
