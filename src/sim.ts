@@ -336,6 +336,7 @@ function computeField(goal: number): Float32Array {
 
 export interface Unit {
   id: number; faction: Faction; type: UType;
+  div: number;             // player division this company belongs to (UType for the player, -1 for defenders)
   s0: number; count: number; alive: number;
   morale: number; routing: boolean; hold: boolean;
   goal: number;            // flow-field goal cell (for long-range routing to the anchor)
@@ -432,7 +433,7 @@ export class Sim {
     }
     const ax = count ? sx / count : 0, az = count ? sz / count : 0;
     const u: Unit = {
-      id: this.units.length, faction, type, s0, count, alive: count,
+      id: this.units.length, faction, type, div: opts.div ?? -1, s0, count, alive: count,
       morale: 100, routing: false, hold: !!opts.hold,
       goal: opts.goal ?? cellOf(ax, az),
       ax, az,
@@ -520,12 +521,28 @@ export class Sim {
     const S = (n: number) => Math.max(0, Math.round(n * scale));
 
     // ---------------- ATTACKERS (south of the castle, player) ----------------
+    // Each arm is split into small companies (30–50) drawn up in a grid, so your
+    // army reads as ranks of companies, not a horde. You still command each ARM
+    // (division) as one — orders fan out to all its companies.
     const F = L.front; // southern extent (past any barbican) — deploy beyond it
-    if (C.heavy) this.addUnit(Faction.Attacker, UType.Heavy, S(C.heavy), block(0, F + 22, cols(C.heavy), 1.6), { name: 'Heavy Inf', cols: cols(S(C.heavy)) });
-    if (C.light) this.addUnit(Faction.Attacker, UType.Light, S(C.light), block(-W * 0.7, F + 30, cols(C.light), 1.4), { name: 'Light Inf', cols: cols(S(C.light)) });
-    if (C.archer) this.addUnit(Faction.Attacker, UType.Archer, S(C.archer), block(0, F + 42, cols(C.archer), 1.5), { name: 'Archers', cols: cols(S(C.archer)) });
-    if (C.cavalry) this.addUnit(Faction.Attacker, UType.Cavalry, S(C.cavalry), block(W * 0.8, F + 30, cols(C.cavalry), 2.2), { name: 'Cavalry', cols: cols(S(C.cavalry)) });
-    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 58, C.siege, 13), { name: 'Trebuchets', cols: C.siege });
+    const division = (total: number, type: UType, cx: number, cz: number, gap: number, name: string) => {
+      if (total <= 0) return;
+      const across = Math.max(1, Math.round(Math.sqrt(Math.ceil(total / 40) * 1.6)));
+      let left = total, k = 0, idx = 0;
+      while (left > 0) {
+        const c = Math.min(left, 30 + Math.floor(this.rnd() * 21));
+        const col = k % across, row = Math.floor(k / across);
+        const ax = cx + (col - (across - 1) / 2) * 15, az = cz + row * 11;
+        const ccols = Math.max(3, Math.round(Math.sqrt(c) * 1.4));
+        this.addUnit(Faction.Attacker, type, c, block(ax, az, ccols, gap), { name: `${name} ${++idx}`, cols: ccols, div: type });
+        left -= c; k++;
+      }
+    };
+    division(S(C.heavy), UType.Heavy, 0, F + 22, 1.6, 'Heavy Inf');
+    division(S(C.light), UType.Light, -W * 0.62, F + 34, 1.4, 'Light Inf');
+    division(S(C.archer), UType.Archer, 0, F + 50, 1.5, 'Archers');
+    division(S(C.cavalry), UType.Cavalry, W * 0.7, F + 34, 2.2, 'Cavalry');
+    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 64, C.siege, 13), { name: 'Trebuchets', cols: C.siege, div: UType.Siege });
 
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
@@ -621,6 +638,49 @@ export class Sim {
     const cols = Math.round(width / SPACING[u.type]) + 1;
     this.setAnchor(u, mx, mz, facing, cols);
   }
+
+  // ---- division (player-arm) commands: orders fan out to every company ----
+  divCompanies(div: number): Unit[] { return this.units.filter(u => u.faction === Faction.Attacker && u.div === div && u.alive > 0); }
+  // aggregate stats for the HUD card of a whole arm
+  divAgg(div: number): { type: UType; count: number; alive: number; ammo: number; ammoMax: number; cx: number; cz: number; routing: boolean } {
+    let count = 0, alive = 0, ammo = 0, ammoMax = 0, sx = 0, sz = 0, type = div as UType, anyFight = false;
+    for (const u of this.units) {
+      if (u.faction !== Faction.Attacker || u.div !== div) continue;
+      type = u.type; count += u.count; alive += u.alive; ammo += u.ammo; ammoMax += u.ammoMax;
+      if (u.alive > 0) { sx += u.cx * u.alive; sz += u.cz * u.alive; if (!u.routing) anyFight = true; }
+    }
+    return { type, count, alive, ammo, ammoMax, cx: alive ? sx / alive : 0, cz: alive ? sz / alive : 0, routing: !anyFight };
+  }
+  // Lay the whole arm out across the dragged line as a grid of company blocks.
+  orderDivision(div: number, x0: number, z0: number, x1: number, z1: number) {
+    const comps = this.divCompanies(div); const n = comps.length; if (!n) return;
+    let dx = x1 - x0, dz = z1 - z0, w = Math.hypot(dx, dz);
+    let facing: number, ox = x0, oz = z0;
+    if (w < 4) { // a tap: build a line centred on the point, facing the castle
+      facing = Math.atan2(0 - x1, 0 - z1);
+      const across0 = Math.max(1, Math.round(Math.sqrt(n))), lineW = across0 * 15;
+      const rx = Math.cos(facing), rz = -Math.sin(facing);
+      ox = x1 - rx * lineW / 2; oz = z1 - rz * lineW / 2; dx = rx * lineW; dz = rz * lineW; w = lineW;
+    } else {
+      let fx = -dz / w, fz = dx / w; const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      if (fx * (0 - mx) + fz * (0 - mz) < 0) { fx = -fx; fz = -fz; }
+      facing = Math.atan2(fx, fz);
+    }
+    const fx = Math.sin(facing), fz = Math.cos(facing);
+    const across = Math.max(1, Math.min(n, Math.round(w / 16)));
+    for (let k = 0; k < n; k++) {
+      const col = k % across, row = Math.floor(k / across);
+      const t = across > 1 ? (col + 0.5) / across : 0.5;
+      const cx = ox + dx * t - fx * row * 10, cz = oz + dz * t - fz * row * 10;  // rows stack behind
+      const u = comps[k]; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
+    }
+  }
+  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.holdFire = false; } }
+  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
+  clearFocusDiv(div: number) { for (const u of this.divCompanies(div)) u.hasFocus = false; }
+  toggleHoldFireDiv(div: number): boolean { const cs = this.divCompanies(div); if (!cs.length) return false; const v = !cs[0].holdFire; for (const u of cs) u.holdFire = v; return v; }
+  // the player's arms present in this battle, in roster order
+  playerDivs(): number[] { const set = new Set<number>(); for (const u of this.units) if (u.faction === Faction.Attacker && u.count > 0) set.add(u.div); return [...set].sort((a, b) => a - b); }
 
   // ---- trebuchet target selection ----
   // Nearest still-standing wall/gate section to a tapped point (or -1).

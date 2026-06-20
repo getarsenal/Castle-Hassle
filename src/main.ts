@@ -1,4 +1,4 @@
-import { Sim, Faction, UType, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost, AtkBuff, NO_BUFF } from './sim';
+import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, COST, BUDGET, compCost, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
 import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward } from './campaign';
@@ -83,27 +83,28 @@ function newGame() {
   buildCards(); updateHint(); updateTools();
 }
 
-// ---------------- Cards ----------------
+// ---------------- Cards (one per arm/division; commands fan out to its companies) ----------------
 function buildCards() {
   cardsEl.innerHTML = '';
-  for (const u of sim.playerUnits()) {
-    const card = document.createElement('div'); card.className = 'card'; card.dataset.id = String(u.id);
-    const ranged = u.type === UType.Archer || u.type === UType.Siege;
-    card.innerHTML = `<div class="name">${u.name}</div><div class="count">${u.alive}</div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
-    card.addEventListener('click', () => { selected = selected === u.id ? -1 : u.id; refreshCards(); updateHint(); updateTools(); });
+  for (const div of sim.playerDivs()) {
+    const a = sim.divAgg(div);
+    const card = document.createElement('div'); card.className = 'card'; card.dataset.div = String(div);
+    const ranged = a.type === UType.Archer || a.type === UType.Siege;
+    card.innerHTML = `<div class="name">${TYPE_NAME[a.type]}</div><div class="count">${a.alive}</div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
+    card.addEventListener('click', () => { selected = selected === div ? -1 : div; refreshCards(); updateHint(); updateTools(); });
     cardsEl.appendChild(card);
   }
 }
 function refreshCards() {
   for (const card of Array.from(cardsEl.children) as HTMLElement[]) {
-    const u = sim.units[Number(card.dataset.id)]; if (!u) continue;
-    card.classList.toggle('sel', selected === u.id); card.classList.toggle('routing', u.routing);
-    (card.querySelector('.count') as HTMLElement).textContent = String(u.alive);
-    const frac = u.alive / u.count, bar = card.querySelector('.bar > i') as HTMLElement;
+    const div = Number(card.dataset.div); const a = sim.divAgg(div);
+    card.classList.toggle('sel', selected === div); card.classList.toggle('routing', a.routing);
+    (card.querySelector('.count') as HTMLElement).textContent = String(a.alive);
+    const frac = a.count ? a.alive / a.count : 0, bar = card.querySelector('.bar > i') as HTMLElement;
     bar.style.width = `${Math.round(frac * 100)}%`;
     bar.style.background = frac > 0.5 ? '#5fd16a' : frac > 0.25 ? '#e8c54a' : '#e8513a';
     const am = card.querySelector('.ammo > i') as HTMLElement | null;
-    if (am) am.style.width = `${u.ammoMax ? Math.round(u.ammo / u.ammoMax * 100) : 0}%`;
+    if (am) am.style.width = `${a.ammoMax ? Math.round(a.ammo / a.ammoMax * 100) : 0}%`;
   }
 }
 const keepBar = document.getElementById('keepBar'), keepFill = document.getElementById('keepFill'), keepLabel = document.getElementById('keepLabel');
@@ -123,30 +124,32 @@ function updateTopbar() {
   }
 }
 function updateHint() {
-  const u = selected >= 0 ? sim.units[selected] : null;
-  if (u && u.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
-  else if (u && u.type === UType.Archer) hintEl.textContent = 'Archers: TAP to set a focus target · drag to reposition';
-  else if (u) hintEl.textContent = 'Tap to send · DRAG to set their line & facing · two fingers = camera';
-  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: position your units, then Begin Assault (top). One finger rotates.';
+  const a = selected >= 0 ? sim.divAgg(selected) : null;
+  if (a && a.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
+  else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to set a focus target · drag to reposition';
+  else if (a) hintEl.textContent = 'Tap to send the arm · DRAG to set its line & facing · two fingers = camera';
+  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms (they snap into formation), then Begin Assault.';
   else hintEl.textContent = 'Breach the walls, storm the keep and hold it — or grind the garrison to nothing';
 }
 function updateTools() {
-  const u = selected >= 0 ? sim.units[selected] : null;
-  const ranged = u && (u.type === UType.Archer || u.type === UType.Siege);
+  const a = selected >= 0 ? sim.divAgg(selected) : null;
+  const ranged = a && (a.type === UType.Archer || a.type === UType.Siege);
   toolsEl.innerHTML = '';
   if (!ranged) { toolsEl.classList.remove('show'); return; }
   toolsEl.classList.add('show');
-  const rb = document.createElement('button'); rb.className = 'tool' + (showRange ? ' on' : ''); rb.textContent = '◎ Range';
+  const comps = sim.divCompanies(selected);
+  const rb = document.createElement('button'); rb.className = 'tool' + (showRange ? ' on' : ''); rb.textContent = 'Range';
   rb.addEventListener('click', () => { showRange = !showRange; updateTools(); });
   toolsEl.appendChild(rb);
   // ceasefire toggle — stops auto-loosing so a distracted player keeps ammo
-  const hb = document.createElement('button'); hb.className = 'tool' + (u!.holdFire ? ' on' : '');
-  hb.textContent = u!.holdFire ? '✋ Hold Fire' : '🔥 Firing';
-  hb.addEventListener('click', () => { sim.toggleHoldFire(u!.id); updateTools(); });
+  const holding = comps[0]?.holdFire ?? false;
+  const hb = document.createElement('button'); hb.className = 'tool' + (holding ? ' on' : '');
+  hb.textContent = holding ? 'Hold Fire' : 'Firing';
+  hb.addEventListener('click', () => { sim.toggleHoldFireDiv(selected); updateTools(); });
   toolsEl.appendChild(hb);
-  if (u!.type === UType.Archer && u!.hasFocus) {
-    const cb = document.createElement('button'); cb.className = 'tool'; cb.textContent = '✕ Clear Aim';
-    cb.addEventListener('click', () => { sim.clearFocus(u!.id); updateTools(); });
+  if (a!.type === UType.Archer && comps.some(u => u.hasFocus)) {
+    const cb = document.createElement('button'); cb.className = 'tool'; cb.textContent = 'Clear Aim';
+    cb.addEventListener('click', () => { sim.clearFocusDiv(selected); updateTools(); });
     toolsEl.appendChild(cb);
   }
 }
@@ -217,7 +220,7 @@ function bindInput() {
   const endPointer = (e: PointerEvent) => {
     const wasTap = !moved && gesture !== 'camera' && (performance.now() - downAt.t) < 350 && pointers.size === 1;
     pointers.delete(e.pointerId);
-    if (gesture === 'command' && moved && cmdP0 && cmdP1 && selected >= 0) { sim.orderFormation(selected, cmdP0.x, cmdP0.z, cmdP1.x, cmdP1.z); renderer.pingMove((cmdP0.x + cmdP1.x) / 2, (cmdP0.z + cmdP1.z) / 2); }
+    if (gesture === 'command' && moved && cmdP0 && cmdP1 && selected >= 0) { sim.orderDivision(selected, cmdP0.x, cmdP0.z, cmdP1.x, cmdP1.z); renderer.pingMove((cmdP0.x + cmdP1.x) / 2, (cmdP0.z + cmdP1.z) / 2); }
     else if (wasTap) handleTap(e.clientX, e.clientY);
     renderer.setPreview(null);
     if (pointers.size === 0) { gesture = 'none'; cmdP0 = cmdP1 = null; }
@@ -229,14 +232,15 @@ function bindInput() {
 
 function handleTap(cx: number, cy: number) {
   const p = groundAt(cx, cy); if (!p) return;
-  let best = -1, bd = 11;
-  for (const u of sim.playerUnits()) { if (u.alive <= 0) continue; const d = Math.hypot(u.cx - p.x, u.cz - p.z); if (d < bd) { bd = d; best = u.id; } }
+  // tapping near your troops selects that ARM (the nearest company's division)
+  let best = -1, bd = 13;
+  for (const u of sim.playerUnits()) { if (u.alive <= 0) continue; const d = Math.hypot(u.cx - p.x, u.cz - p.z); if (d < bd) { bd = d; best = u.div; } }
   if (best >= 0) { selected = best; refreshCards(); updateHint(); updateTools(); return; }
   if (selected >= 0 && sim.phase !== 'over') {
-    const u = sim.units[selected];
-    if (u.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTarget(selected, seg); return; } sim.orderMove(selected, p.x, p.z); renderer.pingMove(p.x, p.z); }
-    else if (u.type === UType.Archer) { sim.setFocus(selected, p.x, p.z); updateTools(); }
-    else { sim.orderMove(selected, p.x, p.z); renderer.pingMove(p.x, p.z); }
+    const a = sim.divAgg(selected);
+    if (a.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); return; } sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }
+    else if (a.type === UType.Archer) { sim.setFocusDiv(selected, p.x, p.z); updateTools(); }
+    else { sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }
   }
 }
 
@@ -350,13 +354,14 @@ function frame(now: number) {
     perfAcc = 0; perfFrames = 0; simMs = 0; gfxMs = 0;
   }
 
-  const u = selected >= 0 ? sim.units[selected] : null;
-  if (u && u.alive > 0) renderer.setSelection(u.cx, u.cz); else renderer.setSelection(null, null);
-  // aim marker + range fan for the selected ranged unit
-  if (u && u.type === UType.Siege && u.siegeTargetSeg >= 0) { const [tx, tz] = sim.segCenter(u.siegeTargetSeg); renderer.setTargetMarker(tx, tz); }
-  else if (u && u.type === UType.Archer && u.hasFocus) renderer.setTargetMarker(u.focusX, u.focusZ);
+  const a = selected >= 0 ? sim.divAgg(selected) : null;
+  const rep = selected >= 0 ? sim.divCompanies(selected)[0] : undefined; // a representative company
+  if (a && a.alive > 0) renderer.setSelection(a.cx, a.cz); else renderer.setSelection(null, null);
+  // aim marker + range fan for the selected ranged arm (driven by a representative company)
+  if (a && a.type === UType.Siege && rep && rep.siegeTargetSeg >= 0) { const [tx, tz] = sim.segCenter(rep.siegeTargetSeg); renderer.setTargetMarker(tx, tz); }
+  else if (a && a.type === UType.Archer && rep && rep.hasFocus) renderer.setTargetMarker(rep.focusX, rep.focusZ);
   else renderer.setTargetMarker(null, null);
-  if (u && u.alive > 0 && (u.type === UType.Archer || u.type === UType.Siege) && showRange) renderer.setRangeFan(u.cx, u.cz, sim.unitRange(u.id));
+  if (a && a.alive > 0 && (a.type === UType.Archer || a.type === UType.Siege) && showRange && rep) renderer.setRangeFan(a.cx, a.cz, sim.unitRange(rep.id));
   else renderer.setRangeFan(null, null);
 
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
