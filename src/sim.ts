@@ -452,11 +452,13 @@ export interface Projectile {
 export interface Emplacement { x: number; z: number; y: number; seg: number; cd: number; recoil: number; horiz: boolean; outer: number; aimX: number; aimZ: number; }
 
 export class Sim {
-  // Must exceed the total soldier count (currently ~2,220). If it's too small,
-  // overflow soldiers have no backing storage: typed-array writes are silently
-  // dropped and reads return undefined, which crashed the renderer
-  // (this.meshes[undefined].setMatrixAt). Keep generous headroom.
-  MAX = 4800;
+  // Must exceed the total soldier count. If it's too small, overflow soldiers
+  // have no backing storage: typed-array writes are silently dropped and reads
+  // return undefined, which crashed the renderer (this.meshes[undefined].
+  // setMatrixAt). This is the only true ceiling on battle size now — set huge so
+  // a whole late-campaign host can take the field uncapped. ~20 arrays * MAX * 4B
+  // ≈ a couple MB, trivial; the real cost is sim/draw time, which TARGET paces.
+  MAX = 20000;
   px = new Float32Array(this.MAX); pz = new Float32Array(this.MAX); py = new Float32Array(this.MAX);
   vx = new Float32Array(this.MAX); vz = new Float32Array(this.MAX);
   hp = new Float32Array(this.MAX); cd = new Float32Array(this.MAX);
@@ -619,21 +621,25 @@ export class Sim {
       for (let t = 0; t < 40; t++) { x = R(cit!.x0 + T + 1, cit!.x1 - T - 1); z = R(cit!.z0 + T + 1, cit!.z1 - T - 1); if (!blockedAt(x, z)) return [x, z, 0]; }
       return [x, z, 0];
     };
-    // pre-compute every defender count, then scale BOTH armies to a total cap so
-    // huge late-campaign sieges stay performant (and never blow the soldier cap).
+    // pre-compute every defender count. We no longer shrink armies to a tight
+    // cap — the whole host marches. The only scale-down left is a safety valve
+    // that engages if the combined host would overrun the array (MAX), so a
+    // truly enormous siege degrades gracefully instead of crashing.
     // A palisade town is a soft raid: only a sparse picket lines the low wall (so
     // it can't hide behind unreachable archers), and the militia fights on the
     // ground where your infantry can cut it down — a raid you win by routing the
     // defenders, not by a grinding siege.
     const wallPts = archersOnLines(L.wallLines, L.palisade ? 16 : 2.6, 6, L.palisade ? 5 : WH);
     const NT = TOWERS.length;
-    const garr = Math.round((L.palisade ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(560, Math.round(W * D / 14)))) * this.difficulty);
+    const garr = Math.round((L.palisade ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(900, Math.round(W * D / 11)))) * this.difficulty);
     const reserves = Math.round(garr * (L.palisade ? 0.35 : 0.6));
     const citGuard = cit ? Math.round(220 * this.difficulty) : 0;
     const cPts = cit ? archersOnLines(cit.wallLines, 2.4, 4) : [];
     const attReq = C.heavy + C.light + C.archer + C.cavalry;
     const defReq = wallPts.length + NT * 4 + garr + reserves + citGuard + cPts.length;
-    const TARGET = 3900; // total foot soldiers (trebuchets excluded) — big but smooth
+    // Safety valve only: keep the combined host just under the array ceiling so
+    // overflow can never crash the renderer. Below this, nothing is shrunk — go wild.
+    const TARGET = this.MAX - 1500; // headroom for trebuchet crews / late spawns
     const scale = Math.min(1, TARGET / Math.max(1, attReq + defReq));
     const S = (n: number) => Math.max(0, Math.round(n * scale));
 

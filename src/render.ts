@@ -25,6 +25,7 @@ export class Renderer {
   gl: THREE.WebGLRenderer;
   private meshes: THREE.InstancedMesh[] = [];
   private shadowMesh!: THREE.InstancedMesh;
+  private shadowsOn = true; // per-soldier ground blobs; off for very large musters
   private projMesh!: THREE.InstancedMesh;
   private boulderMesh!: THREE.InstancedMesh;
   private fireMesh!: THREE.InstancedMesh;
@@ -444,10 +445,16 @@ export class Renderer {
   }
 
   private buildShadows() {
+    // Per-soldier shadow blobs double the transparent-quad draw. At huge musters
+    // they overlap into mush anyway, so drop them past a threshold to keep the
+    // "go wild" battles moving — the army still reads, just without ground dots.
+    this.shadowsOn = this.sim.n <= 9000;
     const geo = new THREE.CircleGeometry(0.7, 12); geo.rotateX(-Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({ color: '#23311c', transparent: true, opacity: 0.2, depthWrite: false });
-    this.shadowMesh = new THREE.InstancedMesh(geo, mat, this.sim.n);
-    this.shadowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.shadowMesh.frustumCulled = false; this.scene.add(this.shadowMesh);
+    this.shadowMesh = new THREE.InstancedMesh(geo, mat, this.shadowsOn ? this.sim.n : 1);
+    this.shadowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.shadowMesh.frustumCulled = false;
+    if (!this.shadowsOn) { this.shadowMesh.visible = false; return; }
+    this.scene.add(this.shadowMesh);
     // Shadow scale/rotation are constant per unit, so bake them once into the
     // instance matrices; the render loop then only patches the translation.
     const a = this.shadowMesh.instanceMatrix.array as Float32Array;
@@ -459,7 +466,7 @@ export class Renderer {
 
   private buildProjectiles() {
     const arrowMat = new THREE.MeshBasicMaterial({ map: makeArrowTexture(), transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
-    this.projMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.4, 1.5), arrowMat, 1400);
+    this.projMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.4, 1.5), arrowMat, 3200);
     this.projMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.projMesh.frustumCulled = false; this.scene.add(this.projMesh);
     this.boulderMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.0, 0), new THREE.MeshLambertMaterial({ color: '#6f655a', flatShading: true }), 60);
     this.boulderMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.boulderMesh.frustumCulled = false; this.scene.add(this.boulderMesh);
@@ -778,6 +785,7 @@ export class Renderer {
     this.updateMotes(dt);
     this.updateEffects(dt);
 
+    const shOn = this.shadowsOn;
     const sa = this.shadowMesh.instanceMatrix.array as Float32Array;
     const tm = this.time * 9;
     let anyLive = false;
@@ -810,7 +818,8 @@ export class Renderer {
       }
       this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
       // shadow: only the translation changes (scale/rotation baked at build)
-      sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i]; anyLive = true;
+      if (shOn) { sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i]; }
+      anyLive = true;
     }
     // Only re-upload the instance buffers when something actually changed (live
     // soldiers move, or a body was just placed). Dead-unit work is skipped above,
@@ -820,7 +829,7 @@ export class Renderer {
         this.meshes[t].instanceMatrix.needsUpdate = true;
         if (this.colorDirty[t] && this.meshes[t].instanceColor) { this.meshes[t].instanceColor!.needsUpdate = true; this.colorDirty[t] = false; }
       }
-      this.shadowMesh.instanceMatrix.needsUpdate = true;
+      if (shOn) this.shadowMesh.instanceMatrix.needsUpdate = true;
     }
 
     // move-order ping: bounce the arrow, pulse + fade the ring, then hide
@@ -878,15 +887,15 @@ export class Renderer {
         this.dummy.position.set(p.x, Math.max(0.1, p.y), p.z); this.dummy.quaternion.copy(this.billboard);
         const fl = 0.8 + jit(fc, 5) * 0.5; this.dummy.scale.set(fl, fl, fl); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(fc++, this.dummy.matrix);
       } else {
-        if (ac >= 1400) continue;
+        if (ac >= 3200) continue;
         this.dummy.position.set(p.x, Math.max(0.1, p.y), p.z); v.set(p.vx, p.vy, p.vz); if (v.lengthSq() > 0.0001) { v.normalize(); this.dummy.quaternion.setFromUnitVectors(up, v); }
         const bs = p.bolt ? 2.0 : 1; this.dummy.scale.set(bs, bs, bs); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(ac++, this.dummy.matrix);
       }
     }
-    for (let k = ac; k < 1400; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(k, this.dummy.matrix); }
+    for (let k = ac; k < 3200; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(k, this.dummy.matrix); }
     for (let k = bc; k < 60; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.boulderMesh.setMatrixAt(k, this.dummy.matrix); }
     for (let k = fc; k < 450; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(k, this.dummy.matrix); }
-    this.projMesh.count = 1400; this.boulderMesh.count = 60; this.fireMesh.count = 450;
+    this.projMesh.count = 3200; this.boulderMesh.count = 60; this.fireMesh.count = 450;
     this.projMesh.instanceMatrix.needsUpdate = true; this.boulderMesh.instanceMatrix.needsUpdate = true; this.fireMesh.instanceMatrix.needsUpdate = true;
 
     this.updateCamera(); this.gl.render(this.scene, this.camera);
