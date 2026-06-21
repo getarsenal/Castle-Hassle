@@ -930,19 +930,33 @@ export class Sim {
   private defenseMul(i: number): number { const st = this.units[this.unit[i]].stance; return st === 'shield' ? 0.5 : st === 'sprint' ? 1.18 : 1; }
 
   // ---- spatial hash for neighbour queries ----
+  // Flat counting-sort layout: no per-frame allocation, and the unit indices for a
+  // cell sit contiguously in one typed array (cache-friendly). hStart[cell] is the
+  // offset where cell's indices begin in hItems; hStart[cell+1] is where they end.
   private hCell = 6;
   private hCols = Math.ceil((WORLD.maxX - WORLD.minX) / 6);
   private hRows = Math.ceil((WORLD.maxZ - WORLD.minZ) / 6);
-  private buckets: number[][] = [];
+  private hCount = new Int32Array(this.hCols * this.hRows);
+  private hStart = new Int32Array(this.hCols * this.hRows + 1);
+  private hItems = new Int32Array(this.MAX);
+  private hCellOf = new Int32Array(this.MAX); // cached cell per unit (scratch, -1 = dead)
   private rebuildHash() {
-    const total = this.hCols * this.hRows;
-    if (this.buckets.length !== total) { this.buckets = []; for (let i = 0; i < total; i++) this.buckets.push([]); }
-    else for (let i = 0; i < total; i++) this.buckets[i].length = 0;
+    const total = this.hCols * this.hRows, cols = this.hCols, cell = this.hCellOf, cnt = this.hCount;
+    cnt.fill(0);
     for (let i = 0; i < this.n; i++) {
-      if (!this.alive[i]) continue;
-      const c = Math.min(this.hCols - 1, Math.max(0, Math.floor((this.px[i] - WORLD.minX) / this.hCell)));
+      if (!this.alive[i]) { cell[i] = -1; continue; }
+      const c = Math.min(cols - 1, Math.max(0, Math.floor((this.px[i] - WORLD.minX) / this.hCell)));
       const r = Math.min(this.hRows - 1, Math.max(0, Math.floor((this.pz[i] - WORLD.minZ) / this.hCell)));
-      this.buckets[r * this.hCols + c].push(i);
+      const k = r * cols + c; cell[i] = k; cnt[k]++;
+    }
+    // prefix sum -> start offsets, then reuse cnt as a per-cell write cursor
+    let acc = 0;
+    for (let k = 0; k < total; k++) { this.hStart[k] = acc; acc += cnt[k]; cnt[k] = 0; }
+    this.hStart[total] = acc;
+    const items = this.hItems, start = this.hStart;
+    for (let i = 0; i < this.n; i++) {
+      const k = cell[i]; if (k < 0) continue;
+      items[start[k] + cnt[k]++] = i;
     }
   }
 
@@ -1035,9 +1049,9 @@ export class Sim {
           const sr = Math.min(SRAD[t], 4); let done = false;
           for (let rr = hr - sr; rr <= hr + sr && !done; rr++) for (let cc = hc - sr; cc <= hc + sr && !done; cc++) {
             if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-            const b = this.buckets[rr * this.hCols + cc]; const bn = b.length < 18 ? b.length : 18;
+            const k = rr * this.hCols + cc, bs = this.hStart[k]; const bn = Math.min(this.hStart[k + 1] - bs, 18);
             for (let bi = 0; bi < bn; bi++) {
-              const j = b[bi];
+              const j = this.hItems[bs + bi];
               if (this.fac[j] === this.fac[i]) continue;
               if (isMelee && Math.abs(this.py[j] - my) > 2.5) continue; // can't reach wall-top troops
               const ex = this.px[j] - this.px[i], ez = this.pz[j] - this.pz[i], d2 = ex * ex + ez * ez;
@@ -1168,12 +1182,12 @@ export class Sim {
       const rLo = lz < rad ? hr - 1 : hr, rHi = lz > this.hCell - rad ? hr + 1 : hr;
       for (let rr = rLo; rr <= rHi; rr++) for (let cc = cLo; cc <= cHi; cc++) {
         if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-        const b = this.buckets[rr * this.hCols + cc];
+        const k = rr * this.hCols + cc, bs = this.hStart[k];
         // cap neighbours sampled per bucket — separation is a soft force, so a
         // sample suffices and it keeps the gate pile from melting the frame-rate
-        const cap = b.length < 22 ? b.length : 22;
+        const cap = Math.min(this.hStart[k + 1] - bs, 22);
         for (let bi = 0; bi < cap; bi++) {
-          const j = b[bi]; if (j === i || this.fac[j] !== this.fac[i] || this.climbState[j] > 0) continue;
+          const j = this.hItems[bs + bi]; if (j === i || this.fac[j] !== this.fac[i] || this.climbState[j] > 0) continue;
           const ex = this.px[i] - this.px[j], ez = this.pz[i] - this.pz[j];
           // separation radius kept BELOW formation spacing so soldiers settled
           // in their ranks don't shove each other (that caused the vibrating).
@@ -1603,7 +1617,9 @@ export class Sim {
     const span = Math.ceil(radius / this.hCell) + 1;
     for (let rr = hr - span; rr <= hr + span; rr++) for (let cc = hc - span; cc <= hc + span; cc++) {
       if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-      for (const j of this.buckets[rr * this.hCols + cc]) {
+      const k = rr * this.hCols + cc;
+      for (let bi = this.hStart[k]; bi < this.hStart[k + 1]; bi++) {
+        const j = this.hItems[bi];
         if (this.fac[j] === fac || this.typ[j] === UType.Siege || !this.alive[j]) continue;
         const d2 = (this.px[j] - x) ** 2 + (this.pz[j] - z) ** 2; if (d2 > r2) continue;
         this.applyRangedHit(j, d2 < 2.0 ? dmg : dmg * 0.2, true); // direct hit lethal, very little spill
@@ -1629,12 +1645,21 @@ export class Sim {
       if (CASTLE[e.seg].dead) continue;          // wall breached -> engine destroyed
       if (e.recoil > 0) e.recoil = Math.max(0, e.recoil - dt);
       e.cd -= dt; if (e.cd > 0) continue;
-      // nearest attacker on the ground within reach
+      // nearest attacker on the ground within reach — search only the hash cells the
+      // ballista can actually shoot into, not the whole army
       let best = -1, bd = BALLISTA_RANGE * BALLISTA_RANGE;
-      for (let i = 0; i < this.n; i++) {
-        if (!this.alive[i] || this.fac[i] !== Faction.Attacker || this.typ[i] === UType.Siege || this.py[i] > 4) continue;
-        const dx = this.px[i] - e.x, dz = this.pz[i] - e.z, d2 = dx * dx + dz * dz;
-        if (d2 < bd) { bd = d2; best = i; }
+      const ec = Math.min(this.hCols - 1, Math.max(0, Math.floor((e.x - WORLD.minX) / this.hCell)));
+      const er = Math.min(this.hRows - 1, Math.max(0, Math.floor((e.z - WORLD.minZ) / this.hCell)));
+      const span = Math.ceil(BALLISTA_RANGE / this.hCell) + 1;
+      for (let rr = er - span; rr <= er + span; rr++) for (let cc = ec - span; cc <= ec + span; cc++) {
+        if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
+        const k = rr * this.hCols + cc, ke = this.hStart[k + 1];
+        for (let bi = this.hStart[k]; bi < ke; bi++) {
+          const i = this.hItems[bi];
+          if (!this.alive[i] || this.fac[i] !== Faction.Attacker || this.typ[i] === UType.Siege || this.py[i] > 4) continue;
+          const dx = this.px[i] - e.x, dz = this.pz[i] - e.z, d2 = dx * dx + dz * dz;
+          if (d2 < bd) { bd = d2; best = i; }
+        }
       }
       if (best >= 0) { this.fireBolt(e, best); e.cd = BALLISTA_CD; e.recoil = 0.45; }
       else e.cd = 0.6; // nothing in range — look again shortly
@@ -1667,8 +1692,8 @@ export class Sim {
           const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((p.tz - WORLD.minZ) / this.hCell)));
           for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
             if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
-            const b = this.buckets[rr * this.hCols + cc];
-            for (const j of b) { if (this.fac[j] === p.fac) continue; const d2 = (this.px[j] - p.tx) ** 2 + (this.pz[j] - p.tz) ** 2; if (d2 < bd2) { bd2 = d2; best = j; } }
+            const k = rr * this.hCols + cc, be = this.hStart[k + 1];
+            for (let bi = this.hStart[k]; bi < be; bi++) { const j = this.hItems[bi]; if (this.fac[j] === p.fac || !this.alive[j]) continue; const d2 = (this.px[j] - p.tx) ** 2 + (this.pz[j] - p.tz) ** 2; if (d2 < bd2) { bd2 = d2; best = j; } }
           }
           if (best >= 0) this.applyRangedHit(best, p.dmg, false);
         }
