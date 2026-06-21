@@ -57,10 +57,11 @@ function buildMuster() {
     if (currentNoArtillery && r.key === 'siege') continue; // no siege train on a town raid
     const k = r.key as ArmyKey; const step = RECRUIT_STEP[k];
     const row = document.createElement('div'); row.className = 'rrow';
-    row.innerHTML = `<span class="ic">${ICONS[k]}</span><div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc}</div>
+    row.innerHTML = `<span class="ic">${ICONS[k]}</span>
+      <div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc}</div>
         <div class="own" data-k="${k}"></div></div>
-      <button class="rbtn rec" data-k="${k}">Recruit</button>
-      <button class="rbtn minus">−</button><div class="ct" data-k="${k}">0</div><button class="rbtn plus">+</button>`;
+      <div class="qty"><button class="rbtn minus">−</button><div class="ct" data-k="${k}">0</div><button class="rbtn plus">+</button></div>
+      <button class="rbtn rec" data-k="${k}">Recruit</button>`;
     const ct = row.querySelector('.ct') as HTMLElement;
     row.querySelector('.minus')!.addEventListener('click', () => { (comp as any)[k] = Math.max(0, (comp as any)[k] - step); ct.textContent = String((comp as any)[k]); updateMuster(); });
     row.querySelector('.plus')!.addEventListener('click', () => { (comp as any)[k] = Math.min(bringable(k), (comp as any)[k] + step); ct.textContent = String((comp as any)[k]); updateMuster(); });
@@ -86,7 +87,7 @@ function updateMuster() {
   }
   for (const el of Array.from(document.querySelectorAll('#rosterRows .rec')) as HTMLButtonElement[]) {
     const k = el.dataset.k as ArmyKey; const price = recruitPrice(k, RECRUIT_STEP[k], currentDiscount);
-    el.textContent = `+${RECRUIT_STEP[k]} · ${price}g`; el.disabled = progress.gold < price;
+    el.textContent = `Recruit +${RECRUIT_STEP[k]} · ${price}g`; el.disabled = progress.gold < price;
   }
   const total = comp.heavy + comp.light + comp.archer + comp.cavalry + comp.siege;
   const g = $('musterGold'), t = $('musterTotal'); if (g) g.textContent = String(progress.gold); if (t) t.textContent = String(total);

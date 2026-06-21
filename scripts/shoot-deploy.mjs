@@ -14,7 +14,7 @@ page.on('pageerror', e => console.log('PAGEERROR', e.message));
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da6360000002000154a24f7e0000000049454e44ae426082', 'hex');
 await page.setRequestInterception(true);
 page.on('request', r => (/getarsenal\.app/.test(r.url()) && /\.(png|jpg|jpeg|webmanifest|mp4)/.test(r.url())) ? r.respond({ status: 200, contentType: 'image/png', body: PNG }) : r.continue());
-await page.setViewport({ width: 460, height: 880, deviceScaleFactor: 2 });
+await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 3 });
 await page.goto(`http://localhost:${port}/index.html`, { waitUntil: 'load' });
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 const click = (s) => page.evaluate(x => { const e = document.querySelector(x); if (e) e.click(); return !!e; }, s);
