@@ -1267,18 +1267,28 @@ export class Sim {
   // Drive an attacking soldier at its objective, breaking through the wall in the
   // way: march to the section's foot, batter it down, and scale it (infantry).
   private assaultMove(i: number, u: Unit, t: UType) {
-    let seg = -1;
-    if (u.objKind === 'breach' && u.objSeg >= 0 && CASTLE[u.objSeg] && !CASTLE[u.objSeg].dead) seg = u.objSeg;
-    else seg = this.wallBlockingGoal(i);
-    if (seg < 0) { // clear route to the keep — flow toward it (around towers/buildings)
-      this.formMove(u, i);
-      if (this._stuck) { // enclosed with no straight wall ahead: seek an inward breach, else scale
-        const br = this.breachToward(this.px[i], this.pz[i]);
-        if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
-        else if (t !== UType.Cavalry) this.useLadder(i);
-      }
-      return;
+    // A "break in HERE" order: smash the named section until it's open, even if a
+    // way already exists elsewhere — the player chose this wall.
+    if (u.objKind === 'breach') {
+      if (u.objSeg >= 0 && CASTLE[u.objSeg] && !CASTLE[u.objSeg].dead) { this.engageWall(i, u, t, u.objSeg); return; }
+      // the wall is rubble — re-home the company onto the keep and pour through,
+      // instead of milling on the spot where the wall stood.
+      u.objKind = 'storm'; u.objSeg = -1; u.ax = this.keepX; u.az = this.keepZ; u.goal = cellOf(this.keepX, this.keepZ);
     }
+    // Storming: follow the flow field to the keep. It threads through whatever is
+    // already open, so the column FUNNELS through a breach/gate instead of the men
+    // either side of it stopping to batter the standing wall. Only when there's no
+    // way through at all (an intact ring) do we break a wall down or scale it.
+    this.formMove(u, i);
+    if (!this._stuck) return;
+    const seg = this.wallBlockingGoal(i);
+    if (seg >= 0) { this.engageWall(i, u, t, seg); return; }
+    const br = this.breachToward(this.px[i], this.pz[i]); // no straight wall (towers/enclosed): seek an inward breach, else scale
+    if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
+    else if (t !== UType.Cavalry) this.useLadder(i);
+  }
+  // March to a wall/gate section's foot, batter it down, and scale it (infantry).
+  private engageWall(i: number, u: Unit, t: UType, seg: number) {
     const g = CASTLE[seg];
     const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
     const dxw = cpx - this.px[i], dzw = cpz - this.pz[i], dw = Math.hypot(dxw, dzw);
