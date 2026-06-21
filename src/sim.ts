@@ -287,10 +287,30 @@ function cellCenter(idx: number): [number, number] {
 
 // Which cells are blocked — recomputed whenever a wall section is destroyed.
 const BLOCKED = new Uint8Array(NCELLS);
+// CROSS: the EXTRA cost for a storming flow field to enter a cell. Open ground is
+// 0; a standing gate is cheap to force (a ram), a standing wall dearer (an escalade),
+// and towers/keep/buildings are impassable. This lets the attacker field reach EVERY
+// cell with a gradient toward the cheapest way in — breach, then gate, then wall —
+// so troops are never left with no direction (the cause of them balling up at a wall).
+const X_INF = 1e9, X_GATE = 16, X_WALL = 42;
+const CROSS = new Float32Array(NCELLS);
+function crossAt(x: number, z: number): number {
+  let pen = 0;
+  for (let i = 0; i < CASTLE.length; i++) {
+    const b = CASTLE[i]; if (b.dead) continue;
+    if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) {
+      if (b.kind === 'gate') pen = Math.max(pen, X_GATE);
+      else if (b.kind === 'wall') pen = Math.max(pen, X_WALL);
+      else return X_INF; // tower, keep, building — impassable even to a storm
+    }
+  }
+  return pen;
+}
 function rebuildBlocked() {
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-    const [x, z] = cellCenter(r * COLS + c);
-    BLOCKED[r * COLS + c] = blockedAt(x, z) ? 1 : 0;
+    const i = r * COLS + c; const [x, z] = cellCenter(i);
+    BLOCKED[i] = blockedAt(x, z) ? 1 : 0;
+    CROSS[i] = crossAt(x, z);
   }
 }
 // Build a default castle at module load so CASTLE/LAYOUT are never null. (Now
@@ -312,7 +332,11 @@ function pathBlocked(x0: number, z0: number, x1: number, z1: number): boolean {
 // ---- Flow field via Dijkstra (8-neighbour) ----
 const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]] as const;
 
-function computeField(goal: number): Float32Array {
+// cross=true builds the STORMING field that may cross standing walls/gates at a
+// cost (so it reaches everywhere); cross=false is the normal open-ground field.
+// `seeds` is the goal cell, or several (multi-source) — the storm field seeds the
+// whole capture ring, since the keep's own cell is solid and can't expand outward.
+function computeField(seeds: number | number[], cross = false): Float32Array {
   // cost MUST be float64: storing path costs in a Float32Array rounds them, so
   // the stale-node check `co > cost[cell]` (co is full-precision) spuriously
   // skips valid expansions and the field only partially fills.
@@ -335,7 +359,8 @@ function computeField(goal: number): Float32Array {
       if (m === i) break; [hcost[m], hcost[i]] = [hcost[i], hcost[m]]; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; }
     return [top, tc] as const;
   };
-  cost[goal] = 0; push(goal, 0);
+  if (typeof seeds === 'number') { cost[seeds] = 0; push(seeds, 0); }
+  else for (const s of seeds) { if (cost[s] !== 0) { cost[s] = 0; push(s, 0); } }
   while (heap.length) {
     const [cell, co] = pop();
     if (co > cost[cell]) continue;
@@ -344,23 +369,29 @@ function computeField(goal: number): Float32Array {
       const nc = cc + NB[k][0], nr = cr + NB[k][1];
       if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
       const ni = nr * COLS + nc;
-      if (BLOCKED[ni]) continue;
-      // no diagonal corner-cutting: both orthogonal cells must be open
-      if (k >= 4 && (BLOCKED[cr * COLS + nc] || BLOCKED[nr * COLS + cc])) continue;
-      const ncost = co + NB[k][2];
+      if (cross ? CROSS[ni] >= X_INF : !!BLOCKED[ni]) continue;
+      // no diagonal corner-cutting: both orthogonal cells must be passable (for the
+      // storm field, "passable" means not a tower/keep — walls/gates are crossable)
+      if (k >= 4) {
+        if (cross ? (CROSS[cr * COLS + nc] >= X_INF || CROSS[nr * COLS + cc] >= X_INF)
+                  : (BLOCKED[cr * COLS + nc] || BLOCKED[nr * COLS + cc])) continue;
+      }
+      const ncost = co + NB[k][2] + (cross ? CROSS[ni] : 0);
       if (ncost < cost[ni]) { cost[ni] = ncost; push(ni, ncost); }
     }
   }
   // gradient: each cell points to lowest-cost neighbour
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     const i = r * COLS + c;
-    if (BLOCKED[i] || cost[i] === Infinity) continue;
+    if ((cross ? CROSS[i] >= X_INF : !!BLOCKED[i]) || cost[i] === Infinity) continue;
     let best = cost[i], bx = 0, bz = 0;
     for (let k = 0; k < 8; k++) {
       const nc = c + NB[k][0], nr = r + NB[k][1];
       if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
       const ni = nr * COLS + nc;
-      if (k >= 4 && (BLOCKED[r * COLS + nc] || BLOCKED[nr * COLS + c])) continue; // no corner-cut
+      if (cross ? CROSS[ni] >= X_INF : !!BLOCKED[ni]) continue;
+      if (k >= 4 && (cross ? (CROSS[r * COLS + nc] >= X_INF || CROSS[nr * COLS + c] >= X_INF)
+                           : (BLOCKED[r * COLS + nc] || BLOCKED[nr * COLS + c]))) continue; // no corner-cut
       if (cost[ni] < best) { best = cost[ni]; bx = NB[k][0]; bz = NB[k][1]; }
     }
     const len = Math.hypot(bx, bz) || 1;
@@ -472,6 +503,30 @@ export class Sim {
   private field(goal: number): Float32Array {
     let f = this.fields.get(goal);
     if (!f) { f = computeField(goal); this.fields.set(goal, f); }
+    return f;
+  }
+  // The storming field: reaches every cell, routing toward the keep through the
+  // cheapest opening (breach → gate → scaled wall) so attackers always have a way in.
+  private attackFields = new Map<number, Float32Array>();
+  private attackField(goal: number): Float32Array {
+    let f = this.attackFields.get(goal);
+    if (!f) {
+      // Seed the whole capture ground (passable cells near the keep), because the
+      // keep's own cell is solid: a single seed inside it can't expand outward, which
+      // left the field empty and the attackers with nowhere to go.
+      const seeds: number[] = [];
+      const R = Math.min(this.captureR * 0.7, 16);
+      const c0 = Math.floor((this.keepX - WORLD.minX) / CELL), r0 = Math.floor((this.keepZ - WORLD.minZ) / CELL);
+      const span = Math.ceil(R / CELL) + 1;
+      for (let dr = -span; dr <= span; dr++) for (let dc = -span; dc <= span; dc++) {
+        const c = c0 + dc, r = r0 + dr; if (c < 0 || c >= COLS || r < 0 || r >= ROWS) continue;
+        const ci = r * COLS + c; if (CROSS[ci] >= X_INF) continue; // not the keep/towers
+        const [x, z] = cellCenter(ci); if ((x - this.keepX) ** 2 + (z - this.keepZ) ** 2 > R * R) continue;
+        seeds.push(ci);
+      }
+      f = computeField(seeds.length ? seeds : [goal], true);
+      this.attackFields.set(goal, f);
+    }
     return f;
   }
 
@@ -1070,10 +1125,12 @@ export class Sim {
             this.assaultMove(i, u, t); dx = this._dir[0]; dz = this._dir[1];
           } else if (!u.hold) {
             this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1];
-            if (this._stuck && t !== UType.Cavalry) {
-              const br = this.breachToward(this.px[i], this.pz[i]);
-              if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; dx = bx / bl; dz = bz / bl; }
-              else { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
+            if (this._stuck) {
+              // The ordered ground is walled off from us. An attacker fights its way
+              // INWARD via the storming field (so it heads for an opening rather than
+              // balling up against a wall — cavalry included); a defender scales.
+              if (u.faction === Faction.Attacker) { this.assaultMove(i, u, t); dx = this._dir[0]; dz = this._dir[1]; }
+              else if (t !== UType.Cavalry) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; }
             }
           } else if (u.hold && u.faction === Faction.Defender && this.py[i] < 3) {
             // Ground companies manoeuvre as a body. In a castle, a battered company
@@ -1211,22 +1268,6 @@ export class Sim {
     }
     return best;
   }
-  // The nearest STANDING gate that leads inward toward the keep — the weak point a
-  // storming column makes for (and rams) rather than scattering to scale the curtain
-  // either side of it. Same inward test as breachToward.
-  private gateToward(x: number, z: number): number {
-    const dKeep = Math.hypot(this.keepX - x, this.keepZ - z);
-    let best = -1, bc = 1e9;
-    for (let s = 0; s < CASTLE.length; s++) {
-      const g = CASTLE[s]; if (g.dead || g.kind !== 'gate') continue;
-      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
-      const bk = Math.hypot(this.keepX - cx, this.keepZ - cz);
-      if (bk >= dKeep - 1) continue;
-      const cost = Math.hypot(cx - x, cz - z) + bk;
-      if (cost < bc) { bc = cost; best = s; }
-    }
-    return best;
-  }
   private nearestClimbWall(x: number, z: number): number {
     let best = -1, bd = 1e9;
     for (let s = 0; s < CASTLE.length; s++) {
@@ -1306,20 +1347,6 @@ export class Sim {
     }
     return this.nearestClimbWall(x, z);
   }
-  // The standing wall/gate section directly between the soldier and its anchor, or
-  // -1 if the straight route is clear (a tower/keep in the way returns -1 too — the
-  // flow field steers around those rather than trying to breach them).
-  private wallBlockingGoal(i: number): number {
-    const u = this.units[this.unit[i]];
-    const x = this.px[i], z = this.pz[i];
-    const ddx = u.ax - x, ddz = u.az - z, gl = Math.hypot(ddx, ddz) || 1, sx = ddx / gl, sz = ddz / gl;
-    for (let d = 1.5; d < Math.min(gl + 2, 90); d += 1.5) {
-      const qx = x + sx * d, qz = z + sz * d;
-      if (qx < WORLD.minX || qx > WORLD.maxX || qz < WORLD.minZ || qz > WORLD.maxZ) break;
-      if (blockedAt(qx, qz)) { const s = this.wallSegAtPoint(qx, qz); if (s >= 0) return s; }
-    }
-    return -1;
-  }
   // Drive an attacking soldier at its objective, breaking through the wall in the
   // way: march to the section's foot, batter it down, and scale it (infantry).
   private assaultMove(i: number, u: Unit, t: UType) {
@@ -1331,22 +1358,30 @@ export class Sim {
       // instead of milling on the spot where the wall stood.
       u.objKind = 'storm'; u.objSeg = -1; u.ax = this.keepX; u.az = this.keepZ; u.goal = cellOf(this.keepX, this.keepZ);
     }
-    // Storming: follow the flow field to the keep. It threads through whatever is
-    // already open, so the column FUNNELS through a breach/gate instead of the men
-    // either side of it stopping to batter the standing wall. Only when there's no
-    // way through at all (an intact ring) do we break a wall down or scale it.
-    this.formMove(u, i);
-    if (!this._stuck) return;
-    // Blocked by an intact ring. Make for the GATE that leads inward and ram it (the
-    // column converges on the weak point); only scale the curtain when no gate leads
-    // in, since infantry can't break stone.
-    const gate = this.gateToward(this.px[i], this.pz[i]);
-    if (gate >= 0) { this.engageWall(i, u, t, gate); return; }
-    const seg = this.wallBlockingGoal(i);
-    if (seg >= 0) { this.engageWall(i, u, t, seg); return; }
-    const br = this.breachToward(this.px[i], this.pz[i]); // no straight wall (towers/enclosed): seek an inward breach, else scale
-    if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
-    else if (t !== UType.Cavalry) this.useLadder(i);
+    // Storming: follow the STORMING flow field. It reaches every cell and points at
+    // the cheapest way in — an existing breach first, then a gate to ram, then a wall
+    // to scale — so the column always funnels through whatever opening is nearest and
+    // never balls up against a blank wall. Where the field steers us into a standing
+    // section, we engage it (ram a gate / scale a wall).
+    const f = this.attackField(cellOf(this.keepX, this.keepZ));
+    const ci = cellOf(this.px[i], this.pz[i]);
+    const fx = f[ci * 2], fz = f[ci * 2 + 1];
+    if (fx === 0 && fz === 0) { this.formMove(u, i); return; } // on the keep ground / enclosed pocket
+    const probe = this.CLIMB + 2;
+    if (blockedAt(this.px[i] + fx * probe, this.pz[i] + fz * probe)) {
+      const seg = this.wallSegAtPoint(this.px[i] + fx * probe, this.pz[i] + fz * probe);
+      if (seg >= 0) {
+        if (t === UType.Cavalry && CASTLE[seg].kind !== 'gate') {
+          // horse can't scale — peel off to an opening it can actually ride through
+          const op = this.breachToward(this.px[i], this.pz[i]);
+          if (op >= 0) { const g = CASTLE[op], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
+          else { this._dir[0] = 0; this._dir[1] = 0; } // wait for the foot to open a way, don't ride into the wall
+          return;
+        }
+        this.engageWall(i, u, t, seg); return;
+      }
+    }
+    this._dir[0] = fx; this._dir[1] = fz;
   }
   // March to a wall/gate section's foot, then force it: a GATE is rammed (we just
   // count the crew here; the fixed-rate ram damage is applied once per tick in
@@ -1482,7 +1517,7 @@ export class Sim {
     }
     if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
-    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1) * dmgMul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
+    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1.25) * dmgMul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
@@ -1519,7 +1554,7 @@ export class Sim {
     this.sfx.breaches++;
     seg.dead = true;
     rebuildBlocked();
-    this.fields.clear(); // passability changed — recompute flow fields on demand
+    this.fields.clear(); this.attackFields.clear(); // passability changed — recompute flow fields on demand
     // archers standing on this section fall with it
     for (let i = 0; i < this.n; i++) {
       if (!this.alive[i] || this.py[i] < 1) continue;
@@ -1541,7 +1576,7 @@ export class Sim {
   // annihilated crossing the killing ground before it can force an entry. (Melee is
   // unaffected — this only blunts arrows and bolts, and only for attackers on foot.)
   private applyRangedHit(j: number, dmg: number, bolt: boolean) {
-    if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5) dmg *= bolt ? 0.62 : 0.45;
+    if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5) dmg *= bolt ? 0.68 : 0.5;
     dmg *= this.defenseMul(j); // a shield wall turns arrows too
     this.hp[j] -= dmg;
     if (this.hp[j] <= 0) this.kill(j, this.units[this.unit[j]]);
