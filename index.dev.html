@@ -39,6 +39,9 @@
     /* full-screen black used to cross-fade the intro into the title */
     #fadeBlack { position: fixed; inset: 0; background: #000; opacity: 0; z-index: 60; pointer-events: none; transition: opacity 0.7s ease; }
     #fadeBlack.on { opacity: 1; pointer-events: auto; }
+    #flash { position: fixed; inset: 0; z-index: 58; pointer-events: none; opacity: 0; }
+    #flash.go { animation: flashFade 0.8s ease-out forwards; }
+    @keyframes flashFade { 0% { opacity: 0.66; } 100% { opacity: 0; } }
 
     /* ---- HUD (clean vertical stacks: nothing overlaps) ---- */
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
@@ -53,13 +56,14 @@
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
     }
     #perf.hidden { display: none; }
-    #pauseBtn, #retreatBtn { position: absolute; top: calc(var(--safe-top) + 10px); pointer-events: auto;
+    #pauseBtn, #retreatBtn, #speedBtn { position: absolute; top: calc(var(--safe-top) + 10px); pointer-events: auto;
       border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86); color: #ffe6a6;
       font: 700 13px 'Cinzel', Georgia, serif; padding: 8px 13px; border-radius: 11px; cursor: pointer; display: none; }
     #pauseBtn { right: 12px; }
-    #retreatBtn { right: 92px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
-    #pauseBtn.show, #retreatBtn.show { display: block; }
-    #pauseBtn.on { background: rgba(200,150,40,0.92); color: #241600; }
+    #speedBtn { right: 86px; min-width: 44px; text-align: center; }
+    #retreatBtn { right: 156px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
+    #pauseBtn.show, #retreatBtn.show, #speedBtn.show { display: block; }
+    #pauseBtn.on, #speedBtn.fast { background: rgba(200,150,40,0.92); color: #241600; }
 
     #topbar {
       position: absolute; top: calc(var(--safe-top) + 10px); left: 12px;
@@ -283,6 +287,7 @@
   <div id="app"></div>
   <div id="loading">RAISING THE BANNERS…</div>
   <div id="fadeBlack"></div>
+  <div id="flash"></div>
   <audio id="titleMusic" loop></audio>
   <script>
     // Startup diagnostics: if the game module fails to load or throws during
@@ -327,6 +332,7 @@
     <div id="title">CASTLE HASSLE</div>
     <div id="perf" title="Tap to hide">– fps</div>
     <button id="pauseBtn">Pause</button>
+    <button id="speedBtn">1x</button>
     <button id="retreatBtn">Retreat</button>
     <div id="topbar">
       <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>

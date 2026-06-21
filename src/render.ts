@@ -66,6 +66,10 @@ export class Renderer {
 
   camTarget = new THREE.Vector3(0, 0, 34);
   camDist = 165; camYaw = 0; camPitch = 0.92;
+  private shakeAmt = 0; // transient camera-shake magnitude (impacts, breaches)
+  shake(a: number) { this.shakeAmt = Math.min(2.2, this.shakeAmt + a); }
+  private focusT = 0; private focusX = 0; private focusZ = 0; // victory push-in toward the keep
+  focusKeep(x: number, z: number) { this.focusT = 1; this.focusX = x; this.focusZ = z; }
 
   constructor(private sim: Sim, canvasParent: HTMLElement) {
     // Mobile is fill-rate + draw-call bound. Render at device-pixel 1 (the HUD
@@ -555,6 +559,10 @@ export class Renderer {
     const cp = Math.cos(this.camPitch), sp = Math.sin(this.camPitch), cy = Math.cos(this.camYaw), sy = Math.sin(this.camYaw);
     this.camera.position.copy(this.camTarget).add(new THREE.Vector3(sy * cp, sp, cy * cp).multiplyScalar(this.camDist));
     this.camera.lookAt(this.camTarget);
+    if (this.shakeAmt > 0.002) { // jolt the camera on impacts (scaled to zoom so it reads at any distance)
+      const s = this.shakeAmt * this.camDist * 0.012;
+      this.camera.position.x += (Math.random() - 0.5) * s; this.camera.position.y += (Math.random() - 0.5) * s; this.camera.position.z += (Math.random() - 0.5) * s;
+    }
     const dir = new THREE.Vector3().subVectors(this.camera.position, this.camTarget);
     this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dir.x, dir.z));
   }
@@ -673,6 +681,12 @@ export class Renderer {
   render(dt = 0.016) {
     const sim = this.sim;
     this.time += dt;
+    this.shakeAmt *= Math.exp(-dt * 7); // camera-shake decay
+    if (this.focusT > 0) { // ease the camera in over the keep on victory
+      this.focusT = Math.max(0, this.focusT - dt / 1.6); const k = (1 - this.focusT) * 0.06;
+      this.camTarget.x += (this.focusX - this.camTarget.x) * k; this.camTarget.z += (this.focusZ + 14 - this.camTarget.z) * k;
+      this.camDist += (Math.max(60, this.camDist * 0.62) - this.camDist) * k;
+    }
     this.updateWalls(dt);
     this.updateLadders();
     this.updateRams(dt);

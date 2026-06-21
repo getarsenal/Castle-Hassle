@@ -23,8 +23,12 @@ let sim: Sim;
 let renderer: Renderer;
 let selected = -1;
 let paused = false;
+let gameSpeed = 1; // battle tempo: 1x / 2x / 3x
 const pauseBtn = document.getElementById('pauseBtn'), retreatBtn = document.getElementById('retreatBtn');
+const speedBtn = document.getElementById('speedBtn');
 pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
+function applySpeed() { if (!speedBtn) return; speedBtn.textContent = `${gameSpeed}x`; speedBtn.classList.toggle('fast', gameSpeed > 1); }
+speedBtn?.addEventListener('click', () => { gameSpeed = gameSpeed >= 3 ? 1 : gameSpeed + 1; applySpeed(); });
 retreatBtn?.addEventListener('click', () => { if (confirm('Sound the retreat? Your surviving troops withdraw; the castle is not taken.')) sim.retreat(); });
 let showRange = true;
 
@@ -99,7 +103,7 @@ function newGame() {
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
   renderer = new Renderer(sim, app);
   bindInput();
-  selected = -1; showRange = true; paused = false;
+  selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.textContent = 'Pause'; }
   banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
   battleAudio.stopAmbience(); // silence any prior battle's din behind the new setup
@@ -139,6 +143,7 @@ function updateTopbar() {
   // keep-capture meter: only meaningful once the assault is underway
   const inBattle = sim.phase === 'battle';
   pauseBtn?.classList.toggle('show', inBattle);
+  speedBtn?.classList.toggle('show', inBattle);
   retreatBtn?.classList.toggle('show', inBattle);
   const cp = sim.captureProgress;
   if (keepBar && keepFill && keepLabel) {
@@ -240,9 +245,21 @@ function showEnd() {
   if (inCampaign) saveProgress(progress);
   restartBtn.textContent = inCampaign ? (activeCastle && win ? 'March On' : 'Back to the Map') : 'Fight Again';
   document.getElementById('hud')?.classList.add('over'); // hide the live HUD behind the end card
-  banner.classList.add('show');
   battleAudio.stopAmbience();
-  if (win) { battleAudio.victory(); setTimeout(() => feedback.reward(), 550); } else battleAudio.defeat();
+  // a beat of cinema before the end card: a screen flash, a jolt, and on victory a
+  // slow push-in over the captured keep
+  const flash = document.getElementById('flash');
+  if (flash) {
+    flash.style.background = win ? 'radial-gradient(circle at 50% 45%, rgba(255,216,96,0.9), rgba(255,170,40,0.15) 70%)' : 'radial-gradient(circle at 50% 45%, rgba(150,24,24,0.8), rgba(30,0,0,0.15) 70%)';
+    flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
+  }
+  if (win) {
+    battleAudio.victory(); renderer.focusKeep(sim.keepX, sim.keepZ); renderer.shake(1.4);
+    setTimeout(() => { banner.classList.add('show'); feedback.reward(); }, 850);
+  } else {
+    battleAudio.defeat(); renderer.shake(0.8);
+    setTimeout(() => banner.classList.add('show'), 350);
+  }
 }
 
 // ---------------- Input ----------------
@@ -495,7 +512,12 @@ function frame(now: number) {
   // slow frame triggers extra steps that slow it further (a death spiral). Under
   // heavy load the battle just runs slightly slow-mo instead of locking up.
   const ts = performance.now();
-  acc += dt; if (!paused && acc >= SIM_DT) { sim.step(SIM_DT); acc = Math.min(acc - SIM_DT, SIM_DT); }
+  // Run the fixed-timestep sim at the chosen tempo: gameSpeed steps' worth of time
+  // accrues per frame, stepped up to a hard cap so a slow frame can't death-spiral.
+  acc += dt * gameSpeed;
+  let steps = 0;
+  while (!paused && acc >= SIM_DT && steps < 4) { sim.step(SIM_DT); acc -= SIM_DT; steps++; }
+  if (acc > SIM_DT) acc = SIM_DT; // drop any backlog beyond one step
   if (paused) acc = 0;
   simMs += performance.now() - ts;
 
@@ -504,6 +526,11 @@ function frame(now: number) {
   if (sim.phase === 'battle' && !paused) {
     const intensity = Math.min(1, (sf.melee + sf.arrows * 0.5 + sf.hits * 3) / 35);
     battleAudio.update(dt, sf, intensity);
+    // camera juice: a wall coming down jolts hard, boulder strikes shove, the
+    // trebuchet's own release gives a little kick
+    if (sf.breaches) renderer.shake(0.9 * sf.breaches);
+    if (sf.hits) renderer.shake(Math.min(0.6, sf.hits * 0.2));
+    if (sf.boulders) renderer.shake(Math.min(0.25, sf.boulders * 0.06));
   }
 
   perfAcc += dt; perfFrames++;
