@@ -586,8 +586,12 @@ function frame(now: number) {
   else if (a && rep && rep.objKind === 'breach' && rep.objSeg >= 0) { const [tx, tz] = sim.segCenter(rep.objSeg); renderer.setTargetMarker(tx, tz); }
   else if (a && rep && rep.objKind === 'storm') renderer.setTargetMarker(sim.keepX, sim.keepZ);
   else renderer.setTargetMarker(null, null);
-  if (a && a.alive > 0 && (a.type === UType.Archer || a.type === UType.Siege) && showRange && rep) renderer.setRangeFan(a.cx, a.cz, sim.unitRange(rep.id));
-  else renderer.setRangeFan(null, null);
+  // range overlay: one fan per company, so the reach reads from each group's
+  // position (deploy the front ranks forward and you can see them gain the wall)
+  if (a && a.alive > 0 && (a.type === UType.Archer || a.type === UType.Siege) && showRange && rep) {
+    const r = sim.unitRange(rep.id);
+    renderer.setRangeFans(sim.divCompanies(selected).filter(u => u.alive > 0).map(u => ({ x: u.cx, z: u.cz, r })));
+  } else renderer.setRangeFans(null);
 
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
   // title or splash) — no point drawing two WebGL scenes at once.

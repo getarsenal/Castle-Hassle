@@ -40,7 +40,9 @@ export class Renderer {
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
   private selRing: THREE.Mesh;
   private targetRing: THREE.Mesh;
-  private rangeFan: THREE.Group;
+  private rangeFans: THREE.Group[] = [];
+  private fanGeoDisc!: THREE.BufferGeometry; private fanGeoEdge!: THREE.BufferGeometry;
+  private fanMatDisc!: THREE.Material; private fanMatEdge!: THREE.Material;
   private preview: THREE.Mesh;
   private previewArrow: THREE.Mesh;
   private dummy = new THREE.Object3D();
@@ -125,11 +127,12 @@ export class Renderer {
     this.moveMarker.add(mr, arrow); this.moveMarker.visible = false; this.scene.add(this.moveMarker);
     this.corpse = new Uint8Array(sim.n);
 
-    // range fan (translucent disc + bright edge ring), radius set per unit
-    this.rangeFan = new THREE.Group();
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.07, depthWrite: false }));
-    const edge = new THREE.Mesh(new THREE.RingGeometry(0.975, 1.0, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.5, depthWrite: false }));
-    this.rangeFan.add(disc, edge); this.rangeFan.visible = false; this.scene.add(this.rangeFan);
+    // range fans — one per COMPANY (translucent disc + edge ring), so a spread-out
+    // arm shows the area its men actually cover, not a single circle from the centre
+    this.fanGeoDisc = new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2);
+    this.fanGeoEdge = new THREE.RingGeometry(0.97, 1.0, 48).rotateX(-Math.PI / 2);
+    this.fanMatDisc = new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.05, depthWrite: false });
+    this.fanMatEdge = new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.4, depthWrite: false });
 
     this.preview = new THREE.Mesh(new THREE.BoxGeometry(1, 0.25, 1), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.9 }));
     this.preview.visible = false; this.scene.add(this.preview);
@@ -546,7 +549,17 @@ export class Renderer {
   setTargetMarker(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.targetRing.visible = false; return; } this.targetRing.visible = true; this.targetRing.position.set(cx, 0.5, cz); }
   // flash a move-order marker at a ground point for ~1.6s
   pingMove(x: number, z: number) { if (!this.moveMarker) return; this.moveMarker.position.set(x, 0, z); this.moveMarker.visible = true; this.moveMarkerT = 1.6; }
-  setRangeFan(cx: number | null, cz: number | null, r = 0) { if (cx === null || cz === null) { this.rangeFan.visible = false; return; } this.rangeFan.visible = true; this.rangeFan.position.set(cx, 0.04, cz); this.rangeFan.scale.set(r, 1, r); }
+  // Show a translucent range fan per company; their overlap reveals the true reach
+  // of a deep formation (the forward edge = the front rank's position + range).
+  setRangeFans(list: { x: number; z: number; r: number }[] | null) {
+    const n = list ? list.length : 0;
+    for (let i = 0; i < n; i++) {
+      let g = this.rangeFans[i];
+      if (!g) { g = new THREE.Group(); g.add(new THREE.Mesh(this.fanGeoDisc, this.fanMatDisc), new THREE.Mesh(this.fanGeoEdge, this.fanMatEdge)); this.scene.add(g); this.rangeFans[i] = g; }
+      const it = list![i]; g.visible = true; g.position.set(it.x, 0.04, it.z); g.scale.set(it.r, 1, it.r);
+    }
+    for (let i = n; i < this.rangeFans.length; i++) this.rangeFans[i].visible = false;
+  }
 
   setPreview(p0: THREE.Vector3 | null, p1?: THREE.Vector3, fx = 0, fz = 0) {
     if (!p0 || !p1) { this.preview.visible = false; this.previewArrow.visible = false; return; }
