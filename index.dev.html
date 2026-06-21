@@ -47,38 +47,42 @@
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
     #title { display: none; }
 
-    /* perf readout (fps / ms / unit count) — for device testing; tap to hide */
-    #perf {
-      position: absolute; top: calc(var(--safe-top) + 48px); left: 12px;
-      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* ---- Top HUD: ONE flex bar so left and right groups can never overlap ----
+       Everything that used to be hand-positioned now lives in a space-between row.
+       Add new controls to #topLeft or #topRight and the layout stays collision-free. */
+    #topHud { position: absolute; top: var(--safe-top); left: 0; right: 0;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 10px; padding: 10px 12px; box-sizing: border-box; pointer-events: none; z-index: 5; }
+    #topLeft { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+    #topLeft .topRow { display: flex; gap: 8px; align-items: center; }
+    #topRight { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+
+    #perf { font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
       color: #b6f3c0; background: rgba(12,18,28,0.55); border-radius: 6px;
       padding: 3px 6px; pointer-events: auto; letter-spacing: 0.2px;
-      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
-    }
+      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
     #perf.hidden { display: none; }
-    #pauseBtn, #retreatBtn, #speedBtn { position: absolute; top: calc(var(--safe-top) + 10px); pointer-events: auto;
+    #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto;
       border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86); color: #ffe6a6;
       font: 700 13px 'Cinzel', Georgia, serif; padding: 8px 13px; border-radius: 11px; cursor: pointer; display: none; }
-    #pauseBtn { right: 12px; }
-    #speedBtn { right: 86px; min-width: 44px; text-align: center; }
-    #retreatBtn { right: 156px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
-    #pauseBtn.show, #retreatBtn.show, #speedBtn.show, #helpBtn.show { display: block; }
+    #speedBtn { min-width: 44px; text-align: center; }
+    #retreatBtn { border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
+    #pauseBtn.show, #retreatBtn.show, #speedBtn.show { display: block; }
     #pauseBtn.on, #speedBtn.fast { background: rgba(200,150,40,0.92); color: #241600; }
-    #helpBtn { position: absolute; top: calc(var(--safe-top) + 52px); left: 12px; pointer-events: auto;
-      border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86); color: #ffe6a6;
-      font: 700 14px 'Cinzel', Georgia, serif; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: none; padding: 0; }
+    #helpBtn { pointer-events: auto; border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86);
+      color: #ffe6a6; font: 700 14px 'Cinzel', Georgia, serif; width: 34px; height: 34px;
+      border-radius: 50%; cursor: pointer; display: none; padding: 0; flex-shrink: 0; }
+    #helpBtn.show { display: block; }
 
-    #topbar {
-      position: absolute; top: calc(var(--safe-top) + 10px); left: 12px;
-      display: flex; gap: 8px; align-items: center;
+    #topbar { display: flex; gap: 8px; align-items: center;
       background: rgba(20,28,42,0.82); border: 1px solid rgba(255,255,255,0.12);
       border-radius: 14px; padding: 7px 12px; pointer-events: auto;
-      font-size: 12.5px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap;
-    }
+      font-size: 12.5px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap; }
     #topbar .stat { display: flex; gap: 6px; align-items: center; }
     #topbar .dot { width: 10px; height: 10px; border-radius: 50%; }
+    #topbar .vs { opacity: .4; }
     .dot.att { background: #e8513a; } .dot.def { background: #3d7be0; }
-
+    /* legacy anchors no longer used for layout (kept harmless) */
     /* Begin button: directly under the topbar, deploy only */
     #startbar { position: absolute; top: calc(var(--safe-top) + 54px); left: 50%; transform: translateX(-50%); pointer-events: auto; }
     #keepBar { position: absolute; top: calc(var(--safe-top) + 52px); left: 50%; transform: translateX(-50%);
@@ -333,16 +337,23 @@
   </script>
   <div id="hud">
     <div id="title">CASTLE HASSLE</div>
-    <div id="perf" title="Tap to hide">– fps</div>
-    <button id="pauseBtn">Pause</button>
-    <button id="speedBtn">1x</button>
-    <button id="retreatBtn">Retreat</button>
-    <button id="helpBtn" title="How to play">?</button>
-    <div id="topbar">
-      <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>
-      <span style="opacity:.4">vs</span>
-      <span class="stat"><span class="dot def"></span><span id="defCount">0</span></span>
-      <span style="opacity:.4; margin-left:6px;" id="phase">DEPLOY</span>
+    <div id="topHud">
+      <div id="topLeft">
+        <div class="topRow">
+          <div id="topbar">
+            <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>
+            <span class="vs">vs</span>
+            <span class="stat"><span class="dot def"></span><span id="defCount">0</span></span>
+          </div>
+          <button id="helpBtn" title="How to play">?</button>
+        </div>
+        <div id="perf" title="Tap to hide">– fps</div>
+      </div>
+      <div id="topRight">
+        <button id="retreatBtn">Retreat</button>
+        <button id="speedBtn">1x</button>
+        <button id="pauseBtn">Pause</button>
+      </div>
     </div>
     <div id="startbar"><button id="startbtn">Begin Battle</button></div>
     <div id="keepBar"><div id="keepLabel">HOLD THE KEEP</div><div id="keepTrack"><div id="keepFill"></div></div></div>

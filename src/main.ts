@@ -36,7 +36,7 @@ retreatBtn?.addEventListener('click', () => { if (confirm('Sound the retreat? Yo
 let showRange = true;
 
 // ---------------- HUD refs ----------------
-const cardsEl = $('cards'), attCountEl = $('attCount'), defCountEl = $('defCount'), phaseEl = $('phase');
+const cardsEl = $('cards'), attCountEl = $('attCount'), defCountEl = $('defCount');
 const hintEl = $('hint'), startbar = $('startbar'), startBtn = $('startbtn'), toolsEl = $('tools');
 const banner = $('banner'), bannerTitle = $('bannerTitle'), bannerText = $('bannerText'), restartBtn = $('restartbtn');
 
@@ -142,7 +142,6 @@ const keepBar = document.getElementById('keepBar'), keepFill = document.getEleme
 function updateTopbar() {
   attCountEl.textContent = String(sim.countAlive(Faction.Attacker));
   defCountEl.textContent = String(sim.countAlive(Faction.Defender));
-  phaseEl.textContent = sim.phase === 'deploy' ? 'DEPLOY' : sim.phase === 'battle' ? 'BATTLE' : 'OVER';
   // keep-capture meter: only meaningful once the assault is underway
   const inBattle = sim.phase === 'battle';
   pauseBtn?.classList.toggle('show', inBattle);
@@ -162,7 +161,7 @@ function updateHint() {
   else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
   else if (a) hintEl.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
   else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
-  else hintEl.textContent = 'Select an arm and tap Assault to commit it — engines batter the walls on their own.';
+  else hintEl.textContent = 'Select an arm, then tap the keep to storm or a gate to break in — engines batter the walls on their own.';
 }
 // keep the cavalry charge button's label/state live (cooldown ticks every frame)
 function tickChargeBtn() {
