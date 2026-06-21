@@ -8,6 +8,31 @@ const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
 const SPRITE_W = [2.0, 1.8, 1.8, 3.0];
 const SPRITE_H = [2.7, 2.4, 2.4, 2.8];
 const SHADOW_R = [0.95, 0.8, 0.8, 1.35];
+// GPU billboarding: the vertex shader turns a per-instance position (+scale/phase/
+// state/yaw) into a camera-facing, bobbing sprite — so the CPU only writes 3 floats
+// of position per soldier each frame instead of composing a 4x4 matrix. iState:
+// 0 = standing, 1 = marching (bob+roll), 2 = corpse (laid flat with a random yaw).
+const SOLDIER_VERT = `
+  float w = sin(uTime + iPhase);
+  vec3 wp;
+  if (iState > 1.5) {
+    float sc = iScale * 0.95;
+    float cyaw = cos(iYaw), syaw = sin(iYaw);
+    vec2 q = position.xy * sc;
+    wp = vec3(iPos.x + q.x * cyaw - q.y * syaw, 0.13, iPos.z + q.x * syaw + q.y * cyaw);
+  } else {
+    float moving = step(0.5, iState);
+    float stretch = 1.0 + moving * abs(w) * 0.06;
+    float bob = moving * w * 0.17 * iScale;
+    float roll = moving * w * 0.13;
+    float cr = cos(roll), sr = sin(roll);
+    vec2 q = position.xy * iScale;
+    vec2 qr = vec2(q.x * cr - q.y * sr, q.x * sr + q.y * cr);
+    qr.y *= stretch;
+    float centerY = iPos.y + uHalfH * iScale * stretch + bob;
+    wp = vec3(iPos.x + uRight.x * qr.x, centerY + qr.y, iPos.z + uRight.z * qr.x);
+  }
+  vec3 transformed = wp;`;
 
 const COL_ATTACK = new THREE.Color('#e0552f');
 const COL_DEFEND = new THREE.Color('#3f86d8');
@@ -24,6 +49,13 @@ export class Renderer {
   camera: THREE.PerspectiveCamera;
   gl: THREE.WebGLRenderer;
   private meshes: THREE.InstancedMesh[] = [];
+  // per-type instance attributes driven each frame (position) and on-change (state/yaw)
+  private iPosA: THREE.InstancedBufferAttribute[] = [];
+  private iStateA: THREE.InstancedBufferAttribute[] = [];
+  private iYawA: THREE.InstancedBufferAttribute[] = [];
+  private posDirty = [false, false, false, false];
+  private uTime = { value: 0 };                       // shared shader clock (= time * 9)
+  private uRight = { value: new THREE.Vector3(1, 0, 0) }; // billboard right vector (camera yaw)
   private shadowMesh!: THREE.InstancedMesh;
   private shadowsOn = true; // per-soldier ground blobs; off for very large musters
   private projMesh!: THREE.InstancedMesh;
@@ -50,12 +82,7 @@ export class Renderer {
   private preview: THREE.Mesh;
   private previewArrow: THREE.Mesh;
   private dummy = new THREE.Object3D();
-  private billboard = new THREE.Quaternion();
-  private _roll = new THREE.Quaternion();
-  private _zAxis = new THREE.Vector3(0, 0, 1);
-  private _yAxis = new THREE.Vector3(0, 1, 0);
-  private _qFlat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2); // lay a sprite on the ground
-  private _qYaw = new THREE.Quaternion();
+  private billboard = new THREE.Quaternion(); // dust + projectiles still billboard on the CPU
   private _col = new THREE.Color();
   private corpse?: Uint8Array;                 // which units have been laid down as bodies
   private colorDirty = [false, false, false, false];
@@ -432,28 +459,47 @@ export class Renderer {
   }
 
   private buildSoldiers() {
-    const col = new THREE.Color();
+    const col = new THREE.Color(), idn = new THREE.Matrix4();
     for (let t = 0; t < 4; t++) {
-      const total = this.sim.typeCount[t];
+      const total = Math.max(1, this.sim.typeCount[t]);
       const tex = makeSoldierTexture(KIND[t]);
-      // Soldiers are drawn as OPAQUE alpha-cutout sprites, not blended transparents.
-      // The alphaTest already hard-cuts the silhouette, so the look is the same — but
-      // opaque sprites write depth and occlude each other instead of stacking up as
-      // blended overdraw. That overdraw is what tanks the framerate when thousands
-      // pile at a fallen gate. FrontSide too: yaw-billboards and face-up corpses never
-      // show a back face. (No `transparent`, so per-frame depth-sorting of thousands
-      // of instances is gone as well.)
+      // Opaque alpha-cutout (depth-writing, no blend overdraw), FrontSide (the
+      // yaw-billboard and face-up corpses never show a back face), and the transform
+      // itself runs on the GPU: a custom vertex stage (injected via onBeforeCompile)
+      // billboards + bobs each sprite from a per-instance position, so the CPU never
+      // composes a matrix. instanceMatrix is left identity and ignored by the shader.
       const mat = new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide, toneMapped: false });
-      const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(SPRITE_W[t], SPRITE_H[t]), mat, Math.max(1, total));
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.frustumCulled = false;
+      const halfH = SPRITE_H[t] * 0.5;
+      mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = this.uTime; shader.uniforms.uRight = this.uRight; shader.uniforms.uHalfH = { value: halfH };
+        shader.vertexShader = 'attribute vec3 iPos;\nattribute float iScale;\nattribute float iPhase;\nattribute float iState;\nattribute float iYaw;\n'
+          + 'uniform float uTime;\nuniform vec3 uRight;\nuniform float uHalfH;\n'
+          + shader.vertexShader.replace('#include <begin_vertex>', SOLDIER_VERT);
+      };
+      mat.customProgramCacheKey = () => 'castleSoldier';
+      const geo = new THREE.PlaneGeometry(SPRITE_W[t], SPRITE_H[t]);
+      const mesh = new THREE.InstancedMesh(geo, mat, total);
+      mesh.frustumCulled = false;
+      for (let k = 0; k < total; k++) mesh.setMatrixAt(k, idn); // identity -> shader supplies the transform
+      mesh.instanceMatrix.needsUpdate = true;
+      const iPos = new THREE.InstancedBufferAttribute(new Float32Array(total * 3), 3).setUsage(THREE.DynamicDrawUsage);
+      const iScale = new THREE.InstancedBufferAttribute(new Float32Array(total), 1);
+      const iPhase = new THREE.InstancedBufferAttribute(new Float32Array(total), 1);
+      const iState = new THREE.InstancedBufferAttribute(new Float32Array(total), 1).setUsage(THREE.DynamicDrawUsage);
+      const iYaw = new THREE.InstancedBufferAttribute(new Float32Array(total), 1).setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('iPos', iPos); geo.setAttribute('iScale', iScale); geo.setAttribute('iPhase', iPhase);
+      geo.setAttribute('iState', iState); geo.setAttribute('iYaw', iYaw);
       for (let i = 0; i < this.sim.n; i++) {
         if (this.sim.typ[i] !== t) continue;
+        const slot = this.sim.slot[i];
         const bse = this.sim.fac[i] === Faction.Attacker ? COL_ATTACK : COL_DEFEND;
         const br = 0.82 + jit(i, 2) * 0.32;
         col.setRGB(bse.r * br * (0.95 + jit(i, 3) * 0.1), bse.g * br, bse.b * br * (0.95 + jit(i, 4) * 0.1));
-        mesh.setColorAt(this.sim.slot[i], col);
+        mesh.setColorAt(slot, col);
+        iScale.array[slot] = this.sscale[i]; iPhase.array[slot] = i * 1.7;
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      this.iPosA[t] = iPos; this.iStateA[t] = iState; this.iYawA[t] = iYaw;
       this.meshes[t] = mesh; this.scene.add(mesh);
     }
   }
@@ -668,7 +714,9 @@ export class Renderer {
       this.camera.position.x += (Math.random() - 0.5) * s; this.camera.position.y += (Math.random() - 0.5) * s; this.camera.position.z += (Math.random() - 0.5) * s;
     }
     const dir = new THREE.Vector3().subVectors(this.camera.position, this.camTarget);
-    this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dir.x, dir.z));
+    const ang = Math.atan2(dir.x, dir.z);
+    this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ang); // dust/projectiles still use the quaternion
+    this.uRight.value.set(Math.cos(ang), 0, -Math.sin(ang));           // soldier shader billboard basis
   }
 
   // Scaling ladders: one mesh per sim ladder, swinging up from the foot (raise).
@@ -800,48 +848,37 @@ export class Renderer {
     this.updateMotes(dt);
     this.updateEffects(dt);
 
+    this.uTime.value = this.time * 9; // advance the shader bob clock
     const shOn = this.shadowsOn;
     const sa = this.shadowMesh.instanceMatrix.array as Float32Array;
-    const tm = this.time * 9;
+    const posD = this.posDirty;
     let anyLive = false;
+    // The CPU now writes only per-instance position (3 floats) + a state byte; the
+    // billboard, bob, roll and corpse-flatten all happen on the GPU (SOLDIER_VERT).
     for (let i = 0; i < sim.n; i++) {
-      const t = sim.typ[i]; const mesh = this.meshes[t]; const o = i * 16;
-      if (!mesh) { sa[o + 13] = -1000; continue; } // siege -> 3D model, no sprite
-      const slot = sim.slot[i]; const s = this.sscale[i] || 1;
+      const t = sim.typ[i];
+      if (t >= 4) { if (shOn) sa[i * 16 + 13] = -1000; continue; } // siege -> 3D model, no sprite
+      const slot = sim.slot[i], b3 = slot * 3;
+      const ip = this.iPosA[t].array as Float32Array, ist = this.iStateA[t].array as Float32Array;
       if (!sim.alive[i]) {
-        if (this.corpse![i]) continue;     // already a body — its matrix is static
-        this.corpse![i] = 1; anyLive = true; // one upload to place the body
-        this._col.setRGB(0.17, 0.16, 0.15); mesh.setColorAt(slot, this._col); this.colorDirty[t] = true; // grey out
-        this._qYaw.setFromAxisAngle(this._yAxis, jit(i, 6) * 6.283);
-        this.dummy.position.set(sim.px[i], 0.13, sim.pz[i]);            // lie flat where it fell
-        this.dummy.quaternion.multiplyQuaternions(this._qYaw, this._qFlat);
-        this.dummy.scale.set(s * 0.95, s * 0.95, s * 0.95); this.dummy.updateMatrix();
-        mesh.setMatrixAt(slot, this.dummy.matrix); sa[o + 13] = -1000; continue;
+        if (this.corpse![i]) continue;     // already a body — its instance is frozen
+        this.corpse![i] = 1; anyLive = true;
+        this._col.setRGB(0.17, 0.16, 0.15); this.meshes[t].setColorAt(slot, this._col); this.colorDirty[t] = true; // grey out
+        (this.iYawA[t].array as Float32Array)[slot] = jit(i, 6) * 6.283;
+        ip[b3] = sim.px[i]; ip[b3 + 1] = sim.py[i]; ip[b3 + 2] = sim.pz[i];
+        ist[slot] = 2; posD[t] = true; this.iYawA[t].needsUpdate = true;
+        if (shOn) sa[i * 16 + 13] = -1000; continue;
       }
-      // marching bob + side sway so soldiers feel alive (not flat & static).
-      // Idle soldiers (the many holding defenders) take a cheaper path: just the
-      // billboard, no per-unit roll quaternion or bounce maths.
-      if (Math.abs(sim.vx[i]) + Math.abs(sim.vz[i]) > 0.5) {
-        const w = Math.sin(tm + i * 1.7);
-        const yb = w * 0.17 * s, h2 = (1 + Math.abs(w) * 0.06); // bounce + slight stretch
-        this._roll.setFromAxisAngle(this._zAxis, w * 0.13);
-        this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s * h2) / 2 + yb, sim.pz[i]);
-        this.dummy.quaternion.copy(this.billboard).multiply(this._roll); this.dummy.scale.set(s, s * h2, s);
-      } else {
-        this.dummy.position.set(sim.px[i], sim.py[i] + (SPRITE_H[t] * s) / 2, sim.pz[i]);
-        this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(s, s, s);
-      }
-      this.dummy.updateMatrix(); mesh.setMatrixAt(slot, this.dummy.matrix);
-      // shadow: only the translation changes (scale/rotation baked at build)
-      if (shOn) { sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i]; }
+      ip[b3] = sim.px[i]; ip[b3 + 1] = sim.py[i]; ip[b3 + 2] = sim.pz[i];
+      ist[slot] = (Math.abs(sim.vx[i]) + Math.abs(sim.vz[i]) > 0.5) ? 1 : 0;
+      posD[t] = true;
+      // shadow blob: translation only (off for very large musters)
+      if (shOn) { const o = i * 16; sa[o + 12] = sim.px[i]; sa[o + 13] = sim.py[i] < 1 ? 0.03 : sim.py[i] - 0.05; sa[o + 14] = sim.pz[i]; }
       anyLive = true;
     }
-    // Only re-upload the instance buffers when something actually changed (live
-    // soldiers move, or a body was just placed). Dead-unit work is skipped above,
-    // so cost falls as the field fills with corpses.
     if (anyLive) {
       for (let t = 0; t < 4; t++) {
-        this.meshes[t].instanceMatrix.needsUpdate = true;
+        if (posD[t]) { this.iPosA[t].needsUpdate = true; this.iStateA[t].needsUpdate = true; posD[t] = false; }
         if (this.colorDirty[t] && this.meshes[t].instanceColor) { this.meshes[t].instanceColor!.needsUpdate = true; this.colorDirty[t] = false; }
       }
       if (shOn) this.shadowMesh.instanceMatrix.needsUpdate = true;
