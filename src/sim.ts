@@ -47,12 +47,14 @@ const ARTY_SPLASH = 2.6;       // anti-personnel blast radius (very little spill
 const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
 const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
-// Per-soldier damage when a company rams a GATE it's pressed against. Deliberately
-// slow: a gate ~8m wide takes ~6-10 men on the ram, so a company beats one in
-// ~40s — long enough that ramming under unsuppressed wall-fire is costly, so you
-// want archers/engines silencing the gatehouse first. (Stone walls can't be
-// battered by infantry at all — those take the engines, or a ladder.)
-const GATE_RAM = 0.2;
+// A gate is forced by a single RAM, not by sheer numbers: once a crew (a handful
+// of men) is on it, it takes a FIXED amount of damage per second regardless of how
+// many troops pile on — so 250 men don't smash it in three seconds. Tuned so a
+// gate falls in ~20s (palisade) to ~40s (stone), long enough that ramming under
+// un-silenced wall-fire is costly. Stone WALLS can't be battered at all — engines
+// or ladders only.
+const RAM_DPS = 33;          // gate hit-points lost per second while a crew rams
+const RAM_CREW = 4;          // men that must be on the gate for the ram to bite
 const OBST_DIR: [number, number][] = Array.from({ length: 8 }, (_, a) => [Math.cos(a * Math.PI / 4), Math.sin(a * Math.PI / 4)]);
 
 export function maxHp(t: UType) { return HP[t]; }
@@ -62,7 +64,7 @@ export function maxHp(t: UType) { return HP[t]; }
 // and defender deployment. Bigger than before, varied per seed, with a town of
 // buildings inside and (on larger ones) an inner CITADEL that must be taken. ----
 export type SegKind = 'wall' | 'gate' | 'tower' | 'keep' | 'building';
-export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; }
+export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; ramCrew?: number; }
 export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; }
 export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
 // A scaling ladder raised against a wall section. Attackers queue at the foot
@@ -1102,7 +1104,7 @@ export class Sim {
       this.pz[i] = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, nz));
     }
 
-    if (!deploy) { this.stepBallistae(dt); this.stepProjectiles(dt); this.checkVictory(); }
+    if (!deploy) { this.stepRams(dt); this.stepBallistae(dt); this.stepProjectiles(dt); this.checkVictory(); }
   }
 
   // Archers only fire at enemies inside their ordered focus area (if one is set),
@@ -1309,34 +1311,34 @@ export class Sim {
     if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
     else if (t !== UType.Cavalry) this.useLadder(i);
   }
-  // March to a wall/gate section's foot, then force it: a GATE is battered down
-  // (a ram); a stone WALL is only ever SCALED (you don't smash a curtain wall with
-  // swords — that's what the engines are for).
+  // March to a wall/gate section's foot, then force it: a GATE is rammed (we just
+  // count the crew here; the fixed-rate ram damage is applied once per tick in
+  // step), while a stone WALL is only ever SCALED (you don't smash a curtain wall
+  // with swords — that's what the engines are for).
   private engageWall(i: number, u: Unit, t: UType, seg: number) {
     const g = CASTLE[seg];
     const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
     const dxw = cpx - this.px[i], dzw = cpz - this.pz[i], dw = Math.hypot(dxw, dzw);
     if (dw <= this.CLIMB + 1.5) {
-      if (g.kind === 'gate') {                 // ram the gate, pressing against it
-        this.batterSeg(i, seg, t, u);
+      if (g.kind === 'gate') {                 // join the ram crew, pressing against the gate
+        if (u.faction === Faction.Attacker) g.ramCrew = (g.ramCrew || 0) + 1;
         const l = dw || 1; this._dir[0] = dxw / l * 0.18; this._dir[1] = dzw / l * 0.18;
       } else if (t === UType.Cavalry) {        // horse can't scale — wait at the foot for a gap
         const l = dw || 1; this._dir[0] = dxw / l * 0.25; this._dir[1] = dzw / l * 0.25;
       } else this.useLadder(i, seg);           // scale the wall (never battered)
     } else { const l = dw || 1; this._dir[0] = dxw / l; this._dir[1] = dzw / l; } // march to its foot
   }
-  // A column pressed against a GATE batters it down (a ram). Only gates give way to
-  // infantry; stone walls take engines. Records the ram so the renderer can show it.
-  private batterSeg(i: number, seg: number, t: UType, u: Unit) {
-    if (this.cd[i] > 0) return;
-    const g = CASTLE[seg]; if (!g || g.dead || g.kind !== 'gate') return;
-    const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
-    if ((cpx - this.px[i]) ** 2 + (cpz - this.pz[i]) ** 2 > 2.4 * 2.4) return; // must be in contact
-    const mul = u.faction === Faction.Attacker ? this.atk.melee : 1;
-    g.hp -= MELEE[t] * GATE_RAM * mul;
-    g.ramT = this._frame;
-    this.cd[i] = ATKCD[t]; this.sfx.melee++;
-    if (g.hp <= 0) this.breach(seg);
+  // Fixed-rate gate ram: once a crew is on a gate it loses HP at RAM_DPS, no faster
+  // for a mob than for a company. Run once per tick after movement has counted crews.
+  private stepRams(dt: number) {
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s]; if (g.kind !== 'gate') continue;
+      if (!g.dead && (g.ramCrew || 0) >= RAM_CREW) {
+        g.hp -= RAM_DPS * (0.7 + 0.3 * this.atk.melee) * dt; g.ramT = this._frame; this.sfx.melee++;
+        if (g.hp <= 0) this.breach(s);
+      }
+      g.ramCrew = 0; // reset for next tick
+    }
   }
   // Gates currently under the ram (struck within the last ~0.4s), with a point just
   // OUTSIDE the gate and the heading to face it — so the renderer can show a ram.

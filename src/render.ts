@@ -217,26 +217,25 @@ export class Renderer {
         // every part of the section merges into ONE mesh (origin at ground)
         const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
         const isStone = b.kind === 'wall';
-        if (b.kind === 'wall') {
-          const horiz = w > d, len = horiz ? w : d;
-          const outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
-          parts.push(this.boxG(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d, 0, b.h + 0.25, 0)); // walkway
-          const n = Math.floor(len / 1.7);
-          for (let k = 0; k <= n; k++) {
-            if (k % 2) continue;
-            if (horiz) parts.push(this.boxG(1.0, 1.7, 0.7, b.x0 + 0.85 + k * 1.7 - cx, b.h + 0.85, outer * (d / 2 - 0.35)));
-            else parts.push(this.boxG(0.7, 1.7, 1.0, outer * (w / 2 - 0.35), b.h + 0.85, b.z0 + 0.85 + k * 1.7 - cz));
-          }
-          parts.push(this.boxG(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d, horiz ? 0 : -outer * (w / 2 - 0.25), b.h + 0.35, horiz ? -outer * (d / 2 - 0.25) : 0)); // inner rail
-        } else {
-          for (const sx of [-1, 1]) parts.push(this.boxG(w / 2 - 0.3, b.h - 1.2, 0.6, sx * w / 4, (b.h - 1.2) / 2, d / 2)); // doors
-          parts.push(this.boxG(w + 2, 1.6, d + 1, 0, b.h + 0.4, 0)); // arch
+        const horiz = w > d, len = horiz ? w : d;
+        const outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
+        // both a curtain wall AND a gatehouse get a crenellated parapet on top
+        parts.push(this.boxG(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d, 0, b.h + 0.25, 0)); // walkway
+        const n = Math.floor(len / 1.7);
+        for (let k = 0; k <= n; k++) {
+          if (k % 2) continue;
+          if (horiz) parts.push(this.boxG(1.0, 1.7, 0.7, b.x0 + 0.85 + k * 1.7 - cx, b.h + 0.85, outer * (d / 2 - 0.35)));
+          else parts.push(this.boxG(0.7, 1.7, 1.0, outer * (w / 2 - 0.35), b.h + 0.85, b.z0 + 0.85 + k * 1.7 - cz));
         }
+        if (b.kind === 'wall') parts.push(this.boxG(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d, horiz ? 0 : -outer * (w / 2 - 0.25), b.h + 0.35, horiz ? -outer * (d / 2 - 0.25) : 0)); // inner rail
         const wood = LAYOUT.palisade; // a town's walls are timber, not dressed stone
-        const mat = (isStone && !wood ? this.stone('#e6d6af') : isStone ? this.stone('#8a5a31') : timber.clone());
-        if (isStone && !wood) mat.map = this.texStone;
+        // the gatehouse mass is dressed stone (or a timber frame in a palisade town);
+        // the actual planked gate is added as detailed doors below.
+        const mat = !wood ? this.stone(b.kind === 'gate' ? '#cdb892' : '#e6d6af') : this.stone(b.kind === 'gate' ? '#6e4a28' : '#8a5a31');
+        if (!wood) mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); this.scene.add(box);
+        if (b.kind === 'gate') this.addGateDoors(extras, cx, cz, w, d, b.h, horiz, outer, wood);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
         const round = LAYOUT.round;
@@ -514,6 +513,31 @@ export class Renderer {
     }
   }
 
+  // A real-looking gate: two heavy planked oak leaves with iron banding and a stud
+  // line down the seam, under a stone (or timber) arch — added as extras so they
+  // hide when the gate is breached. Built facing local +Z, then turned to the wall.
+  private addGateDoors(extras: THREE.Object3D[], cx: number, cz: number, w: number, d: number, h: number, horiz: boolean, outer: number, palisade: boolean) {
+    const oakA = this.stone('#46300f'), oakB = this.stone('#3a2710'), ironMat = this.stone('#2c2d33');
+    const archMat = palisade ? this.stone('#6e4a28') : (() => { const m = this.stone('#d8c39a'); m.map = this.texStone; return m; })();
+    const g = new THREE.Group();
+    const open = Math.max(2.5, (horiz ? w : d) - 0.6); // door opening across the wall
+    const face = (horiz ? d : w) / 2;                  // half-depth → the outer face
+    const doorH = Math.max(3, h - 1.3), th = 0.55, fz = face + th / 2 - 0.05;
+    for (const side of [-1, 1]) {                       // two leaves with a centre seam
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(open / 2 - 0.12, doorH, th), side < 0 ? oakA : oakB);
+      leaf.position.set(side * open / 4, doorH / 2, fz); g.add(leaf);
+    }
+    for (const f of [0.16, 0.5, 0.84]) {                // horizontal iron bands
+      const band = new THREE.Mesh(new THREE.BoxGeometry(open, 0.32, th + 0.14), ironMat);
+      band.position.set(0, doorH * f, fz); g.add(band);
+    }
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.22, doorH, th + 0.12), ironMat); seam.position.set(0, doorH / 2, fz); g.add(seam);
+    const arch = new THREE.Mesh(new THREE.BoxGeometry(open + 1.0, 1.0, (horiz ? d : w) + 0.4), archMat); arch.position.set(0, doorH + 0.5, 0); g.add(arch);
+    g.position.set(cx, 0, cz);
+    g.rotation.y = horiz ? (outer > 0 ? 0 : Math.PI) : (outer > 0 ? Math.PI / 2 : -Math.PI / 2);
+    this.scene.add(g); extras.push(g);
+  }
+
   setSelection(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.selRing.visible = false; return; } this.selRing.visible = true; this.selRing.position.set(cx, 0.06, cz); }
   setTargetMarker(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.targetRing.visible = false; return; } this.targetRing.visible = true; this.targetRing.position.set(cx, 0.5, cz); }
   // flash a move-order marker at a ground point for ~1.6s
@@ -590,6 +614,7 @@ export class Renderer {
       if (!m) { m = this.makeRam(); this.scene.add(m.group); this.ramModels[r] = m; }
       const info = rams[r];
       m.group.visible = true;
+      m.group.scale.setScalar(1.3);             // a touch oversized so it reads over the crowd
       m.group.position.set(info.x, 0, info.z);
       m.group.rotation.y = info.ang;            // local +Z points at the gate
       m.beam.position.z = 0.6 + Math.max(0, Math.sin(this.ramPhase + r)) * 1.1; // forward lunges
