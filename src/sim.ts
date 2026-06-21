@@ -1156,8 +1156,17 @@ export class Sim {
       }
 
       // ---- separation from same-faction neighbours ----
+      // The separation radius (~1.7m) is far smaller than a hash cell (6m), so only
+      // the buckets whose edge the soldier actually sits near can hold a neighbour in
+      // range. Scan just those (usually 1, at most 4) instead of the full 3x3 — the
+      // result is identical, at a fraction of the work where crowds pile up.
       let sx = 0, sz = 0;
-      for (let rr = hr - 1; rr <= hr + 1; rr++) for (let cc = hc - 1; cc <= hc + 1; cc++) {
+      const rad = RADIUS[t] * 1.7, rad2 = rad * rad;
+      const lx = (this.px[i] - WORLD.minX) - hc * this.hCell;
+      const lz = (this.pz[i] - WORLD.minZ) - hr * this.hCell;
+      const cLo = lx < rad ? hc - 1 : hc, cHi = lx > this.hCell - rad ? hc + 1 : hc;
+      const rLo = lz < rad ? hr - 1 : hr, rHi = lz > this.hCell - rad ? hr + 1 : hr;
+      for (let rr = rLo; rr <= rHi; rr++) for (let cc = cLo; cc <= cHi; cc++) {
         if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
         const b = this.buckets[rr * this.hCols + cc];
         // cap neighbours sampled per bucket — separation is a soft force, so a
@@ -1168,8 +1177,8 @@ export class Sim {
           const ex = this.px[i] - this.px[j], ez = this.pz[i] - this.pz[j];
           // separation radius kept BELOW formation spacing so soldiers settled
           // in their ranks don't shove each other (that caused the vibrating).
-          const d2 = ex * ex + ez * ez; const rad = RADIUS[t] * 1.7;
-          if (d2 > 0.0001 && d2 < rad * rad) { const d = Math.sqrt(d2); sx += ex / d * (1 - d / rad); sz += ez / d * (1 - d / rad); }
+          const d2 = ex * ex + ez * ez;
+          if (d2 > 0.0001 && d2 < rad2) { const d = Math.sqrt(d2); sx += ex / d * (1 - d / rad); sz += ez / d * (1 - d / rad); }
         }
       }
 

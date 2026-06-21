@@ -550,7 +550,16 @@ function frame(now: number) {
   // accrues per frame, stepped up to a hard cap so a slow frame can't death-spiral.
   acc += dt * gameSpeed;
   let steps = 0;
-  while (!paused && acc >= SIM_DT && steps < 4) { sim.step(SIM_DT); acc -= SIM_DT; steps++; }
+  // Time-budgeted catch-up: always advance once, but only run additional steps if
+  // a step is cheap enough to fit. A normal battle steps 2-3x to track real time;
+  // a vast one (where a single step already eats the frame) takes one step and eases
+  // into slight slow-motion rather than stacking steps and collapsing to single-digit
+  // fps. Self-tuning to the device — the budget is measured wall-clock, not a count.
+  while (!paused && acc >= SIM_DT && steps < 4) {
+    const st = performance.now();
+    sim.step(SIM_DT); acc -= SIM_DT; steps++;
+    if (performance.now() - st > 13) break;
+  }
   if (acc > SIM_DT) acc = SIM_DT; // drop any backlog beyond one step
   if (paused) acc = 0;
   simMs += performance.now() - ts;
