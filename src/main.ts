@@ -9,6 +9,7 @@ import { openMuster, ICONS } from './muster';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
 import { startTutorial } from './tutorial';
+import { initDevPanel, DevConfig } from './devpanel';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -535,11 +536,60 @@ startIntro();
 
 // perf readout (fps / ms / unit count) for on-device testing; tap to hide
 const perfEl = document.getElementById('perf');
-perfEl?.addEventListener('click', () => perfEl.classList.add('hidden'));
+
+// ---------------- Dev panel (secret: tap the perf bar 5x) ----------------
+function devTelemetry(): [string, string][] {
+  const info = renderer ? renderer.gl.info : null;
+  const mem = (performance as any).memory;
+  const att = sim ? sim.countAlive(Faction.Attacker) : 0;
+  const def = sim ? sim.countAlive(Faction.Defender) : 0;
+  const proj = sim ? sim.projectiles.reduce((n, p) => n + (p.active ? 1 : 0), 0) : 0;
+  return [
+    ['fps', telFps.toFixed(0)],
+    ['frame ms', (telSimMs + telGfxMs).toFixed(1)],
+    ['sim ms', telSimMs.toFixed(1)],
+    ['gfx ms', telGfxMs.toFixed(1)],
+    ['sim steps/frame', String(lastSteps)],
+    ['units (slots)', sim ? String(sim.n) : '0'],
+    ['attackers alive', String(att)],
+    ['defenders alive', String(def)],
+    ['projectiles', String(proj)],
+    ['ladders', sim ? String(sim.ladders.length) : '0'],
+    ['resolution', renderer ? Math.round(renderer.quality * 100) + '%' : '-'],
+    ['draw calls', info ? String(info.render.calls) : '-'],
+    ['triangles', info ? info.render.triangles.toLocaleString() : '-'],
+    ['geometries', info ? String(info.memory.geometries) : '-'],
+    ['textures', info ? String(info.memory.textures) : '-'],
+    ['JS heap MB', mem ? (mem.usedJSHeapSize / 1048576).toFixed(0) : 'n/a'],
+    ['phase', sim ? sim.phase : '-'],
+    ['speed', gameSpeed + 'x' + (paused ? ' paused' : '')],
+  ];
+}
+function startCustomBattle(cfg: DevConfig) {
+  comp.heavy = cfg.army.heavy; comp.light = cfg.army.light; comp.archer = cfg.army.archer;
+  comp.cavalry = cfg.army.cavalry; comp.siege = cfg.army.siege;
+  currentSeed = (cfg.seed >>> 0) || 1; currentDifficulty = cfg.difficulty; currentStyle = cfg.style; currentBuff = NO_BUFF;
+  currentDiscount = 1; currentExtraTrebs = 0; currentNoArtillery = false;
+  activeCastle = null; activeRaid = null;
+  stopMenuMusic();
+  for (const id of ['intro', 'titleScreen', 'map', 'muster', 'banner']) show(id, false);
+  document.getElementById('hud')?.classList.remove('over');
+  newGame();
+  if (cfg.autoBegin) { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); }
+}
+const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle });
+let perfTaps = 0, perfTapT = 0;
+perfEl?.addEventListener('click', () => {
+  const now = performance.now();
+  if (now - perfTapT > 1200) perfTaps = 0;
+  perfTapT = now;
+  if (++perfTaps >= 5) { perfTaps = 0; devPanel.open(); }
+});
 let perfAcc = 0, perfFrames = 0, adaptCooldown = 0;
 
 const SIM_DT = 1 / 30; let acc = 0, last = performance.now(), ended = false;
 let simMs = 0, gfxMs = 0;
+let lastSteps = 0, telFps = 0, telSimMs = 0, telGfxMs = 0; // dev-panel telemetry
 function frame(now: number) {
   let dt = (now - last) / 1000; last = now; if (dt > 0.1) dt = 0.1;
   // At most ONE sim step per frame, and never accumulate a backlog — otherwise a
@@ -576,10 +626,12 @@ function frame(now: number) {
     if (sf.boulders) renderer.shake(Math.min(0.25, sf.boulders * 0.06));
   }
 
+  lastSteps = steps;
   perfAcc += dt; perfFrames++;
   if (perfAcc >= 0.5) {
     const fps = perfFrames / perfAcc;
     const q = renderer.quality;
+    telFps = fps; telSimMs = simMs / perfFrames; telGfxMs = gfxMs / perfFrames;
     if (perfEl) perfEl.textContent = `${fps.toFixed(0)}fps · ${sim.n}u · ${Math.round(q * 100)}%`;
     // adaptive resolution: ease down when struggling, back up when there's room
     if (adaptCooldown > 0) adaptCooldown--;
