@@ -55,6 +55,11 @@ const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
 // or ladders only.
 const RAM_DPS = 33;          // gate hit-points lost per second while a crew rams
 const RAM_CREW = 4;          // men that must be on the gate for the ram to bite
+// signature abilities
+const CHARGE_DUR = 4.5;      // a cavalry charge lasts this long...
+const CHARGE_CD = 12;        // ...then must recover before the next
+const CHARGE_SPD = 1.45;     // speed while charging
+const CHARGE_DMG = 2.8;      // melee impact multiplier on the charge
 const OBST_DIR: [number, number][] = Array.from({ length: 8 }, (_, a) => [Math.cos(a * Math.PI / 4), Math.sin(a * Math.PI / 4)]);
 
 export function maxHp(t: UType) { return HP[t]; }
@@ -385,6 +390,11 @@ export interface Unit {
   // break in at a specific wall/gate section, then push on to the keep.
   objKind: 'hold' | 'storm' | 'breach';
   objSeg: number;      // the wall/gate section a 'breach' order targets (-1 otherwise)
+  // signature stance/ability per arm: Heavy 'shield' (slow, armoured, steady),
+  // Light 'sprint' (fast, exposed), Archer 'volley' (longer, harder, slower).
+  stance: 'normal' | 'shield' | 'sprint' | 'volley';
+  chargeT: number;     // cavalry: seconds of an active couched charge remaining
+  chargeCd: number;    // cavalry: seconds until the charge can be sounded again
   name: string;
 }
 
@@ -490,6 +500,7 @@ export class Sim {
       ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
       focusX: 0, focusZ: 0, hasFocus: false, fireArrows: !!opts.fireArrows,
       holdFire: false, assault: false, objKind: 'hold', objSeg: -1,
+      stance: 'normal', chargeT: 0, chargeCd: 0,
       name: opts.name ?? TYPE_NAME[type],
     };
     this.units.push(u);
@@ -835,6 +846,28 @@ export class Sim {
     for (const u of this.divCompanies(div)) { u.assault = false; u.objKind = 'hold'; u.objSeg = -1; this.setAnchor(u, u.cx, u.cz, u.facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4))); }
   }
 
+  // ---- signature abilities (per arm) ----
+  // The stance an arm can hold: Heavy 'shield', Light 'sprint', Archer 'volley'.
+  stanceFor(type: UType): Unit['stance'] { return type === UType.Heavy ? 'shield' : type === UType.Light ? 'sprint' : type === UType.Archer ? 'volley' : 'normal'; }
+  toggleStanceDiv(div: number): boolean {
+    const cs = this.divCompanies(div); if (!cs.length) return false;
+    const st = this.stanceFor(cs[0].type); if (st === 'normal') return false;
+    const on = cs[0].stance !== st; for (const u of cs) u.stance = on ? st : 'normal';
+    return on;
+  }
+  stanceOnDiv(div: number): boolean { const cs = this.divCompanies(div); return cs.length > 0 && cs[0].stance !== 'normal'; }
+  // Sound the cavalry charge: a timed couched-lance burst, then a recovery cooldown.
+  chargeDiv(div: number) { for (const u of this.divCompanies(div)) if (u.type === UType.Cavalry && u.chargeCd <= 0 && !u.routing) { u.chargeT = CHARGE_DUR; u.chargeCd = CHARGE_DUR + CHARGE_CD; } }
+  chargeReadyDiv(div: number): number { // 0 = charging, 1 = ready, fraction = recovering
+    const cs = this.divCompanies(div); if (!cs.length) return 1; const u = cs[0];
+    if (u.chargeT > 0) return 0; return u.chargeCd <= 0 ? 1 : 1 - u.chargeCd / CHARGE_CD;
+  }
+  isCavalry(div: number): boolean { const cs = this.divCompanies(div); return cs.length > 0 && cs[0].type === UType.Cavalry; }
+  // movement-speed multiplier from a company's stance / active charge
+  private speedMul(u: Unit): number { return u.stance === 'shield' ? 0.62 : u.stance === 'sprint' ? 1.45 : (u.type === UType.Cavalry && u.chargeT > 0) ? CHARGE_SPD : 1; }
+  // incoming-damage multiplier on a soldier from its company's stance (shields halve it)
+  private defenseMul(i: number): number { const st = this.units[this.unit[i]].stance; return st === 'shield' ? 0.5 : st === 'sprint' ? 1.18 : 1; }
+
   // ---- spatial hash for neighbour queries ----
   private hCell = 6;
   private hCols = Math.ceil((WORLD.maxX - WORLD.minX) / 6);
@@ -865,6 +898,8 @@ export class Sim {
       u.alive = a; u.ammo = am;
       if (a > 0) { u.cx = ax / a; u.cz = az / a; }
       if (!deploy && !u.routing && a > 0 && a / u.count < ROUT_FRAC) u.routing = true;
+      if (u.chargeT > 0) u.chargeT = Math.max(0, u.chargeT - dt);   // cavalry charge timers
+      if (u.chargeCd > 0) u.chargeCd = Math.max(0, u.chargeCd - dt);
     }
     if (!deploy) {
       // The castle falls only when you actually win it: either raise your banner
@@ -914,7 +949,7 @@ export class Sim {
       if (!this.alive[i]) continue;
       const u = this.units[this.unit[i]];
       const t = this.typ[i] as UType;
-      const spd = SPEED[t];
+      const spd = SPEED[t] * this.speedMul(u);
       let dx = 0, dz = 0;       // desired direction
       this.cd[i] -= dt;
 
@@ -1009,8 +1044,9 @@ export class Sim {
           // wall first instead of every man freezing where he first sees a target.
           if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; if (this._stuck) { this.useLadder(i); dx = this._dir[0]; dz = this._dir[1]; } }
           const settled = dx * dx + dz * dz < 0.5; // within ~1.7m of its slot
-          if (settled && this.cd[i] <= 0 && nearest >= 0 && dist <= RANGE[t] && !u.holdFire && this.focusOk(u, nearest)) {
-            this.shoot(i, nearest); this.cd[i] = ATKCD[t]; this.ammo[i]--;
+          const vol = u.stance === 'volley'; // aimed massed volley: longer, harder, slower
+          if (settled && this.cd[i] <= 0 && nearest >= 0 && dist <= RANGE[t] * (vol ? 1.28 : 1) && !u.holdFire && this.focusOk(u, nearest)) {
+            this.shoot(i, nearest, vol ? 1.7 : 1); this.cd[i] = ATKCD[t] * (vol ? 1.85 : 1); this.ammo[i]--;
           }
         } else {
           // melee — including archers who've spent all their arrows
@@ -1019,9 +1055,10 @@ export class Sim {
             const seg = this.nearestClimbWall(this.px[i], this.pz[i]); if (seg >= 0) { this.startClimb(i, seg); continue; }
           }
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
-          const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1);
+          const charge = t === UType.Cavalry && u.chargeT > 0 ? CHARGE_DMG : 1;
+          const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1) * charge;
           if (nearest >= 0 && dist <= mrng) {
-            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg; this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg * this.defenseMul(nearest); this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
           } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
                      && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
             // chase a *reachable* enemy — but only once the company has reached its
@@ -1419,7 +1456,7 @@ export class Sim {
     }
   }
 
-  private shoot(i: number, target: number) {
+  private shoot(i: number, target: number, dmgMul = 1) {
     this.sfx.arrows++;
     const p = this.getProj();
     const atkShot = this.fac[i] === Faction.Attacker;
@@ -1445,7 +1482,7 @@ export class Sim {
     }
     if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
-    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1); p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
+    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1) * dmgMul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
@@ -1505,6 +1542,7 @@ export class Sim {
   // unaffected — this only blunts arrows and bolts, and only for attackers on foot.)
   private applyRangedHit(j: number, dmg: number, bolt: boolean) {
     if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5) dmg *= bolt ? 0.62 : 0.45;
+    dmg *= this.defenseMul(j); // a shield wall turns arrows too
     this.hp[j] -= dmg;
     if (this.hp[j] <= 0) this.kill(j, this.units[this.unit[j]]);
   }

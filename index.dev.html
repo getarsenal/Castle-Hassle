@@ -62,8 +62,11 @@
     #pauseBtn { right: 12px; }
     #speedBtn { right: 86px; min-width: 44px; text-align: center; }
     #retreatBtn { right: 156px; border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
-    #pauseBtn.show, #retreatBtn.show, #speedBtn.show { display: block; }
+    #pauseBtn.show, #retreatBtn.show, #speedBtn.show, #helpBtn.show { display: block; }
     #pauseBtn.on, #speedBtn.fast { background: rgba(200,150,40,0.92); color: #241600; }
+    #helpBtn { position: absolute; top: calc(var(--safe-top) + 52px); left: 12px; pointer-events: auto;
+      border: 1px solid rgba(255,255,255,0.22); background: rgba(20,28,42,0.86); color: #ffe6a6;
+      font: 700 14px 'Cinzel', Georgia, serif; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: none; padding: 0; }
 
     #topbar {
       position: absolute; top: calc(var(--safe-top) + 10px); left: 12px;
@@ -334,6 +337,7 @@
     <button id="pauseBtn">Pause</button>
     <button id="speedBtn">1x</button>
     <button id="retreatBtn">Retreat</button>
+    <button id="helpBtn" title="How to play">?</button>
     <div id="topbar">
       <span class="stat"><span class="dot att"></span><span id="attCount">0</span></span>
       <span style="opacity:.4">vs</span>

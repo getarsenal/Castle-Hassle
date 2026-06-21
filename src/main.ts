@@ -8,6 +8,7 @@ import { openRaids } from './raids';
 import { openMuster } from './muster';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
+import { startTutorial } from './tutorial';
 import * as THREE from 'three';
 
 (window as any).__started = true;
@@ -29,6 +30,8 @@ const speedBtn = document.getElementById('speedBtn');
 pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
 function applySpeed() { if (!speedBtn) return; speedBtn.textContent = `${gameSpeed}x`; speedBtn.classList.toggle('fast', gameSpeed > 1); }
 speedBtn?.addEventListener('click', () => { gameSpeed = gameSpeed >= 3 ? 1 : gameSpeed + 1; applySpeed(); });
+const helpBtn = document.getElementById('helpBtn');
+helpBtn?.addEventListener('click', () => { const wasPaused = paused; paused = true; startTutorial(true, () => { paused = wasPaused; }); });
 retreatBtn?.addEventListener('click', () => { if (confirm('Sound the retreat? Your surviving troops withdraw; the castle is not taken.')) sim.retreat(); });
 let showRange = true;
 
@@ -89,7 +92,7 @@ function updateMuster() {
   const g = $('musterGold'), t = $('musterTotal'); if (g) g.textContent = String(progress.gold); if (t) t.textContent = String(total);
   ($('musterBtn') as HTMLButtonElement).disabled = (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
 }
-$('musterBtn').addEventListener('click', () => { battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame(); });
+$('musterBtn').addEventListener('click', () => { battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame(); startTutorial(); });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
 // ---------------- New game ----------------
@@ -145,6 +148,7 @@ function updateTopbar() {
   pauseBtn?.classList.toggle('show', inBattle);
   speedBtn?.classList.toggle('show', inBattle);
   retreatBtn?.classList.toggle('show', inBattle);
+  helpBtn?.classList.toggle('show', sim.phase === 'deploy' || inBattle);
   const cp = sim.captureProgress;
   if (keepBar && keepFill && keepLabel) {
     const showBar = sim.phase === 'battle' && cp > 0.001;
@@ -159,6 +163,15 @@ function updateHint() {
   else if (a) hintEl.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
   else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
   else hintEl.textContent = 'Select an arm and tap Assault to commit it — engines batter the walls on their own.';
+}
+// keep the cavalry charge button's label/state live (cooldown ticks every frame)
+function tickChargeBtn() {
+  const cb = document.getElementById('chargeTool') as HTMLButtonElement | null;
+  if (!cb || selected < 0 || !sim.isCavalry(selected)) return;
+  const ready = sim.chargeReadyDiv(selected); // 0 charging, 1 ready, between = recovering
+  cb.textContent = ready === 0 ? 'Charging!' : ready >= 1 ? 'Charge' : 'Recovering';
+  cb.classList.toggle('on', ready === 0);
+  cb.disabled = ready > 0 && ready < 1;
 }
 function updateTools() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
@@ -177,6 +190,18 @@ function updateTools() {
     ab.addEventListener('click', () => { sim.toggleAssaultDiv(selected); refreshCards(); updateTools(); });
     toolsEl.appendChild(ab);
   }
+  // signature ability per melee arm
+  if (a.type === UType.Cavalry) {
+    const cb = document.createElement('button'); cb.id = 'chargeTool'; cb.className = 'tool';
+    cb.addEventListener('click', () => { sim.chargeDiv(selected); });
+    toolsEl.appendChild(cb); tickChargeBtn();
+  } else if (a.type === UType.Heavy || a.type === UType.Light) {
+    const on = sim.stanceOnDiv(selected);
+    const sb = document.createElement('button'); sb.className = 'tool' + (on ? ' on' : '');
+    sb.textContent = a.type === UType.Heavy ? 'Shield Wall' : (on ? 'Sprinting' : 'Sprint');
+    sb.addEventListener('click', () => { sim.toggleStanceDiv(selected); refreshCards(); updateTools(); });
+    toolsEl.appendChild(sb);
+  }
   if (!ranged) return;
   const rb = document.createElement('button'); rb.className = 'tool' + (showRange ? ' on' : ''); rb.textContent = 'Range';
   rb.addEventListener('click', () => { showRange = !showRange; updateTools(); });
@@ -187,6 +212,12 @@ function updateTools() {
   hb.textContent = holding ? 'Hold Fire' : 'Firing';
   hb.addEventListener('click', () => { sim.toggleHoldFireDiv(selected); updateTools(); });
   toolsEl.appendChild(hb);
+  if (a!.type === UType.Archer) { // aimed massed volleys: longer range, harder hits, slower cadence
+    const on = sim.stanceOnDiv(selected);
+    const vb = document.createElement('button'); vb.className = 'tool' + (on ? ' on' : ''); vb.textContent = 'Volley';
+    vb.addEventListener('click', () => { sim.toggleStanceDiv(selected); updateTools(); });
+    toolsEl.appendChild(vb);
+  }
   if (a!.type === UType.Archer && comps.some(u => u.hasFocus)) {
     const cb = document.createElement('button'); cb.className = 'tool'; cb.textContent = 'Clear Aim';
     cb.addEventListener('click', () => { sim.clearFocusDiv(selected); updateTools(); });
@@ -564,7 +595,7 @@ function frame(now: number) {
   const tg = performance.now();
   if (!covered) renderer.render(Math.min(dt, 0.05));
   gfxMs += performance.now() - tg;
-  refreshCards(); updateTopbar();
+  refreshCards(); updateTopbar(); tickChargeBtn();
   if (sim.phase === 'over' && !ended) { ended = true; showEnd(); }
   if (sim.phase !== 'over') ended = false;
   requestAnimationFrame(frame);
