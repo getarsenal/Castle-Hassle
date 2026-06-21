@@ -324,7 +324,7 @@ function pathBlocked(x0: number, z0: number, x1: number, z1: number): boolean {
   const steps = Math.max(2, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 3));
   for (let s = 1; s < steps; s++) {
     const t = s / steps;
-    if (blockedAt(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t)) return true;
+    if (BLOCKED[cellOf(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t)]) return true; // grid lookup, not a per-segment scan
   }
   return false;
 }
@@ -1218,9 +1218,12 @@ export class Sim {
       if (Math.abs(this.vx[i]) < 0.04 && Math.abs(this.vz[i]) < 0.04) { this.vx[i] = 0; this.vz[i] = 0; }
 
       let nx = this.px[i] + this.vx[i] * dt, nz = this.pz[i] + this.vz[i] * dt;
-      if (this.py[i] < 1 && blockedAt(nx, nz)) { // ground units collide with walls
-        if (!blockedAt(nx, this.pz[i])) { nz = this.pz[i]; this.vz[i] = 0; }
-        else if (!blockedAt(this.px[i], nz)) { nx = this.px[i]; this.vx[i] = 0; }
+      // Wall collision via the precomputed BLOCKED grid (O(1) cell lookup) instead of
+      // scanning every castle segment per unit per frame — the same grid the flow
+      // field and obstacle avoidance already steer by, so it stays consistent.
+      if (this.py[i] < 1 && BLOCKED[cellOf(nx, nz)]) { // ground units collide with walls
+        if (!BLOCKED[cellOf(nx, this.pz[i])]) { nz = this.pz[i]; this.vz[i] = 0; }
+        else if (!BLOCKED[cellOf(this.px[i], nz)]) { nx = this.px[i]; this.vx[i] = 0; }
         else { nx = this.px[i]; nz = this.pz[i]; this.vx[i] = 0; this.vz[i] = 0; }
       }
       this.px[i] = Math.max(WORLD.minX, Math.min(WORLD.maxX, nx));
