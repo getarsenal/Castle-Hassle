@@ -5,7 +5,7 @@ import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, 
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
-import { openMuster } from './muster';
+import { openMuster, ICONS } from './muster';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
 import { startTutorial } from './tutorial';
@@ -57,7 +57,7 @@ function buildMuster() {
     if (currentNoArtillery && r.key === 'siege') continue; // no siege train on a town raid
     const k = r.key as ArmyKey; const step = RECRUIT_STEP[k];
     const row = document.createElement('div'); row.className = 'rrow';
-    row.innerHTML = `<div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc}</div>
+    row.innerHTML = `<span class="ic">${ICONS[k]}</span><div class="info"><div class="nm">${r.name}</div><div class="dsc">${r.dsc}</div>
         <div class="own" data-k="${k}"></div></div>
       <button class="rbtn rec" data-k="${k}">Recruit</button>
       <button class="rbtn minus">−</button><div class="ct" data-k="${k}">0</div><button class="rbtn plus">+</button>`;

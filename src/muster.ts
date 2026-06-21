@@ -5,7 +5,7 @@
 import { Progress, ArmyKey, recruitPrice, saveProgress } from './campaign';
 
 // hand-inked soldier silhouettes (currentColor = ink), one per arm
-const ICONS: Record<ArmyKey, string> = {
+export const ICONS: Record<ArmyKey, string> = {
   light: `<svg viewBox="0 0 28 36" fill="currentColor"><circle cx="10" cy="6" r="3.6"/><rect x="6.3" y="9.4" width="7.4" height="11" rx="2.6"/><rect x="6.9" y="19" width="2.7" height="13" rx="1.3"/><rect x="10.4" y="19" width="2.7" height="13" rx="1.3"/><rect x="12.4" y="11.6" width="7.5" height="2" rx="1" transform="rotate(-10 12.4 11.6)"/><rect x="18.6" y="2" width="1.9" height="31" rx="0.8"/><polygon points="19.55,-0.4 22.6,5 16.5,5"/></svg>`,
   heavy: `<svg viewBox="0 0 28 36" fill="currentColor"><circle cx="11.5" cy="6" r="3.6"/><rect x="7.8" y="9.4" width="7.4" height="11" rx="2.6"/><rect x="8.4" y="19" width="2.7" height="13" rx="1.3"/><rect x="11.9" y="19" width="2.7" height="13" rx="1.3"/><path d="M2.4 9.6 H9.2 V18 Q9.2 24.4 5.8 27.4 Q2.4 24.4 2.4 18 Z"/><rect x="19.2" y="4.4" width="1.8" height="20.5" rx="0.6"/><rect x="16.5" y="8.6" width="7.2" height="2" rx="0.6"/><rect x="19.4" y="2.6" width="1.4" height="2.4" rx="0.5"/></svg>`,
   archer: `<svg viewBox="0 0 28 36" fill="currentColor"><circle cx="11" cy="6" r="3.6"/><rect x="7.3" y="9.4" width="7.4" height="11" rx="2.6"/><rect x="7.9" y="19" width="2.7" height="13" rx="1.3"/><rect x="11.4" y="19" width="2.7" height="13" rx="1.3"/><path d="M19 3.6 Q25.4 16 19 28.4" fill="none" stroke="currentColor" stroke-width="1.7"/><line x1="19" y1="3.6" x2="19" y2="28.4" stroke="currentColor" stroke-width="1"/><rect x="8.6" y="15" width="12.4" height="1.6" rx="0.6"/><polygon points="22.8,15.8 19,13.9 19,17.7"/></svg>`,
