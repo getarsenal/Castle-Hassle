@@ -33,6 +33,8 @@ export class Renderer {
   private ladderMeshes: THREE.Mesh[] = [];
   private ladderGeo?: THREE.BufferGeometry;
   private ladderMat?: THREE.MeshLambertMaterial;
+  private ramModels: { group: THREE.Group; beam: THREE.Object3D }[] = [];
+  private ramPhase = 0;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
@@ -557,6 +559,44 @@ export class Renderer {
     for (let l = lads.length; l < this.ladderMeshes.length; l++) if (this.ladderMeshes[l]) this.ladderMeshes[l].visible = false;
   }
 
+  // A wheeled battering ram: an A-frame on wheels carrying a slung, iron-headed log
+  // that lunges forward (+Z) on the swing. Local +Z faces the gate.
+  private makeRam() {
+    const g = new THREE.Group();
+    const timber = this.stone('#5a3d1e'), dark = this.stone('#3c2813'), iron = this.stone('#8f8a82'), roof = this.stone('#6b4a25');
+    for (const sx of [-1.0, 1.0]) {            // wheels
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.3, 10).rotateZ(Math.PI / 2), dark);
+      const wb = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.3, 10).rotateZ(Math.PI / 2), dark);
+      w.position.set(sx, 0.55, 1.3); wb.position.set(sx, 0.55, -1.3); g.add(w); g.add(wb);
+    }
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.3, 3.6), timber); sill.position.y = 0.9; g.add(sill);
+    for (const sz of [-1.2, 1.2]) {            // A-frame uprights + a peak beam
+      for (const sx of [-0.9, 0.9]) { const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 2.4, 0.22), timber); post.position.set(sx, 2.1, sz); g.add(post); }
+    }
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 3.4), timber); ridge.position.set(0, 3.2, 0); g.add(ridge);
+    const cover = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.18, 3.6), roof); cover.position.set(0, 3.32, 0); cover.rotation.z = 0; g.add(cover);
+    const beam = new THREE.Group();            // the slung ram log (lunges along +Z)
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 3.4, 10).rotateX(Math.PI / 2), timber); beam.add(log);
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.6, 10).rotateX(Math.PI / 2), iron); head.position.z = 1.8; beam.add(head);
+    beam.position.set(0, 1.7, 0); g.add(beam);
+    g.add(beam); return { group: g, beam };
+  }
+  // Show a ram at every gate the infantry are currently battering; lunge the log.
+  private updateRams(dt: number) {
+    this.ramPhase += dt * 6.0;
+    const rams = this.sim.rammingGates();
+    for (let r = 0; r < rams.length; r++) {
+      let m = this.ramModels[r];
+      if (!m) { m = this.makeRam(); this.scene.add(m.group); this.ramModels[r] = m; }
+      const info = rams[r];
+      m.group.visible = true;
+      m.group.position.set(info.x, 0, info.z);
+      m.group.rotation.y = info.ang;            // local +Z points at the gate
+      m.beam.position.z = 0.6 + Math.max(0, Math.sin(this.ramPhase + r)) * 1.1; // forward lunges
+    }
+    for (let r = rams.length; r < this.ramModels.length; r++) if (this.ramModels[r]) this.ramModels[r].group.visible = false;
+  }
+
   // wall damage tint, impact puffs, and the animated collapse
   private updateWalls(dt: number) {
     for (let s = 0; s < CASTLE.length; s++) {
@@ -610,6 +650,7 @@ export class Renderer {
     this.time += dt;
     this.updateWalls(dt);
     this.updateLadders();
+    this.updateRams(dt);
     this.updateEffects(dt);
 
     const sa = this.shadowMesh.instanceMatrix.array as Float32Array;

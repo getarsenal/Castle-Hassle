@@ -47,11 +47,12 @@ const ARTY_SPLASH = 2.6;       // anti-personnel blast radius (very little spill
 const PROJ_G = 28; // projectile gravity (higher = more pronounced arc)
 const ROUT_FRAC = 0.3;
 const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
-// Per-soldier damage when a melee company batters a wall/gate it's pressed against.
-// A section ~8m wide takes ~6-10 men in contact, so a company opens a stone wall in
-// ~50s, a gate (weaker) in ~25s — the way an army forces an entry once the engines
-// are spent, so a citadel doesn't come down to a single-file ladder trickle.
-const WALL_BATTER = 0.5;
+// Per-soldier damage when a company rams a GATE it's pressed against. Deliberately
+// slow: a gate ~8m wide takes ~6-10 men on the ram, so a company beats one in
+// ~40s — long enough that ramming under unsuppressed wall-fire is costly, so you
+// want archers/engines silencing the gatehouse first. (Stone walls can't be
+// battered by infantry at all — those take the engines, or a ladder.)
+const GATE_RAM = 0.2;
 const OBST_DIR: [number, number][] = Array.from({ length: 8 }, (_, a) => [Math.cos(a * Math.PI / 4), Math.sin(a * Math.PI / 4)]);
 
 export function maxHp(t: UType) { return HP[t]; }
@@ -61,7 +62,7 @@ export function maxHp(t: UType) { return HP[t]; }
 // and defender deployment. Bigger than before, varied per seed, with a town of
 // buildings inside and (on larger ones) an inner CITADEL that must be taken. ----
 export type SegKind = 'wall' | 'gate' | 'tower' | 'keep' | 'building';
-export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; }
+export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; }
 export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; }
 export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
 // A scaling ladder raised against a wall section. Attackers queue at the foot
@@ -1171,6 +1172,22 @@ export class Sim {
     }
     return best;
   }
+  // The nearest STANDING gate that leads inward toward the keep — the weak point a
+  // storming column makes for (and rams) rather than scattering to scale the curtain
+  // either side of it. Same inward test as breachToward.
+  private gateToward(x: number, z: number): number {
+    const dKeep = Math.hypot(this.keepX - x, this.keepZ - z);
+    let best = -1, bc = 1e9;
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s]; if (g.dead || g.kind !== 'gate') continue;
+      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
+      const bk = Math.hypot(this.keepX - cx, this.keepZ - cz);
+      if (bk >= dKeep - 1) continue;
+      const cost = Math.hypot(cx - x, cz - z) + bk;
+      if (cost < bc) { bc = cost; best = s; }
+    }
+    return best;
+  }
   private nearestClimbWall(x: number, z: number): number {
     let best = -1, bd = 1e9;
     for (let s = 0; s < CASTLE.length; s++) {
@@ -1281,34 +1298,58 @@ export class Sim {
     // way through at all (an intact ring) do we break a wall down or scale it.
     this.formMove(u, i);
     if (!this._stuck) return;
+    // Blocked by an intact ring. Make for the GATE that leads inward and ram it (the
+    // column converges on the weak point); only scale the curtain when no gate leads
+    // in, since infantry can't break stone.
+    const gate = this.gateToward(this.px[i], this.pz[i]);
+    if (gate >= 0) { this.engageWall(i, u, t, gate); return; }
     const seg = this.wallBlockingGoal(i);
     if (seg >= 0) { this.engageWall(i, u, t, seg); return; }
     const br = this.breachToward(this.px[i], this.pz[i]); // no straight wall (towers/enclosed): seek an inward breach, else scale
     if (br >= 0) { const g = CASTLE[br], bx = (g.x0 + g.x1) / 2 - this.px[i], bz = (g.z0 + g.z1) / 2 - this.pz[i], bl = Math.hypot(bx, bz) || 1; this._dir[0] = bx / bl; this._dir[1] = bz / bl; }
     else if (t !== UType.Cavalry) this.useLadder(i);
   }
-  // March to a wall/gate section's foot, batter it down, and scale it (infantry).
+  // March to a wall/gate section's foot, then force it: a GATE is battered down
+  // (a ram); a stone WALL is only ever SCALED (you don't smash a curtain wall with
+  // swords — that's what the engines are for).
   private engageWall(i: number, u: Unit, t: UType, seg: number) {
     const g = CASTLE[seg];
     const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
     const dxw = cpx - this.px[i], dzw = cpz - this.pz[i], dw = Math.hypot(dxw, dzw);
-    if (dw <= this.CLIMB + 1.5) {           // at the wall: batter it, and (infantry) scale it
-      this.batterSeg(i, seg, t, u);
-      if (t === UType.Cavalry) { const l = dw || 1; this._dir[0] = dxw / l * 0.25; this._dir[1] = dzw / l * 0.25; } // can't climb — press & wait for a gap
-      else this.useLadder(i, seg);
+    if (dw <= this.CLIMB + 1.5) {
+      if (g.kind === 'gate') {                 // ram the gate, pressing against it
+        this.batterSeg(i, seg, t, u);
+        const l = dw || 1; this._dir[0] = dxw / l * 0.18; this._dir[1] = dzw / l * 0.18;
+      } else if (t === UType.Cavalry) {        // horse can't scale — wait at the foot for a gap
+        const l = dw || 1; this._dir[0] = dxw / l * 0.25; this._dir[1] = dzw / l * 0.25;
+      } else this.useLadder(i, seg);           // scale the wall (never battered)
     } else { const l = dw || 1; this._dir[0] = dxw / l; this._dir[1] = dzw / l; } // march to its foot
   }
-  // A soldier pressed against a wall/gate batters it down (the way an army forces an
-  // entry once the engines are spent). Gates give way faster than stone curtain.
+  // A column pressed against a GATE batters it down (a ram). Only gates give way to
+  // infantry; stone walls take engines. Records the ram so the renderer can show it.
   private batterSeg(i: number, seg: number, t: UType, u: Unit) {
     if (this.cd[i] > 0) return;
-    const g = CASTLE[seg]; if (!g || g.dead || (g.kind !== 'wall' && g.kind !== 'gate' && g.kind !== 'tower')) return;
+    const g = CASTLE[seg]; if (!g || g.dead || g.kind !== 'gate') return;
     const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
     if ((cpx - this.px[i]) ** 2 + (cpz - this.pz[i]) ** 2 > 2.4 * 2.4) return; // must be in contact
     const mul = u.faction === Faction.Attacker ? this.atk.melee : 1;
-    g.hp -= MELEE[t] * WALL_BATTER * mul * (g.kind === 'gate' ? 1.7 : 1);
+    g.hp -= MELEE[t] * GATE_RAM * mul;
+    g.ramT = this._frame;
     this.cd[i] = ATKCD[t]; this.sfx.melee++;
     if (g.hp <= 0) this.breach(seg);
+  }
+  // Gates currently under the ram (struck within the last ~0.4s), with a point just
+  // OUTSIDE the gate and the heading to face it — so the renderer can show a ram.
+  rammingGates(): { x: number; z: number; ang: number; seg: number }[] {
+    const out: { x: number; z: number; ang: number; seg: number }[] = [];
+    for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s];
+      if (g.kind !== 'gate' || g.dead || g.ramT === undefined || this._frame - g.ramT > 20) continue;
+      const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
+      let nx = cx - this.keepX, nz = cz - this.keepZ; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl; // outward from the keep = the attackers' side
+      out.push({ x: cx + nx * 4.2, z: cz + nz * 4.2, ang: Math.atan2(-nx, -nz), seg: s });
+    }
+    return out;
   }
   private useLadder(i: number, seg = this.wallTowardGoal(i)) {
     if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
