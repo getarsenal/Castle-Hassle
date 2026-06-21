@@ -41,6 +41,7 @@ export class Renderer {
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
+  private shadowDirtyT = -1; // >0: a collapse is settling; refresh the shadow map ONCE when it elapses
   private selRing: THREE.Mesh;
   private targetRing: THREE.Mesh;
   private rangeFans: THREE.Group[] = [];
@@ -102,7 +103,7 @@ export class Renderer {
     this.scene.add(new THREE.HemisphereLight('#fff4da', '#6d7b3e', 0.78));
     const sun = new THREE.DirectionalLight('#ffe1ad', 2.0); sun.position.set(96, 132, 64);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1536, 1536); // frozen + re-baked rarely, so 1536 stays crisp on the big static structures at a fraction of 2048's memory/bake cost
     const sc = sun.shadow.camera as THREE.OrthographicCamera;
     sc.left = -185; sc.right = 185; sc.top = 210; sc.bottom = -210; sc.near = 20; sc.far = 460;
     sun.shadow.bias = -0.0006; sun.shadow.normalBias = 1.1; sun.shadow.radius = 2.2;
@@ -419,6 +420,12 @@ export class Renderer {
   private crumble(s: number) {
     const v = this.segVis[s]; if (!v || v.crumbling > 0) return;
     v.crumbling = 0.0001; v.mat.color.copy(this.rubbleMat.color);
+    // Schedule ONE shadow-map refresh for just after the collapse settles. The
+    // frozen map only needs re-baking once the rubble has stopped moving — doing
+    // it per frame for 0.7s was re-rendering the whole scene depth ~40 times and
+    // is exactly what stuttered the moment a gate fell. New collapses extend the
+    // timer so a cluster of breaches coalesces into a single re-bake.
+    this.shadowDirtyT = 0.85;
     for (const e of v.extras) e.visible = false;
     this.spawnDebris(v.box.position.x, v.h * 0.5, v.box.position.z, 16);
     this.spawnDust(v.box.position.x, v.h * 0.5, v.box.position.z, 9, 6);
@@ -429,7 +436,14 @@ export class Renderer {
     for (let t = 0; t < 4; t++) {
       const total = this.sim.typeCount[t];
       const tex = makeSoldierTexture(KIND[t]);
-      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.45, side: THREE.DoubleSide, toneMapped: false });
+      // Soldiers are drawn as OPAQUE alpha-cutout sprites, not blended transparents.
+      // The alphaTest already hard-cuts the silhouette, so the look is the same — but
+      // opaque sprites write depth and occlude each other instead of stacking up as
+      // blended overdraw. That overdraw is what tanks the framerate when thousands
+      // pile at a fallen gate. FrontSide too: yaw-billboards and face-up corpses never
+      // show a back face. (No `transparent`, so per-frame depth-sorting of thousands
+      // of instances is gone as well.)
+      const mat = new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide, toneMapped: false });
       const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(SPRITE_W[t], SPRITE_H[t]), mat, Math.max(1, total));
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.frustumCulled = false;
       for (let i = 0; i < this.sim.n; i++) {
@@ -448,7 +462,7 @@ export class Renderer {
     // Per-soldier shadow blobs double the transparent-quad draw. At huge musters
     // they overlap into mush anyway, so drop them past a threshold to keep the
     // "go wild" battles moving — the army still reads, just without ground dots.
-    this.shadowsOn = this.sim.n <= 9000;
+    this.shadowsOn = this.sim.n <= 2400;
     const geo = new THREE.CircleGeometry(0.7, 12); geo.rotateX(-Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({ color: '#23311c', transparent: true, opacity: 0.2, depthWrite: false });
     this.shadowMesh = new THREE.InstancedMesh(geo, mat, this.shadowsOn ? this.sim.n : 1);
@@ -722,6 +736,8 @@ export class Renderer {
 
   // wall damage tint, impact puffs, and the animated collapse
   private updateWalls(dt: number) {
+    // single, deferred shadow re-bake after collapses settle (see crumble())
+    if (this.shadowDirtyT > 0) { this.shadowDirtyT -= dt; if (this.shadowDirtyT <= 0) this.sun.shadow.needsUpdate = true; }
     for (let s = 0; s < CASTLE.length; s++) {
       const v = this.segVis[s]; if (!v) continue;
       const seg = CASTLE[s];
@@ -734,7 +750,6 @@ export class Renderer {
       }
       v.prevHp = seg.hp;
       if (v.crumbling > 0 && v.crumbling < 1) {
-        this.sun.shadow.needsUpdate = true; // a wall is collapsing — refresh the frozen shadow map
         v.crumbling = Math.min(1, v.crumbling + dt / 0.7);
         const e = v.crumbling, k = 1 - 0.72 * e;
         // merged section meshes have their origin at the ground, so collapse =
