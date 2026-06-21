@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CampaignCastle, Progress, garrisonStrength } from './campaign';
-import { RANGES, FORESTS, REALMS } from './mapfeatures';
+import { RANGES, FORESTS, REALMS, BORDERS } from './mapfeatures';
 import mapData from './worldmapdata.json';
 
 const mercYdeg = (lat: number) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * 180 / Math.PI;
@@ -23,7 +23,7 @@ export class WorldMap3D {
   private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh }[] = [];
   private labels: THREE.Sprite[] = [];
   private water?: THREE.Mesh; private waterBase?: Float32Array;
-  private banners: { mesh: THREE.Mesh; phase: number }[] = [];
+  private banners: { mesh: THREE.Mesh; phase: number; base: Float32Array }[] = [];
   private clouds: { mesh: THREE.Sprite; speed: number }[] = [];
   private birds: { grp: THREE.Group; speed: number; phase: number }[] = [];
   private march?: { t: number; dur: number; last: number; path: { p: THREE.Vector3; water: boolean }[]; army: THREE.Group; boat: THREE.Group; done: () => void; skip: boolean };
@@ -37,12 +37,14 @@ export class WorldMap3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.08;
-    this.scene.background = new THREE.Color('#cfe1ef');
-    this.scene.fog = new THREE.Fog('#cfe1ef', 850, 2200);   // gentle haze far off only
+    this.scene.background = new THREE.Color('#c4dcef');
+    this.scene.fog = new THREE.Fog('#cfe1ef', 880, 2300);   // gentle haze far off only
     this.camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
-    this.scene.add(new THREE.HemisphereLight('#eaf4ff', '#8a9358', 1.25));
-    const sun = new THREE.DirectionalLight('#fff3d8', 1.15); sun.position.set(-120, 220, 160); this.scene.add(sun);
-    this.scene.add(new THREE.AmbientLight('#fff6e6', 0.5));
+    // lower ambient + a stronger raking sun so hills, coasts and ranges read in relief
+    this.scene.add(new THREE.HemisphereLight('#eaf4ff', '#8a9358', 0.92));
+    const sun = new THREE.DirectionalLight('#fff1d2', 1.55); sun.position.set(-120, 220, 160); this.scene.add(sun);
+    this.scene.add(new THREE.AmbientLight('#fff6e6', 0.38));
+    this.buildSkyDome();
     this.resize();
     this.bind();
     try { this.build(mapData as any); }   // data is bundled in — no fetch, no stale-asset risk
@@ -154,6 +156,7 @@ export class WorldMap3D {
 
     this.buildWater(mask);
     this.buildTrees(mask);
+    this.buildBorders();
     this.buildSettlements();
     this.buildRoute();
     this.buildRealmLabels();
@@ -283,13 +286,17 @@ export class WorldMap3D {
       const roof = new THREE.Mesh(new THREE.ConeGeometry(1.18, 1.5, 10), rm); roof.position.y = 4.4; g.add(roof);
       // a banner on the keep: your colours once taken/under siege, the enemy's while it holds out
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.4), new THREE.MeshLambertMaterial({ color: '#5a4326' })); pole.position.set(0, 5.4, 0); g.add(pole);
-      const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.95).translate(0.75, 0, 0), new THREE.MeshLambertMaterial({ color: locked ? '#7c2b27' : done ? '#caa53c' : '#c43d34', side: THREE.DoubleSide }));
+      const cgeo = new THREE.PlaneGeometry(1.5, 0.95, 6, 1).translate(0.75, 0, 0); // pole at local x=0
+      const cloth = new THREE.Mesh(cgeo, new THREE.MeshLambertMaterial({ color: locked ? '#7c2b27' : done ? '#caa53c' : '#c43d34', side: THREE.DoubleSide }));
       cloth.position.set(0, 6.0, 0); g.add(cloth);
       const sc = current ? 2.0 : 1.5; g.scale.set(sc, sc, sc); g.position.set(x, y, z); this.scene.add(g);
-      this.banners.push({ mesh: cloth, phase: node.id * 1.3 });
+      this.banners.push({ mesh: cloth, phase: node.id * 1.3, base: (cgeo.attributes.position.array as Float32Array).slice() });
       let ring: THREE.Mesh | undefined;
       if (current) {
-        ring = new THREE.Mesh(new THREE.RingGeometry(5, 6.4, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.9, depthWrite: false }));
+        // a soft gold glow pool under the objective so the eye goes straight to it
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.softSprite('rgba(255,214,90,0.85)'), transparent: true, opacity: 0.7, depthWrite: false, depthTest: false }));
+        glow.position.set(x, y + 0.5, z); glow.scale.set(26, 26, 1); glow.renderOrder = 1; this.scene.add(glow);
+        ring = new THREE.Mesh(new THREE.RingGeometry(5, 6.6, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.95, depthWrite: false }));
         ring.position.set(x, y + 0.4, z); this.scene.add(ring);
       }
       this.markers.push({ node, pos: new THREE.Vector3(x, y, z), ring });
@@ -320,6 +327,17 @@ export class WorldMap3D {
     }
   }
 
+  // A gradient sky dome (warm horizon → cool zenith) so the sky reads with depth
+  // instead of a flat fill — fog still blends the far terrain into the horizon band.
+  private buildSkyDome() {
+    const geo = new THREE.SphereGeometry(2500, 24, 16);
+    const top = new THREE.Color('#9cc4ec'), bot = new THREE.Color('#eadcc0');
+    const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 2500) * 1.5 + 0.32)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
+  }
+
   private softSprite(hex: string) {
     const cv = document.createElement('canvas'); cv.width = cv.height = 128; const ctx = cv.getContext('2d')!;
     const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62); g.addColorStop(0, hex); g.addColorStop(1, 'rgba(255,255,255,0)');
@@ -345,6 +363,20 @@ export class WorldMap3D {
     lw.rotation.y = -0.5; rw.rotation.y = Math.PI + 0.5; // swept back into a chevron
     b.add(lw); b.add(rw); (b as any).lw = lw; (b as any).rw = rw;
     return b;
+  }
+  // Faint dashed political frontiers between the realms — Total War "campaign map"
+  // flavour and readability. Each border follows the terrain, densified for the dash.
+  private buildBorders() {
+    const mat = new THREE.LineDashedMaterial({ color: '#6e4f24', transparent: true, opacity: 0.55, dashSize: 2.4, gapSize: 1.9 });
+    for (const line of BORDERS) {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i < line.length - 1; i++) {
+        const [la0, lo0] = line[i], [la1, lo1] = line[i + 1];
+        for (let s = 0; s < 10; s++) { const t = s / 10, la = la0 + (la1 - la0) * t, lo = lo0 + (lo1 - lo0) * t; pts.push(new THREE.Vector3(this.wX(lo), this.terrainY(lo, la) + 0.9, this.wZ(la))); }
+      }
+      const last = line[line.length - 1]; pts.push(new THREE.Vector3(this.wX(last[1]), this.terrainY(last[1], last[0]) + 0.9, this.wZ(last[0])));
+      const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat); ln.computeLineDistances(); ln.renderOrder = 2; this.scene.add(ln);
+    }
   }
   private buildBirds() {
     const mat = new THREE.MeshBasicMaterial({ color: '#2c2c33', side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
@@ -600,7 +632,11 @@ export class WorldMap3D {
     }
     for (const m of this.markers) if (m.ring) { const s = 1 + 0.12 * Math.sin(this.pulse); m.ring.scale.set(s, 1, s); }
     this.animateWater();
-    for (const b of this.banners) b.mesh.rotation.y = 0.5 + Math.sin(this.pulse * 1.7 + b.phase) * 0.5;
+    for (const b of this.banners) { // ripple each cloth in the wind (more flutter toward the fly)
+      const p = b.mesh.geometry.attributes.position, a = p.array as Float32Array, base = b.base;
+      for (let i = 0; i < a.length; i += 3) { const lx = base[i]; a[i + 2] = Math.sin(this.pulse * 2.4 + lx * 4 + b.phase) * 0.22 * (0.3 + lx * 0.6); }
+      p.needsUpdate = true;
+    }
     for (const cl of this.clouds) { cl.mesh.position.x += cl.speed; if (cl.mesh.position.x > this.wX(this.bb.e) + 200) cl.mesh.position.x = this.wX(this.bb.w) - 200; }
     for (const bd of this.birds) {
       bd.grp.position.x += bd.speed;
