@@ -35,6 +35,8 @@ export class Renderer {
   private ladderMat?: THREE.MeshLambertMaterial;
   private ramModels: { group: THREE.Group; beam: THREE.Object3D }[] = [];
   private ramPhase = 0;
+  private flags: { mesh: THREE.Mesh; base: Float32Array; amp: number; ph: number }[] = [];
+  private sun!: THREE.DirectionalLight;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
@@ -82,19 +84,33 @@ export class Renderer {
     // Filmic tone mapping — the single biggest "real game" upgrade: warm highlight
     // rolloff + richer contrast, matching the icon's golden, punchy look.
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1.12;
+    this.gl.toneMappingExposure = 1.14;
+    // Real sun shadows. Only the (few, merged, mostly-static) structures cast — not
+    // the 2000 sprite soldiers — so it stays cheap on mobile while giving the field
+    // genuine 3D form. A soft PCF kernel keeps the chunky art from getting jaggy.
+    this.gl.shadowMap.enabled = true;
+    this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     canvasParent.appendChild(this.gl.domElement);
 
-    this.scene.background = new THREE.Color('#bcd6ec');
+    this.scene.background = new THREE.Color('#b7d3ec');
     // warm golden haze on the horizon so the big field reads with depth
-    this.scene.fog = new THREE.Fog('#e7d9bd', 230, 560);
+    this.scene.fog = new THREE.Fog('#e7d9bd', 235, 590);
     this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 1100);
 
-    // Warm raking key light (low sun) + cool sky fill so shadows stay alive.
-    this.scene.add(new THREE.HemisphereLight('#fff4da', '#6d7b3e', 0.82));
-    const sun = new THREE.DirectionalLight('#ffdca2', 1.95); sun.position.set(95, 115, 55); this.scene.add(sun);
-    const fill = new THREE.DirectionalLight('#aac6e4', 0.32); fill.position.set(-70, 55, -45); this.scene.add(fill);
-    this.scene.add(new THREE.AmbientLight('#fff0d6', 0.2));
+    // Warm raking key light (low golden sun) + cool sky fill so shadows stay alive.
+    this.scene.add(new THREE.HemisphereLight('#fff4da', '#6d7b3e', 0.78));
+    const sun = new THREE.DirectionalLight('#ffe1ad', 2.0); sun.position.set(96, 132, 64);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    const sc = sun.shadow.camera as THREE.OrthographicCamera;
+    sc.left = -185; sc.right = 185; sc.top = 210; sc.bottom = -210; sc.near = 20; sc.far = 460;
+    sun.shadow.bias = -0.0006; sun.shadow.normalBias = 1.1; sun.shadow.radius = 2.2;
+    // The structures are static, so the shadow map is FROZEN after the first frame and
+    // only re-rendered when a wall is being damaged/crumbling — near-zero cost on mobile.
+    sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = true; this.sun = sun;
+    this.scene.add(sun); this.scene.add(sun.target); // target defaults to the castle centre (origin)
+    const fill = new THREE.DirectionalLight('#aac6e4', 0.3); fill.position.set(-70, 55, -45); this.scene.add(fill);
+    this.scene.add(new THREE.AmbientLight('#fff0d6', 0.18));
 
     this.sscale = new Float32Array(sim.n);
     for (let i = 0; i < sim.n; i++) this.sscale[i] = 0.9 + jit(i, 1) * 0.28;
@@ -110,6 +126,7 @@ export class Renderer {
     this.buildTrebuchets();
     this.buildBallistae();
     this.buildEffects();
+    this.buildMotes();
 
     const ringGeo = new THREE.RingGeometry(2.6, 3.4, 40); ringGeo.rotateX(-Math.PI / 2);
     this.selRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85 }));
@@ -178,17 +195,17 @@ export class Renderer {
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     const grass = this.texGrass.clone(); grass.wrapS = grass.wrapT = THREE.RepeatWrapping; grass.repeat.set(60, 60); grass.needsUpdate = true;
     const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: grass, vertexColors: true }));
-    ground.position.y = -0.02; this.scene.add(ground);
+    ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
 
     // a worn dirt approach road from the attacker camp up to the gate (textured-feel
     // via a darker tinted strip; no moat — the field is fully traversable).
     const dirt = new THREE.MeshLambertMaterial({ color: '#b59468' });
     const road = new THREE.Mesh(new THREE.PlaneGeometry(20, 150).rotateX(-Math.PI / 2), dirt);
-    road.position.set(LAYOUT.gate.x, 0.01, LAYOUT.D + 70); this.scene.add(road);
+    road.position.set(LAYOUT.gate.x, 0.01, LAYOUT.D + 70); road.receiveShadow = true; this.scene.add(road);
     // a packed-earth apron hugging the castle base so walls don't grow straight from grass
     const apron = new THREE.Mesh(new THREE.PlaneGeometry((LAYOUT.W + 10) * 2, (LAYOUT.D + 10) * 2).rotateX(-Math.PI / 2),
       new THREE.MeshLambertMaterial({ color: '#a89071' }));
-    apron.position.set(0, 0.005, 0); this.scene.add(apron);
+    apron.position.set(0, 0.005, 0); apron.receiveShadow = true; this.scene.add(apron);
   }
 
   // shared stone materials (slight tone variation for richness)
@@ -241,7 +258,7 @@ export class Renderer {
         const mat = !wood ? this.stone(b.kind === 'gate' ? '#cdb892' : '#e6d6af') : this.stone(b.kind === 'gate' ? '#6e4a28' : '#8a5a31');
         if (!wood) mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
-        box.position.set(cx, 0, cz); this.scene.add(box);
+        box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         if (b.kind === 'gate') this.addGateDoors(extras, cx, cz, w, d, b.h, horiz, outer, wood);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
@@ -260,22 +277,21 @@ export class Renderer {
         }
         const mat = this.stone('#dfcca2'); mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
-        box.position.set(cx, 0, cz); this.scene.add(box);
+        box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         // roof + pole + flag stay separate (different materials) and hide on crumble
         const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * (round ? 0.74 : 0.82), round ? 7.5 : 6.5, round ? 14 : 12), roofMat);
-        roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.7, cz); this.scene.add(roof); extras.push(roof);
+        roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.7, cz); roof.castShadow = true; this.scene.add(roof); extras.push(roof);
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole); extras.push(pole);
-        const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide }));
-        flag.position.set(cx + 1.2, b.h + 8, cz); this.scene.add(flag); extras.push(flag);
+        const flag = this.makeBanner(cx + 0.18, b.h + 8.4, cz, 2.6, 1.5, COL_DEFEND); this.scene.add(flag); extras.push(flag);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'keep') {
         keepStoneGeos.push(this.boxG(w, b.h, d, cx, b.h / 2, cz), this.boxG(w - 5, 5, d - 5, cx, b.h + 2.5, cz));
         for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; keepStoneGeos.push(this.boxG(w, 1.4, 1, cx + Math.sin(a) * (d / 2), b.h + 0.7, cz + Math.cos(a) * (d / 2), a)); }
-        const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.8, 9, 14), roofMat); roof.position.set(cx, b.h + 9.5, cz); this.scene.add(roof);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.8, 9, 14), roofMat); roof.position.set(cx, b.h + 9.5, cz); roof.castShadow = true; this.scene.add(roof);
         keepTimberGeos.push(this.boxG(2.6, 4, 0.4, cx, 2, b.z1));
         for (const [wx, wy] of [[-3, 8], [3, 8], [-3, 13], [3, 13]] as const) keepTimberGeos.push(this.boxG(1, 1.6, 0.3, cx + wx, wy, b.z1));
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6), timber); pole.position.set(cx, b.h + 15, cz); this.scene.add(pole);
-        const flag = new THREE.Mesh(new THREE.PlaneGeometry(4, 2.4), new THREE.MeshLambertMaterial({ color: COL_DEFEND, side: THREE.DoubleSide })); flag.position.set(cx + 2, b.h + 16, cz); this.scene.add(flag);
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6), timber); pole.position.set(cx, b.h + 15, cz); pole.castShadow = true; this.scene.add(pole);
+        const flag = this.makeBanner(cx + 0.26, b.h + 16.4, cz, 4.2, 2.5, COL_DEFEND); this.scene.add(flag);
       } else if (b.kind === 'building') {
         // half-timbered plaster house + tiled gabled roof — colour baked into
         // vertex colours so every house merges into one mesh yet varies.
@@ -309,14 +325,14 @@ export class Renderer {
     // ---- collapse the static batches into a handful of draw calls ----
     if (bodyGeos.length) {
       const m = new THREE.Mesh(mergeGeometries(bodyGeos, false), new THREE.MeshLambertMaterial({ map: this.texPlaster, vertexColors: true }));
-      this.scene.add(m);
+      m.castShadow = m.receiveShadow = true; this.scene.add(m);
     }
     if (houseRoofGeos.length) {
       const m = new THREE.Mesh(mergeGeometries(houseRoofGeos, false), new THREE.MeshLambertMaterial({ map: this.texRoof, vertexColors: true, side: THREE.DoubleSide }));
-      this.scene.add(m);
+      m.castShadow = true; this.scene.add(m);
     }
     if (doorGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(doorGeos, false), timber));
-    if (keepStoneGeos.length) { const km = this.stone('#d6c499'); km.map = this.texStone; this.scene.add(new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km)); }
+    if (keepStoneGeos.length) { const km = this.stone('#d6c499'); km.map = this.texStone; const m = new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
     if (keepTimberGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(keepTimberGeos, false), timber));
   }
 
@@ -545,6 +561,60 @@ export class Renderer {
     this.scene.add(g); extras.push(g);
   }
 
+  // Ambient dust motes drifting over the field — warm specks catching the sun, the
+  // cheap "breathing world" trick. 90 points, soft dot sprite, slow drift + recycle.
+  private motes!: THREE.Points; private moteVel!: Float32Array;
+  private buildMotes() {
+    const N = 90, pos = new Float32Array(N * 3); this.moteVel = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 280; pos[i * 3 + 1] = 2 + Math.random() * 46; pos[i * 3 + 2] = -110 + Math.random() * 300;
+      this.moteVel[i * 3] = 0.6 + Math.random() * 1.4; this.moteVel[i * 3 + 1] = (Math.random() - 0.5) * 0.5; this.moteVel[i * 3 + 2] = (Math.random() - 0.5) * 0.8;
+    }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const cv = document.createElement('canvas'); cv.width = cv.height = 32; const g = cv.getContext('2d')!;
+    const rg = g.createRadialGradient(16, 16, 0, 16, 16, 16); rg.addColorStop(0, 'rgba(255,244,214,0.9)'); rg.addColorStop(1, 'rgba(255,244,214,0)');
+    g.fillStyle = rg; g.fillRect(0, 0, 32, 32);
+    const tex = new THREE.CanvasTexture(cv);
+    this.motes = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.5, map: tex, transparent: true, opacity: 0.5, depthWrite: false, sizeAttenuation: true, blending: THREE.AdditiveBlending }));
+    this.motes.frustumCulled = false; this.scene.add(this.motes);
+  }
+  private updateMotes(dt: number) {
+    const a = this.motes.geometry.attributes.position.array as Float32Array, v = this.moteVel;
+    for (let i = 0; i < a.length; i += 3) {
+      a[i] += v[i] * dt; a[i + 1] += v[i + 1] * dt + Math.sin(this.time * 0.6 + i) * 0.01; a[i + 2] += v[i + 2] * dt;
+      if (a[i] > 150) { a[i] = -150; a[i + 1] = 2 + Math.random() * 46; a[i + 2] = -110 + Math.random() * 300; }
+    }
+    this.motes.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // A heraldic banner flying from a pole: a segmented cloth (so it can ripple) with
+  // a gold top band, registered for the per-frame wind wave. Left edge sits at the pole.
+  private makeBanner(x: number, y: number, z: number, len: number, h: number, color: THREE.ColorRepresentation): THREE.Mesh {
+    const geo = new THREE.PlaneGeometry(len, h, 9, 2); geo.translate(len / 2, 0, 0); // pole at local x=0
+    // a slim gold valance along the top edge for a richer, period look
+    const col: number[] = []; const c = new THREE.Color(color), gold = new THREE.Color('#e6bb52');
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) { const top = pos.getY(i) > h * 0.32; const cc = top ? gold : c; col.push(cc.r, cc.g, cc.b); }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    mesh.position.set(x, y, z);
+    this.flags.push({ mesh, base: (pos.array as Float32Array).slice(), amp: 0.12 + len * 0.05, ph: x * 0.3 + z * 0.2 });
+    return mesh;
+  }
+  // ripple every banner in the wind (cheap: a handful of small segmented planes)
+  private updateFlags() {
+    const t = this.time * 2.4;
+    for (const f of this.flags) {
+      if (!f.mesh.visible) continue;
+      const p = f.mesh.geometry.attributes.position, a = p.array as Float32Array, b = f.base;
+      for (let i = 0; i < a.length; i += 3) {
+        const lx = b[i]; // distance from the pole along the cloth
+        a[i + 2] = Math.sin(t + lx * 1.5 + f.ph) * f.amp * (0.25 + lx * 0.13); // more flutter toward the fly
+      }
+      p.needsUpdate = true; f.mesh.geometry.computeVertexNormals();
+    }
+  }
+
   setSelection(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.selRing.visible = false; return; } this.selRing.visible = true; this.selRing.position.set(cx, 0.06, cz); }
   setTargetMarker(cx: number | null, cz: number | null) { if (cx === null || cz === null) { this.targetRing.visible = false; return; } this.targetRing.visible = true; this.targetRing.position.set(cx, 0.5, cz); }
   // flash a move-order marker at a ground point for ~1.6s
@@ -657,6 +727,7 @@ export class Renderer {
       }
       v.prevHp = seg.hp;
       if (v.crumbling > 0 && v.crumbling < 1) {
+        this.sun.shadow.needsUpdate = true; // a wall is collapsing — refresh the frozen shadow map
         v.crumbling = Math.min(1, v.crumbling + dt / 0.7);
         const e = v.crumbling, k = 1 - 0.72 * e;
         // merged section meshes have their origin at the ground, so collapse =
@@ -703,6 +774,8 @@ export class Renderer {
     this.updateWalls(dt);
     this.updateLadders();
     this.updateRams(dt);
+    this.updateFlags();
+    this.updateMotes(dt);
     this.updateEffects(dt);
 
     const sa = this.shadowMesh.instanceMatrix.array as Float32Array;

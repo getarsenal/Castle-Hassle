@@ -416,6 +416,9 @@ function enterCastle(c: CampaignCastle) {
   buildMuster(); $('muster').classList.add('show');
   newGame(); // backdrop of the actual castle while mustering
 }
+// Debug/QA hook: jump straight into a chosen campaign castle's muster (used by the
+// headless screenshot harness, which can't reliably pick a 3D map marker).
+(window as any).__battle = (n = 0) => { try { stopMenuMusic(); document.querySelectorAll('.show').forEach(e => e.classList.remove('show')); enterCastle(castles[Math.max(0, Math.min(n, castles.length - 1))]); } catch (e) { console.error(e); } };
 // A raid: a smaller, weaker holding. Same muster → battle flow, but on a win it
 // pays its gold reward (repeatable) instead of unlocking the next siege. A fresh
 // seed each time so the fort varies from raid to raid.

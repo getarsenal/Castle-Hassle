@@ -39,6 +39,9 @@
     /* full-screen black used to cross-fade the intro into the title */
     #fadeBlack { position: fixed; inset: 0; background: #000; opacity: 0; z-index: 60; pointer-events: none; transition: opacity 0.7s ease; }
     #fadeBlack.on { opacity: 1; pointer-events: auto; }
+    /* cinematic vignette over the 3D scenes (battle + map); below the HUD/overlays */
+    #vignette { position: fixed; inset: 0; z-index: 3; pointer-events: none;
+      background: radial-gradient(ellipse 75% 75% at 50% 46%, transparent 56%, rgba(10,7,4,0.16) 80%, rgba(8,5,3,0.42) 100%); }
     #flash { position: fixed; inset: 0; z-index: 58; pointer-events: none; opacity: 0; }
     #flash.go { animation: flashFade 0.8s ease-out forwards; }
     @keyframes flashFade { 0% { opacity: 0.66; } 100% { opacity: 0; } }
@@ -293,6 +296,7 @@
 <body>
   <div id="app"></div>
   <div id="loading">RAISING THE BANNERS…</div>
+  <div id="vignette"></div>
   <div id="fadeBlack"></div>
   <div id="flash"></div>
   <audio id="titleMusic" loop></audio>

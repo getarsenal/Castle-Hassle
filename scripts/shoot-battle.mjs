@@ -1,0 +1,32 @@
+import puppeteer from 'puppeteer-core';
+import { createServer } from 'node:http';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { extname, join } from 'node:path';
+function findChrome() { const b = `${process.env.HOME}/.cache/puppeteer/chrome-headless-shell`; const v = execSync(`ls ${b}`).toString().trim().split('\n')[0]; return `${b}/${v}/chrome-headless-shell-linux64/chrome-headless-shell`; }
+const MIME = { '.html': 'text/html', '.mp3': 'audio/mpeg', '.mp4': 'video/mp4', '.png': 'image/png', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json' };
+const root = process.cwd();
+const server = createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const fp = join(root, p); if (!existsSync(fp)) { res.statusCode = 404; res.end('nf'); return; } res.setHeader('content-type', MIME[extname(fp)] || 'application/octet-stream'); res.end(readFileSync(fp)); });
+await new Promise(r => server.listen(0, r)); const port = server.address().port;
+const browser = await puppeteer.launch({ executablePath: findChrome(), headless: 'shell', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', '--disable-dev-shm-usage', '--autoplay-policy=no-user-gesture-required'] });
+const page = await browser.newPage();
+page.on('pageerror', e => console.log('PAGEERROR', e.message));
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da6360000002000154a24f7e0000000049454e44ae426082', 'hex');
+await page.setRequestInterception(true);
+page.on('request', r => (/getarsenal\.app/.test(r.url()) && /\.(png|jpg|jpeg|webmanifest|mp4)/.test(r.url())) ? r.respond({ status: 200, contentType: 'image/png', body: PNG }) : r.continue());
+await page.setViewport({ width: 900, height: 700, deviceScaleFactor: 1.6 });
+await page.goto(`http://localhost:${port}/index.html`, { waitUntil: 'load' });
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+const click = (s) => page.evaluate(x => { const e = document.querySelector(x); if (e) e.click(); return !!e; }, s);
+const N = Number(process.argv[2] || 4);
+await wait(2200); await click('#startGameBtn'); await wait(1500);
+await page.evaluate(n => window.__battle(n), N); await wait(1600); // jump straight into a campaign castle
+await click('#musterBtn'); await wait(2400);
+await page.evaluate(() => { localStorage.setItem('castlehassle.tutorial.v1','1'); const t=document.getElementById('tutorial'); if(t){t.classList.remove('show');t.innerHTML='';} });
+await wait(400);
+// orbit the camera DOWN to a lower angle so shadows + banners read, and zoom in
+await page.mouse.move(450, 320); await page.mouse.down(); await page.mouse.move(450, 388, {steps: 10}); await page.mouse.up(); await wait(300);
+await page.mouse.move(450, 350); for (let i=0;i<3;i++){ await page.mouse.wheel({deltaY:-120}); await wait(50);} await wait(500);
+writeFileSync('/tmp/battle.png', await page.screenshot());
+console.log('wrote /tmp/battle.png');
+await browser.close(); server.close();
