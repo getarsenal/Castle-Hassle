@@ -544,11 +544,16 @@ function devTelemetry(): [string, string][] {
   const att = sim ? sim.countAlive(Faction.Attacker) : 0;
   const def = sim ? sim.countAlive(Faction.Defender) : 0;
   const proj = sim ? sim.projectiles.reduce((n, p) => n + (p.active ? 1 : 0), 0) : 0;
+  const pf = sim ? sim.profSnapshot() : null;
   return [
     ['fps', telFps.toFixed(0)],
     ['frame ms', (telSimMs + telGfxMs).toFixed(1)],
     ['sim ms', telSimMs.toFixed(1)],
     ['gfx ms', telGfxMs.toFixed(1)],
+    ['  sim:hash', pf ? pf.hash.toFixed(1) : '-'],
+    ['  sim:pre-pass', pf ? pf.pre.toFixed(1) : '-'],
+    ['  sim:main-loop', pf ? pf.main.toFixed(1) : '-'],
+    ['  sim:combat', pf ? pf.post.toFixed(1) : '-'],
     ['sim steps/frame', String(lastSteps)],
     ['units (slots)', sim ? String(sim.n) : '0'],
     ['attackers alive', String(att)],

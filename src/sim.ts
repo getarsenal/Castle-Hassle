@@ -483,6 +483,7 @@ export class Sim {
   projectiles: Projectile[] = [];
   ballistae: Emplacement[] = [];
   private _near = new Int32Array(this.MAX).fill(-1); // cached target per soldier (throttled re-scan)
+  private _scanCd = new Int16Array(this.MAX);        // frames until next full enemy scan (adaptive)
   private _frame = 0;
   phase: 'deploy' | 'battle' | 'over' = 'deploy';
   winner: Faction | null = null;
@@ -940,6 +941,14 @@ export class Sim {
   private hStart = new Int32Array(this.hCols * this.hRows + 1);
   private hItems = new Int32Array(this.MAX);
   private hCellOf = new Int32Array(this.MAX); // cached cell per unit (scratch, -1 = dead)
+  // dev profiler: per-section step time, accumulated; read+reset via profSnapshot()
+  prof = { hash: 0, pre: 0, main: 0, post: 0, steps: 0 };
+  profSnapshot() {
+    const p = this.prof, s = Math.max(1, p.steps);
+    const r = { hash: p.hash / s, pre: p.pre / s, main: p.main / s, post: p.post / s, steps: p.steps };
+    p.hash = p.pre = p.main = p.post = p.steps = 0;
+    return r;
+  }
   private rebuildHash() {
     const total = this.hCols * this.hRows, cols = this.hCols, cell = this.hCellOf, cnt = this.hCount;
     cnt.fill(0);
@@ -964,7 +973,9 @@ export class Sim {
     if (this.phase === 'over') return;
     const deploy = this.phase === 'deploy'; // positioning phase: move, but no combat
     this._frame++;
+    const _p = this.prof; let _t = performance.now();
     this.rebuildHash();
+    _p.hash += performance.now() - _t; _t = performance.now();
 
     // morale / routing per unit + centroids + live ammo
     for (const u of this.units) {
@@ -1020,6 +1031,7 @@ export class Sim {
       }
     }
 
+    _p.pre += performance.now() - _t; _t = performance.now();
     for (let i = 0; i < this.n; i++) {
       if (!this.alive[i]) continue;
       const u = this.units[this.unit[i]];
@@ -1036,16 +1048,17 @@ export class Sim {
       if (!deploy && t !== UType.Siege) {
         const isMelee = t === UType.Heavy || t === UType.Light || t === UType.Cavalry;
         const my = this.py[i];
-        // Re-scan only every few frames (staggered by index); the rest of the time
-        // reuse the cached target if it's still alive and in reach. Combined with a
-        // capped search radius/bucket, this keeps the gate pile from melting fps.
+        // Keep using a still-valid cached target every frame (cheap distance check),
+        // and only run the expensive bucket sweep on an adaptive cooldown: a unit in
+        // contact rescans often to track/retarget, but one that finds nothing coasts
+        // for ~12 frames — so a whole host marching in the open isn't sweeping 49-81
+        // buckets per man per frame for enemies that aren't in reach yet.
         const cached = this._near[i];
-        let scanned = false;
-        if (cached >= 0 && this.alive[cached] && this.fac[cached] !== this.fac[i] && (i + this._frame) % 4 !== 0) {
+        if (cached >= 0 && this.alive[cached] && this.fac[cached] !== this.fac[i]) {
           const ex = this.px[cached] - this.px[i], ez = this.pz[cached] - this.pz[i], d2 = ex * ex + ez * ez;
-          if (d2 < nd2 && !(isMelee && Math.abs(this.py[cached] - my) > 2.5)) { nearest = cached; nd2 = d2; scanned = true; }
+          if (d2 < nd2 && !(isMelee && Math.abs(this.py[cached] - my) > 2.5)) { nearest = cached; nd2 = d2; }
         }
-        if (!scanned) {
+        if (--this._scanCd[i] <= 0) {
           const sr = Math.min(SRAD[t], 4); let done = false;
           for (let rr = hr - sr; rr <= hr + sr && !done; rr++) for (let cc = hc - sr; cc <= hc + sr && !done; cc++) {
             if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
@@ -1059,6 +1072,7 @@ export class Sim {
             }
           }
           this._near[i] = nearest;
+          this._scanCd[i] = nearest >= 0 ? 4 : 8; // engaged -> stay sharp; nothing found -> coast
         }
       }
 
@@ -1230,7 +1244,9 @@ export class Sim {
       this.pz[i] = Math.max(WORLD.minZ, Math.min(WORLD.maxZ, nz));
     }
 
+    _p.main += performance.now() - _t; _t = performance.now();
     if (!deploy) { this.stepRams(dt); this.stepBallistae(dt); this.stepProjectiles(dt); this.checkVictory(); }
+    _p.post += performance.now() - _t; _p.steps++;
   }
 
   // Archers only fire at enemies inside their ordered focus area (if one is set),
