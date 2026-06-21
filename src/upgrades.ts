@@ -66,7 +66,9 @@ function injectStyles() {
   .upgTree{margin-bottom:16px}
   .upgTree h3{margin:0 0 8px;font-size:16px;color:#e9cf9a;display:flex;align-items:center;gap:8px}
   .upgRow{display:flex;gap:9px}
-  .upgNode{flex:1;border:1px solid #5a4626;border-radius:11px;padding:9px 9px 10px;background:#241a0f;position:relative;text-align:center;min-width:0}
+  .upgNode{flex:1;border:1px solid #5a4626;border-radius:11px;padding:9px 9px 10px;position:relative;text-align:center;min-width:0;
+    background:repeating-linear-gradient(50deg,rgba(255,235,190,0.018) 0 2px,rgba(0,0,0,0.025) 2px 4px),linear-gradient(180deg,#2a1f12,#1e160c);
+    box-shadow:inset 0 1px 0 rgba(255,225,160,0.06)}
   .upgNode .nm{font-size:12.5px;color:#ffe6a6;font-weight:600;line-height:1.15}
   .upgNode .ds{font-size:11px;color:#cbb78f;margin:4px 0 8px;line-height:1.25;min-height:28px}
   .upgNode .buy{border:none;border-radius:7px;padding:7px 4px;font:600 12px 'EB Garamond',Georgia,serif;width:100%;cursor:pointer}

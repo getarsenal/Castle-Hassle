@@ -29,9 +29,11 @@ function ensureStyle() {
   .tutHi{position:relative;z-index:81;outline:3px solid #ffd24a;outline-offset:3px;border-radius:12px;
     box-shadow:0 0 0 9999px rgba(6,10,18,0.55),0 0 22px 4px rgba(255,210,74,0.7);transition:outline .2s}
   .tutCard{position:absolute;left:50%;bottom:max(28px,calc(var(--safe-bottom,0px) + 22px));transform:translateX(-50%);
-    width:min(440px,90vw);background:linear-gradient(180deg,#1b2436,#141c2c);border:1px solid rgba(255,225,160,0.28);
-    border-radius:16px;padding:18px 18px 14px;box-shadow:0 18px 50px rgba(0,0,0,0.6);color:#f3e7c8;
-    font-family:'Spectral',Georgia,serif}
+    width:min(440px,90vw);border:1px solid #5a4626;
+    background:repeating-linear-gradient(50deg,rgba(255,235,190,0.018) 0 2px,rgba(0,0,0,0.025) 2px 4px),radial-gradient(130% 90% at 50% -10%,rgba(126,90,42,0.24),transparent 62%),linear-gradient(180deg,#241a0f,#150f08);
+    border-radius:16px;padding:18px 18px 14px;box-shadow:0 18px 50px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,225,160,0.12);color:#f3e7c8;
+    font-family:'Spectral',Georgia,serif;animation:tutRise .34s cubic-bezier(.2,.9,.25,1)}
+  @keyframes tutRise{from{opacity:0;transform:translate(-50%,14px)}to{opacity:1;transform:translateX(-50%)}}
   .tutCard h3{margin:0 0 6px;font-family:'Cinzel',Georgia,serif;font-size:18px;color:#ffe6a6;letter-spacing:.3px}
   .tutCard p{margin:0 0 12px;font-size:14.5px;line-height:1.5;color:#dcd2bb}
   .tutRow{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -39,7 +41,7 @@ function ensureStyle() {
   .tutDots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.25)}
   .tutDots i.on{background:#ffd24a}
   .tutBtns{display:flex;gap:8px}
-  .tutSkip{background:none;border:none;color:#9fb0c6;font:600 13px 'Cinzel',serif;cursor:pointer;padding:8px}
+  .tutSkip{background:none;border:none;color:#a08c66;font:600 13px 'Cinzel',serif;cursor:pointer;padding:8px}
   .tutNext{background:linear-gradient(180deg,#ffd95e,#f1b53a);border:none;color:#241600;
     font:700 14px 'Cinzel',serif;padding:9px 18px;border-radius:10px;cursor:pointer}
   .tutNext:active{transform:translateY(1px)}`;

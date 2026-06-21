@@ -16,7 +16,9 @@ function injectStyles() {
   .raidGold b{font-size:20px}
   .raidHint{font-size:12px;color:#a08c66;padding:9px 18px 6px;line-height:1.45}
   .raidBody{flex:1;overflow-y:auto;padding:8px 14px 28px}
-  .raidCard{border:1px solid #5a4626;border-radius:13px;padding:13px 14px;background:#241a0f;margin-bottom:12px}
+  .raidCard{border:1px solid #5a4626;border-radius:13px;padding:13px 14px;margin-bottom:12px;
+    background:repeating-linear-gradient(50deg,rgba(255,235,190,0.018) 0 2px,rgba(0,0,0,0.025) 2px 4px),linear-gradient(180deg,#2a1f12,#1e160c);
+    box-shadow:inset 0 1px 0 rgba(255,225,160,0.07),0 3px 10px rgba(0,0,0,0.3)}
   .raidName{font-size:17px;color:#ffe6a6;font-weight:700;font-family:'Cinzel',Georgia,serif}
   .raidBlurb{font-size:13px;color:#cbb78f;line-height:1.4;margin:5px 0 10px}
   .raidMeta{display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:11px}

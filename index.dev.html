@@ -30,8 +30,35 @@
   <meta name="twitter:description" content="Command an army of thousands and storm the castle." />
   <meta name="twitter:image" content="https://getarsenal.app/Castle-Hassle/og.jpg" />
   <style>
-    :root { --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px); }
+    :root {
+      --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px);
+      /* ---- design tokens: one medieval system, used front to back ---- */
+      --gold: #ffd24a; --gold-bright: #ffe487; --gold-deep: #e7a52a; --gold-shadow: #b9851c;
+      --gold-soft: #ffe6a6; --gold-line: #7a5e2e;
+      --leather: #241a0f; --leather-2: #150f08; --leather-edge: #5a4626;
+      --parch: #e9d8af; --att: #e8513a; --def: #3d7be0;
+      --text: #f3e6cf; --text-dim: #cbb892; --text-faint: #a08c66;
+      --r-sm: 9px; --r-md: 13px; --r-lg: 18px;
+      --sh-1: 0 2px 8px rgba(0,0,0,0.32); --sh-2: 0 8px 26px rgba(0,0,0,0.45); --sh-3: 0 22px 60px rgba(0,0,0,0.6);
+      /* faint repeating grain so panels read as tooled leather / vellum, not flat glass */
+      --grain: repeating-linear-gradient(50deg, rgba(255,235,190,0.018) 0 2px, rgba(0,0,0,0.025) 2px 4px);
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    /* ---- shared UI components (premium, coherent) ---- */
+    .ui-panel { background: var(--grain), radial-gradient(130% 85% at 50% -10%, rgba(126,90,42,0.22), transparent 62%), linear-gradient(180deg, var(--leather), var(--leather-2));
+      border: 1px solid var(--leather-edge); border-radius: var(--r-lg);
+      box-shadow: var(--sh-2), inset 0 1px 0 rgba(255,225,160,0.12), inset 0 0 30px rgba(0,0,0,0.34); }
+    .ui-btn { font: 800 15px 'Cinzel', Georgia, serif; letter-spacing: .5px; color: #2c1a06; cursor: pointer;
+      background: linear-gradient(var(--gold-bright), var(--gold-deep)); border: none; border-top: 1px solid #fff1c4;
+      border-radius: var(--r-md); box-shadow: 0 4px 0 var(--gold-shadow), var(--sh-1); padding: 11px 18px; }
+    .ui-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--gold-shadow); }
+    .ui-btn:disabled { background: linear-gradient(#4a3c26, #34291a); color: #8a7a5c; border-top-color: #5a4a30; box-shadow: 0 3px 0 #241a10; cursor: default; }
+    .ui-btn--danger { color: #ffe7dd; background: radial-gradient(circle at 42% 30%, #b54632, #6f261c); border-top: 1px solid rgba(255,180,150,0.5); box-shadow: 0 4px 0 #4a160e, var(--sh-1); }
+    /* gold filigree divider: a hairline rule with a centred lozenge */
+    .ui-rule { height: 10px; margin: 2px 0 8px; opacity: .85;
+      background: linear-gradient(90deg, transparent, var(--gold-line) 14%, var(--gold-line) 86%, transparent) center/100% 1px no-repeat; position: relative; }
+    .ui-rule::after { content: ''; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; transform: translate(-50%,-50%) rotate(45deg); background: var(--gold-soft); box-shadow: 0 0 6px rgba(255,210,74,0.6); }
+    @keyframes uiRise { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2433; }
     body { font-family: 'EB Garamond', Georgia, serif; color: #fff; touch-action: none; user-select: none; -webkit-user-select: none; }
     #app { position: fixed; inset: 0; }
@@ -97,8 +124,8 @@
       border: 1px solid rgba(255,255,255,0.18); overflow: hidden; }
     #keepFill { height: 100%; width: 0%; border-radius: 6px;
       background: linear-gradient(90deg, #e8b53a, #c43d34); transition: width 0.12s linear; }
-    #startbtn { font: inherit; font-weight: 800; font-size: 15px; color: #1a2433; background: #ffd24a; border: none; border-radius: 12px; padding: 10px 22px; box-shadow: 0 4px 0 #c79a20; cursor: pointer; }
-    #startbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #c79a20; }
+    #startbtn { font: 800 15px 'Cinzel', Georgia, serif; letter-spacing: .4px; color: #2c1a06; background: linear-gradient(var(--gold-bright), var(--gold-deep)); border: none; border-top: 1px solid #fff1c4; border-radius: var(--r-md); padding: 10px 22px; box-shadow: 0 4px 0 var(--gold-shadow), var(--sh-1); cursor: pointer; }
+    #startbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--gold-shadow); }
 
     /* bottom controls stack: cards → tools → hint (above them) */
     #cards {
@@ -146,9 +173,10 @@
     @keyframes bannerIn { from { opacity: 0; } to { opacity: 1; } }
     .bannerCard {
       display: flex; flex-direction: column; align-items: center; gap: 15px; text-align: center;
-      width: min(86vw, 380px); padding: 30px 26px 26px; border-radius: 18px;
-      background: linear-gradient(#241a0f, #14100a); border: 1px solid #6a522a;
-      box-shadow: 0 22px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,225,160,0.08);
+      width: min(86vw, 380px); padding: 30px 26px 26px; border-radius: var(--r-lg);
+      background: var(--grain), radial-gradient(130% 85% at 50% -10%, rgba(126,90,42,0.22), transparent 62%), linear-gradient(180deg, var(--leather), var(--leather-2));
+      border: 1px solid var(--leather-edge); animation: uiRise .42s cubic-bezier(.2,.9,.25,1);
+      box-shadow: var(--sh-3), inset 0 1px 0 rgba(255,225,160,0.12), inset 0 0 30px rgba(0,0,0,0.34);
     }
     #banner h1 { font-size: 33px; font-weight: 800; letter-spacing: 1px; line-height: 1.1; text-shadow: 0 3px 14px rgba(0,0,0,.5); }
     #banner p { font-size: 15px; line-height: 1.5; color: #d8c8a8; max-width: 320px; }
@@ -242,7 +270,8 @@
       padding: calc(var(--safe-top) + 26px) 16px calc(var(--safe-bottom) + 20px); overflow-y: auto;
       background:
         radial-gradient(120% 60% at 50% -10%, rgba(255,210,120,0.18), transparent 60%),
-        linear-gradient(180deg, #141d2b 0%, #1d2942 42%, #3a3326 100%);
+        var(--grain),
+        linear-gradient(180deg, #1b140c 0%, #241a0f 46%, #2e2213 100%);
     }
     #muster.show { display: flex; }
     #muster::after { /* crenellated castle silhouette at the bottom */
@@ -266,10 +295,10 @@
     .rbtn.rec:disabled { opacity: 0.3; box-shadow: 0 3px 0 #2f5a24; }
     .rrow {
       display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 14px;
-      background: linear-gradient(180deg, rgba(56,72,100,0.55), rgba(30,41,66,0.7));
-      border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+      background: var(--grain), linear-gradient(180deg, rgba(78,60,33,0.5), rgba(36,26,15,0.74));
+      border: 1px solid var(--leather-edge); box-shadow: 0 4px 14px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,225,160,0.07);
     }
-    .rrow .ic { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 23px; background: radial-gradient(circle at 35% 30%, #4a5f86, #283a5c); border: 1px solid rgba(255,255,255,0.14); }
+    .rrow .ic { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 23px; background: radial-gradient(circle at 35% 30%, #6a5230, #2c2012); border: 1px solid rgba(255,225,160,0.18); }
     .rrow .info { flex: 1; min-width: 0; }
     .rrow .nm { font-size: 14.5px; font-weight: 800; }
     .rrow .dsc { font-size: 10.5px; color: rgba(255,255,255,0.58); }
