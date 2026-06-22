@@ -1222,9 +1222,16 @@ export class Sim {
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
           const charge = t === UType.Cavalry && u.chargeT > 0 ? CHARGE_DMG : 1;
           const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1) * charge;
+          // An attacker still fighting its way IN (storming/breaching, not yet inside the
+          // walls) must keep scaling — it does not get dragged off to chase a defender,
+          // which is what left whole arms swirling at the foot of the wall instead of
+          // going up it. It still trades blows with anyone right in its face (melee), and
+          // once it's inside it fights/chases normally to clear the bailey.
+          const assaultingOut = u.faction === Faction.Attacker && (u.objKind === 'storm' || u.objKind === 'breach') && !this.insideWalls(this.px[i], this.pz[i]);
           if (nearest >= 0 && dist <= mrng) {
             if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg * this.defenseMul(nearest); this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
-          } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
+            if (assaultingOut) { this.assaultMove(i, u, t); dx = this._dir[0]; dz = this._dir[1]; } // press on up the wall even while trading blows
+          } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !assaultingOut && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
                      && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
             // chase a *reachable* enemy — but only once the company has reached its
             // ordered ground, so a marching arm isn't dragged off course en route
@@ -1586,7 +1593,7 @@ export class Sim {
     // queue at its foot, rather than every man raising his own where he stands. Only
     // raise a fresh ladder if none is within reach — so they form spread along the
     // wall and the host funnels up the existing ones in order.
-    let L = this.nearestLadder(this.px[i], this.pz[i], 12);
+    let L = this.nearestLadder(this.px[i], this.pz[i], 6);
     if (L >= 0) this._diag.ladReuse++;
     else {
       if (seg < 0) { this._diag.noWall++; this._dir[0] = 0; this._dir[1] = 0; return; } // wallTowardGoal found no wall
