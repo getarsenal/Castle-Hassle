@@ -11,6 +11,7 @@ import { feedback, installFeedback } from './feedback';
 import { startTutorial } from './tutorial';
 import { initDevPanel, DevConfig } from './devpanel';
 import * as THREE from 'three';
+declare const __BUILD__: string; // injected at build time (commit + timestamp)
 
 (window as any).__started = true;
 (window as any).__audio = battleAudio; // console access for tuning / preview render
@@ -546,6 +547,7 @@ function devTelemetry(): [string, string][] {
   const proj = sim ? sim.projectiles.reduce((n, p) => n + (p.active ? 1 : 0), 0) : 0;
   const pf = sim ? sim.profSnapshot() : null;
   return [
+    ['build', typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev'],
     ['fps', telFps.toFixed(0)],
     ['frame ms', (telSimMs + telGfxMs).toFixed(1)],
     ['sim ms', telSimMs.toFixed(1)],
