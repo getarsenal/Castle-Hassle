@@ -570,7 +570,38 @@ function devTelemetry(): [string, string][] {
     ['JS heap MB', mem ? (mem.usedJSHeapSize / 1048576).toFixed(0) : 'n/a'],
     ['phase', sim ? sim.phase : '-'],
     ['speed', gameSpeed + 'x' + (paused ? ' paused' : '')],
+    ...assaultRows(),
   ];
+}
+// Live assault breakdown — answers "why no ladders": where the attacker host is,
+// and the per-window rate of the escalade events (units reaching a wall, calling
+// useLadder, ladders actually made vs blocked by the per-section cap).
+function assaultRows(): [string, string][] {
+  if (!sim || sim.phase !== 'battle') return [['── assault ──', 'n/a']];
+  const a = sim.assaultDiag(), e = a.ev;
+  return [
+    ['── assault ──', `${a.total} att`],
+    ['  storming', String(a.storm)],
+    ['  breaching', String(a.breach)],
+    ['  moving/other', String(a.move)],
+    ['  holding', String(a.hold)],
+    ['  AT A WALL', String(a.atFoot)],
+    ['  climbing', String(a.climbing)],
+    ['  on wall-top', String(a.onWall)],
+    ['  ladders up', String(a.ladders)],
+    ['  engageWall/win', String(e.engWall)],
+    ['  engageGate/win', String(e.engGate)],
+    ['  useLadder/win', String(e.useLadder)],
+    ['  ladderMade/win', String(e.ladMade)],
+    ['  ladCapBlocked', String(e.ladCap)],
+    ['  noWallToGoal', String(e.noWall)],
+    ['  assaultMove/win', String(e.aMove)],
+  ];
+}
+// Full diagnostic blob the dev panel can copy to the clipboard for sharing.
+function devDiagText(): string {
+  const rows = devTelemetry();
+  return rows.map(([k, v]) => `${k}: ${v}`).join('\n');
 }
 function startCustomBattle(cfg: DevConfig) {
   comp.heavy = cfg.army.heavy; comp.light = cfg.army.light; comp.archer = cfg.army.archer;
@@ -584,7 +615,7 @@ function startCustomBattle(cfg: DevConfig) {
   newGame();
   if (cfg.autoBegin) { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); }
 }
-const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle });
+const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {
   const now = performance.now();

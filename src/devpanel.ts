@@ -16,6 +16,8 @@ export interface DevHooks {
   // returns ordered [label, value] telemetry rows, refreshed ~5x/sec while open
   getTelemetry: () => [string, string][];
   launch: (cfg: DevConfig) => void;
+  // full diagnostic text for the Copy/Export button (shared with the dev)
+  exportText: () => string;
 }
 
 const css = `
@@ -70,8 +72,8 @@ export function initDevPanel(hooks: DevHooks) {
   const chip = (id: string, label: string, on: boolean) => `<div class="chip${on ? ' on' : ''}" id="dp_${id}" data-on="${on}">${label}</div>`;
 
   el.innerHTML = `
-    <div class="dpHead"><h2>DEV — Battle Lab</h2><button class="dpClose" id="dpClose">Close</button></div>
-    <div class="dpSec"><h3>Live Telemetry</h3><div id="devTel"></div></div>
+    <div class="dpHead"><h2>DEV — Battle Lab</h2><div style="display:flex;gap:8px"><button class="dpClose" id="dpCopy" style="border-color:#7fe0a0;color:#9ff0bb">Copy</button><button class="dpClose" id="dpClose">Close</button></div></div>
+    <div class="dpSec"><h3>Live Telemetry <span id="dpCopied" style="color:#7fe0a0;font-weight:400;font-size:11px"></span></h3><div id="devTel"></div></div>
     <div class="dpSec"><h3>Presets</h3><div class="presets" id="dpPresets">${PRESETS.map((p, i) => `<div class="preset" data-i="${i}">${p.name}</div>`).join('')}</div></div>
     <div class="dpSec"><h3>Army</h3>
       ${arm('heavy', 'Heavy Inf', 1500)}${arm('light', 'Light Inf', 1200)}${arm('archer', 'Archers', 1000)}
@@ -122,6 +124,17 @@ export function initDevPanel(hooks: DevHooks) {
 
   const close = () => { el.classList.remove('show'); if (raf) { cancelAnimationFrame(raf); raf = 0; } };
   $('dpClose').addEventListener('click', close);
+  $('dpCopy').addEventListener('click', async () => {
+    const txt = hooks.exportText();
+    const note = $('dpCopied'); const done = () => { note.textContent = 'copied!'; setTimeout(() => (note.textContent = ''), 2500); };
+    try { await navigator.clipboard.writeText(txt); done(); }
+    catch { // clipboard blocked — fall back to a selectable prompt
+      const ta = document.createElement('textarea'); ta.value = txt; ta.style.cssText = 'position:fixed;inset:10% 5%;width:90%;height:70%;z-index:300';
+      el.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch { note.textContent = 'select + copy manually'; }
+      setTimeout(() => ta.remove(), 6000);
+    }
+  });
   $('dpLaunch').addEventListener('click', () => {
     hooks.launch({
       army: { heavy: num('heavy'), light: num('light'), archer: num('archer'), cavalry: num('cavalry'), siege: num('siege') },

@@ -971,6 +971,32 @@ export class Sim {
     p.hash = p.pre = p.main = p.post = p.steps = 0;
     return r;
   }
+  // dev assault diagnostics: event counters (incremented at the decision points,
+  // read+reset as a rate per window) + a live snapshot of where the attacker host is.
+  _diag = { aMove: 0, engWall: 0, engGate: 0, useLadder: 0, ladMade: 0, ladCap: 0, ladReuse: 0, noWall: 0 };
+  assaultDiag() {
+    const F = Faction.Attacker;
+    let total = 0, hold = 0, rout = 0, climbing = 0, onWall = 0, storm = 0, breach = 0, move = 0, atFoot = 0;
+    for (let i = 0; i < this.n; i++) {
+      if (!this.alive[i] || this.fac[i] !== F) continue; total++;
+      if (this.climbState[i] > 0) { climbing++; continue; }
+      if (this.py[i] > 5) { onWall++; continue; }
+      const u = this.units[this.unit[i]];
+      if (u.routing) { rout++; continue; }
+      if (u.hold) { hold++; continue; }
+      const ok = u.objKind;
+      if (ok === 'storm') storm++; else if (ok === 'breach') breach++; else move++;
+      // standing right at a wall (grid-cheap: a BLOCKED cell within ~5m)?
+      if (this.py[i] < 1) {
+        const px = this.px[i], pz = this.pz[i];
+        if (BLOCKED[cellOf(px + 5, pz)] || BLOCKED[cellOf(px - 5, pz)] || BLOCKED[cellOf(px, pz + 5)] || BLOCKED[cellOf(px, pz - 5)]) atFoot++;
+      }
+    }
+    const d = this._diag;
+    const ev = { aMove: d.aMove, engWall: d.engWall, engGate: d.engGate, useLadder: d.useLadder, ladMade: d.ladMade, ladCap: d.ladCap, ladReuse: d.ladReuse, noWall: d.noWall };
+    this._diag = { aMove: 0, engWall: 0, engGate: 0, useLadder: 0, ladMade: 0, ladCap: 0, ladReuse: 0, noWall: 0 };
+    return { total, hold, rout, storm, breach, move, atFoot, climbing, onWall, ladders: this.ladders.length, ev };
+  }
   private rebuildHash() {
     const total = this.hCols * this.hRows, cols = this.hCols, cell = this.hCellOf, cnt = this.hCount;
     cnt.fill(0);
@@ -1377,10 +1403,11 @@ export class Sim {
       const L = this.ladders[l]; if (L.seg !== seg) continue;
       onSeg++; const d = Math.abs(L.along - myAlong); if (d < bd) { bd = d; best = l; }
     }
-    if (best >= 0 && bd < 5) return best;                 // reuse a nearby ladder
+    if (best >= 0 && bd < 5) { this._diag.ladReuse++; return best; }      // reuse a nearby ladder
     const segLen = horiz ? g.x1 - g.x0 : g.z1 - g.z0;
     const cap = Math.max(1, Math.floor(segLen / 4));
-    if (onSeg >= cap || this.ladders.length >= this.LADDER_CAP) return best; // at cap → share the nearest
+    if (onSeg >= cap || this.ladders.length >= this.LADDER_CAP) { this._diag.ladCap++; return best; } // at cap → share the nearest
+    this._diag.ladMade++;
     const wallPerp = horiz ? (g.z0 + g.z1) / 2 : (g.x0 + g.x1) / 2;
     // foot on the side the attacker is approaching from (works for the citadel,
     // whose walls aren't centred on the world origin)
@@ -1417,6 +1444,7 @@ export class Sim {
   // Drive an attacking soldier at its objective, breaking through the wall in the
   // way: march to the section's foot, batter it down, and scale it (infantry).
   private assaultMove(i: number, u: Unit, t: UType) {
+    this._diag.aMove++;
     // A "break in HERE" order: smash the named section until it's open, even if a
     // way already exists elsewhere — the player chose this wall.
     if (u.objKind === 'breach') {
@@ -1460,11 +1488,12 @@ export class Sim {
     const dxw = cpx - this.px[i], dzw = cpz - this.pz[i], dw = Math.hypot(dxw, dzw);
     if (dw <= this.CLIMB + 1.5) {
       if (g.kind === 'gate') {                 // join the ram crew, pressing against the gate
+        this._diag.engGate++;
         if (u.faction === Faction.Attacker) g.ramCrew = (g.ramCrew || 0) + 1;
         const l = dw || 1; this._dir[0] = dxw / l * 0.18; this._dir[1] = dzw / l * 0.18;
       } else if (t === UType.Cavalry) {        // horse can't scale — wait at the foot for a gap
         const l = dw || 1; this._dir[0] = dxw / l * 0.25; this._dir[1] = dzw / l * 0.25;
-      } else this.useLadder(i, seg);           // scale the wall (never battered)
+      } else { this._diag.engWall++; this.useLadder(i, seg); }   // scale the wall (never battered)
     } else { const l = dw || 1; this._dir[0] = dxw / l; this._dir[1] = dzw / l; } // march to its foot
   }
   // Fixed-rate gate ram: once a crew is on a gate it loses HP at RAM_DPS, no faster
@@ -1493,7 +1522,8 @@ export class Sim {
     return out;
   }
   private useLadder(i: number, seg = this.wallTowardGoal(i)) {
-    if (seg < 0) { this._dir[0] = 0; this._dir[1] = 0; return; }
+    this._diag.useLadder++;
+    if (seg < 0) { this._diag.noWall++; this._dir[0] = 0; this._dir[1] = 0; return; } // wallTowardGoal found no wall
     const L = this.findOrMakeLadder(seg, i);
     if (L < 0) { // couldn't get a ladder: just press toward the wall and retry
       const g = CASTLE[seg], cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
