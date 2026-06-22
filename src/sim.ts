@@ -885,6 +885,15 @@ export class Sim {
     const cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
     // a foot just OUTSIDE the section (on the side facing the keep's challenger)
     const horiz = (g.x1 - g.x0) >= (g.z1 - g.z0);
+    // Gather a SPAN of nearby standing wall/gate sections so a large arm escalades a
+    // WIDE stretch of wall (ladders all along it) instead of every man funnelling onto
+    // one 8m section behind a couple of ladders — which reads as "bunched up, no ladders".
+    const span: number[] = [];
+    for (let s = 0; s < CASTLE.length; s++) {
+      const b = CASTLE[s]; if (b.dead || (b.kind !== 'wall' && b.kind !== 'gate')) continue;
+      if (Math.hypot((b.x0 + b.x1) / 2 - cx, (b.z0 + b.z1) / 2 - cz) <= 22) span.push(s);
+    }
+    if (!span.length) span.push(seg);
     for (const u of this.divCompanies(div)) {
       if (u.type === UType.Siege || u.routing) continue;
       u.hold = false; u.assault = true;
@@ -895,7 +904,11 @@ export class Sim {
         u.ax = Math.max(WORLD.minX + 4, Math.min(WORLD.maxX - 4, ax)); u.az = Math.max(WORLD.minZ + 4, Math.min(WORLD.maxZ - 4, az));
         let c = cellOf(u.ax, u.az); if (BLOCKED[c]) c = cellOf(u.ax, u.az + 6); u.goal = c;
       } else {
-        u.objKind = 'breach'; u.objSeg = seg; u.ax = cx; u.az = cz; u.goal = cellOf(this.keepX, this.keepZ);
+        // each company forces the nearest section in the span — spreads the escalade
+        let bestSeg = span[0], bd = 1e9;
+        for (const s of span) { const b = CASTLE[s]; const d = ((b.x0 + b.x1) / 2 - u.cx) ** 2 + ((b.z0 + b.z1) / 2 - u.cz) ** 2; if (d < bd) { bd = d; bestSeg = s; } }
+        const bg = CASTLE[bestSeg];
+        u.objKind = 'breach'; u.objSeg = bestSeg; u.ax = (bg.x0 + bg.x1) / 2; u.az = (bg.z0 + bg.z1) / 2; u.goal = cellOf(this.keepX, this.keepZ);
       }
     }
     this.field(cellOf(this.keepX, this.keepZ));
