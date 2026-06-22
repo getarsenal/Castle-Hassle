@@ -53,7 +53,7 @@ const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
 // gate falls in ~20s (palisade) to ~40s (stone), long enough that ramming under
 // un-silenced wall-fire is costly. Stone WALLS can't be battered at all — engines
 // or ladders only.
-const RAM_DPS = 33;          // gate hit-points lost per second while a crew rams
+const RAM_DPS = 55;          // gate hit-points lost per second while a crew rams
 const RAM_CREW = 4;          // men that must be on the gate for the ram to bite
 // signature abilities
 const CHARGE_DUR = 4.5;      // a cavalry charge lasts this long...
@@ -301,7 +301,7 @@ const BLOCKED = new Uint8Array(NCELLS);
 // and towers/keep/buildings are impassable. This lets the attacker field reach EVERY
 // cell with a gradient toward the cheapest way in — breach, then gate, then wall —
 // so troops are never left with no direction (the cause of them balling up at a wall).
-const X_INF = 1e9, X_GATE = 16, X_WALL = 42;
+const X_INF = 1e9, X_GATE = 16, X_WALL = 20;
 const CROSS = new Float32Array(NCELLS);
 function crossAt(x: number, z: number): number {
   let pen = 0;
@@ -1355,7 +1355,7 @@ export class Sim {
 
   // Attacker: pick (or raise) a ladder on the nearest wall and queue at its foot;
   // mount single-file once it's up and the rungs below are clear.
-  private LADDER_CAP = 48;
+  private LADDER_CAP = 160;
   private findOrMakeLadder(seg: number, i: number): number {
     const g = CASTLE[seg], horiz = (g.x1 - g.x0) >= (g.z1 - g.z0);
     const myAlong = horiz ? this.px[i] : this.pz[i];
@@ -1364,9 +1364,9 @@ export class Sim {
       const L = this.ladders[l]; if (L.seg !== seg) continue;
       onSeg++; const d = Math.abs(L.along - myAlong); if (d < bd) { bd = d; best = l; }
     }
-    if (best >= 0 && bd < 7) return best;                 // reuse a nearby ladder
+    if (best >= 0 && bd < 5) return best;                 // reuse a nearby ladder
     const segLen = horiz ? g.x1 - g.x0 : g.z1 - g.z0;
-    const cap = Math.max(1, Math.floor(segLen / 6));
+    const cap = Math.max(1, Math.floor(segLen / 4));
     if (onSeg >= cap || this.ladders.length >= this.LADDER_CAP) return best; // at cap → share the nearest
     const wallPerp = horiz ? (g.z0 + g.z1) / 2 : (g.x0 + g.x1) / 2;
     // foot on the side the attacker is approaching from (works for the citadel,
@@ -1490,7 +1490,7 @@ export class Sim {
     const dx = lad.bx - this.px[i], dz = lad.bz - this.pz[i], l = Math.hypot(dx, dz);
     if (l <= 1.7) {
       this._dir[0] = 0; this._dir[1] = 0;     // at the foot — wait our turn, then mount
-      const clear = this.ladderMinPy[L] === undefined || this.ladderMinPy[L] > 3.0;
+      const clear = this.ladderMinPy[L] === undefined || this.ladderMinPy[L] > 1.8;
       if (lad.raise >= 0.55 && clear) {
         this.climbState[i] = 1; this.climbSeg[i] = seg; this.climbLadder[i] = L;
         if (lad.horiz) this.px[i] = lad.along; else this.pz[i] = lad.along; // snap to the rung line
@@ -1515,7 +1515,7 @@ export class Sim {
       const lad = this.climbLadder[i] >= 0 ? this.ladders[this.climbLadder[i]] : null;
       if (lad) {                          // attacker, single-file up the ladder line
         this.moveXZ(i, horiz ? lad.along : wallPerp, horiz ? wallPerp : lad.along, 2.4 * dt);
-        this.py[i] = Math.min(WH, this.py[i] + 3.2 * dt);
+        this.py[i] = Math.min(WH, this.py[i] + 5.0 * dt);
         if (this.py[i] >= WH - 0.1) { this.climbState[i] = 2; this.climbLadder[i] = -1; }
       } else {                            // defender, direct interior climb
         const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
