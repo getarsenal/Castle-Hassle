@@ -480,6 +480,13 @@ export class Sim {
   ladders: Ladder[] = [];
   private ladderMinPy: number[] = []; // lowest occupied height per ladder (single-file gating)
   private attInsideCount = 0;         // attackers standing inside the walls
+  // Per-wall-section escalade state, rebuilt each tick (indexed by CASTLE segment):
+  //   wallAtt = attackers climbing/atop it, wallDef = defenders holding it.
+  // Drives the foothold fight (attackers hold & clear a section before descending)
+  // and the defender rush to plug a threatened section.
+  wallAtt: Int16Array = new Int16Array(0);
+  wallDef: Int16Array = new Int16Array(0);
+  private _wallThreat = false;        // any section under escalade right now (gates the defender rush)
   captureProgress = 0;                // 0..1 — your banner rising over the keep
   // per-frame sound-effect tallies; main drains these to drive procedural audio
   sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 };
@@ -1044,19 +1051,25 @@ export class Sim {
       // grind the garrison down to a shattered remnant. Count who holds the keep.
       let defAlive = 0, attInside = 0, attKeep = 0, defKeep = 0;
       const kr2 = this.captureR * this.captureR;
+      if (this.wallAtt.length !== CASTLE.length) { this.wallAtt = new Int16Array(CASTLE.length); this.wallDef = new Int16Array(CASTLE.length); }
+      else { this.wallAtt.fill(0); this.wallDef.fill(0); }
       for (let i = 0; i < this.n; i++) {
         if (!this.alive[i]) continue;
         const nearKeep = (this.px[i] - this.keepX) ** 2 + (this.pz[i] - this.keepZ) ** 2 < kr2 && this.py[i] < 7;
+        const cs = this.climbState[i], seg = this.climbSeg[i];
         if (this.fac[i] === Faction.Defender) {
           defAlive++;
           if (nearKeep) defKeep++;
+          if (cs === 4 && seg >= 0) this.wallDef[seg]++;          // defender holding the battlements
         } else if (this.typ[i] !== UType.Siege) {
-          if (this.climbState[i] === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1) attInside++;
+          if (cs === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1) attInside++;
           if (nearKeep) attKeep++;
+          if ((cs === 1 || cs === 2) && seg >= 0) this.wallAtt[seg]++; // attacker scaling / on the battlements
         }
       }
       const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
       this.attInsideCount = attInside; // wall defenders abandon the walls once this is high
+      this._wallThreat = false; for (let s = 0; s < this.wallAtt.length; s++) if (this.wallAtt[s] > 0) { this._wallThreat = true; break; }
       // capture meter: fills while you hold the keep ground with its guard cleared,
       // drains while the defenders still contest it.
       // A town falls once your men dominate its centre; a keep, once you hold its
@@ -1190,9 +1203,18 @@ export class Sim {
           }
         } else {
           // melee — including archers who've spent all their arrows
-          // Defender reserves rush to MOUNT a wall the enemy is scaling.
-          if (u.hold && u.faction === Faction.Defender && t === UType.Light && nearest >= 0 && this.py[nearest] > 2 && dist < 16) {
-            const seg = this.nearestClimbWall(this.px[i], this.pz[i]); if (seg >= 0) { this.startClimb(i, seg); continue; }
+          // Defender reserves rush to PLUG a wall section under escalade: the nearest
+          // free melee company marches to the threatened stretch and climbs its interior
+          // stairs to meet the attackers at the ladder-top before they spread.
+          if (this._wallThreat && u.hold && u.faction === Faction.Defender && t === UType.Light && this.py[i] < 3 && !u.routing) {
+            const seg = this.nearestThreatenedWall(this.px[i], this.pz[i], 45);
+            if (seg >= 0) {
+              const g = CASTLE[seg], cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
+              const ddx = cpx - this.px[i], ddz = cpz - this.pz[i], dwall = Math.hypot(ddx, ddz);
+              if (dwall <= this.CLIMB + 2) { this.startClimb(i, seg); continue; } // at the wall → up the stairs to fight
+              dx = ddx / (dwall || 1); dz = ddz / (dwall || 1);                    // else march to the threatened section
+              this.px[i] += dx * SPEED[t] * dt; this.pz[i] += dz * SPEED[t] * dt; continue;
+            }
           }
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
           const charge = t === UType.Cavalry && u.chargeT > 0 ? CHARGE_DMG : 1;
@@ -1367,6 +1389,19 @@ export class Sim {
   private nearestClimbWall(x: number, z: number): number {
     let best = -1, bd = 1e9;
     for (let s = 0; s < CASTLE.length; s++) {
+      const g = CASTLE[s]; if (g.dead || (g.kind !== 'wall' && g.kind !== 'gate')) continue;
+      const cx = Math.max(g.x0, Math.min(g.x1, x)), cz = Math.max(g.z0, Math.min(g.z1, z));
+      const d2 = (cx - x) ** 2 + (cz - z) ** 2;
+      if (d2 < bd) { bd = d2; best = s; }
+    }
+    return best;
+  }
+  // Nearest wall section currently under escalade (attackers climbing/atop it), or -1.
+  // Drives the defender rush to plug a threatened section.
+  private nearestThreatenedWall(x: number, z: number, maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    for (let s = 0; s < CASTLE.length; s++) {
+      if (this.wallAtt[s] <= 0) continue;
       const g = CASTLE[s]; if (g.dead || (g.kind !== 'wall' && g.kind !== 'gate')) continue;
       const cx = Math.max(g.x0, Math.min(g.x1, x)), cz = Math.max(g.z0, Math.min(g.z1, z));
       const d2 = (cx - x) ** 2 + (cz - z) ** 2;
@@ -1596,8 +1631,23 @@ export class Sim {
         this.py[i] = Math.min(WH, this.py[i] + 4 * dt);
         if (l < 1.0 && this.py[i] >= WH - 0.1) this.climbState[i] = u.faction === Faction.Attacker ? 2 : 4;
       }
-    } else if (st === 2) {                // attacker on the battlements: head to a tower to get down
+    } else if (st === 2) {                // attacker ON the battlements
       this.py[i] = WH;
+      const ci = this.climbSeg[i], seg = CASTLE[ci];
+      const foeNear = nearest >= 0 && Math.abs(this.py[nearest] - WH) < 2.5
+        && (this.px[nearest] - this.px[i]) ** 2 + (this.pz[nearest] - this.pz[i]) ** 2 < 5 * 5;
+      if (seg && !seg.dead && foeNear) {
+        // FOOTHOLD FIGHT: a defender is holding the ground right at the ladder-top — cut
+        // him down before pouring past (the wall-top melee above lands the blows). Once
+        // the lip is clear we descend; we don't get pinned chasing distant archers.
+        const horiz = (seg.x1 - seg.x0) >= (seg.z1 - seg.z0);
+        const wallPerp = horiz ? (seg.z0 + seg.z1) / 2 : (seg.x0 + seg.x1) / 2;
+        const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
+        const along = Math.max(aMin, Math.min(aMax, horiz ? this.px[nearest] : this.pz[nearest]));
+        this.moveXZ(i, horiz ? along : wallPerp, horiz ? wallPerp : along, 2.0 * dt);
+        return;
+      }
+      // battlement clear of defenders nearby → descend a tower into the city
       const tw = this.nearestTowerPos(this.px[i], this.pz[i]);
       if (!tw) { this.climbState[i] = 3; return; } // no tower left → drop where we are
       const l = this.moveXZ(i, tw.x, tw.z, 4.0 * dt);
@@ -1606,14 +1656,16 @@ export class Sim {
       this.moveXZ(i, u.ax, u.az, 3.2 * dt);
       this.py[i] = Math.max(0, this.py[i] - 4 * dt);
       if (this.py[i] <= 0.05) { this.climbState[i] = 0; this.py[i] = 0; }
-    } else {                              // st 4: defender holds the wall-top
+    } else {                              // st 4: defender holds the wall-top — intercept climbers
       const seg = CASTLE[this.climbSeg[i]];
       if (!seg || seg.dead) { this.climbState[i] = 0; this.py[i] = 0; return; }
       const horiz = (seg.x1 - seg.x0) >= (seg.z1 - seg.z0);
       const wallPerp = horiz ? (seg.z0 + seg.z1) / 2 : (seg.x0 + seg.x1) / 2;
       const aMin = (horiz ? seg.x0 : seg.z0) + 0.5, aMax = (horiz ? seg.x1 : seg.z1) - 0.5;
-      const along = Math.max(aMin, Math.min(aMax, horiz ? this.px[i] : this.pz[i]));
-      this.moveXZ(i, horiz ? along : wallPerp, horiz ? wallPerp : along, 1.5 * dt);
+      // close on the nearest attacker who has gained the wall (meet him at the ladder-top); else hold the line
+      let along = (nearest >= 0 && Math.abs(this.py[nearest] - WH) < 2.5) ? (horiz ? this.px[nearest] : this.pz[nearest]) : (horiz ? this.px[i] : this.pz[i]);
+      along = Math.max(aMin, Math.min(aMax, along));
+      this.moveXZ(i, horiz ? along : wallPerp, horiz ? wallPerp : along, 2.2 * dt);
     }
   }
 
