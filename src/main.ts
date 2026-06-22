@@ -367,8 +367,8 @@ function handleTap(cx: number, cy: number) {
       const seg = sim.wallSegAt(p.x, p.z, 9); sim.breachSegDiv(selected, seg);
       const [sx, sz] = sim.segCenter(seg); renderer.pingMove(sx, sz); refreshCards(); updateTools();
     }
-    else if (sim.phase === 'battle' && sim.keepTapped(p.x, p.z)) {
-      // tapped the keep itself → storm it
+    else if (sim.phase === 'battle' && (sim.keepTapped(p.x, p.z) || sim.insideWalls(p.x, p.z))) {
+      // tapped the keep, or anywhere inside the walls → storm it (fight your way in)
       sim.assaultDiv(selected); renderer.pingMove(sim.keepX, sim.keepZ); refreshCards(); updateTools();
     }
     else { sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }

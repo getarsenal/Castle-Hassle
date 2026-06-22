@@ -918,6 +918,9 @@ export class Sim {
     for (let s = 0; s < CASTLE.length; s++) { const g = CASTLE[s]; if (g.kind !== 'keep') continue; if (x >= g.x0 - 3 && x <= g.x1 + 3 && z >= g.z0 - 3 && z <= g.z1 + 3) return true; }
     return (x - this.keepX) ** 2 + (z - this.keepZ) ** 2 < 14 * 14;
   }
+  // Did a tap land INSIDE the castle footprint (the bailey/courtyard)? Tapping in
+  // there means "get inside" — issue a storm rather than forming up at the wall.
+  insideWalls(x: number, z: number): boolean { return Math.abs(x) < LAYOUT.W - 2 && Math.abs(z) < LAYOUT.D - 2; }
   // Toggle an arm's assault. Pulling out halts it where it stands.
   toggleAssaultDiv(div: number): boolean {
     const cs = this.divCompanies(div); if (!cs.length) return false;
@@ -1533,10 +1536,24 @@ export class Sim {
     }
     return out;
   }
+  // The nearest standing ladder within reach (any section), or -1.
+  private nearestLadder(x: number, z: number, maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    for (let l = 0; l < this.ladders.length; l++) { const L = this.ladders[l]; const d = (L.bx - x) ** 2 + (L.bz - z) ** 2; if (d < bd) { bd = d; best = l; } }
+    return best;
+  }
   private useLadder(i: number, seg = this.wallTowardGoal(i)) {
     this._diag.useLadder++;
-    if (seg < 0) { this._diag.noWall++; this._dir[0] = 0; this._dir[1] = 0; return; } // wallTowardGoal found no wall
-    const L = this.findOrMakeLadder(seg, i);
+    // A raised ladder is a fixed path: head for the NEAREST one already standing and
+    // queue at its foot, rather than every man raising his own where he stands. Only
+    // raise a fresh ladder if none is within reach — so they form spread along the
+    // wall and the host funnels up the existing ones in order.
+    let L = this.nearestLadder(this.px[i], this.pz[i], 12);
+    if (L >= 0) this._diag.ladReuse++;
+    else {
+      if (seg < 0) { this._diag.noWall++; this._dir[0] = 0; this._dir[1] = 0; return; } // wallTowardGoal found no wall
+      L = this.findOrMakeLadder(seg, i);
+    }
     if (L < 0) { // couldn't get a ladder: just press toward the wall and retry
       const g = CASTLE[seg], cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
       const dx = cpx - this.px[i], dz = cpz - this.pz[i], l = Math.hypot(dx, dz) || 1; this._dir[0] = dx / l; this._dir[1] = dz / l; return;
@@ -1547,7 +1564,7 @@ export class Sim {
       this._dir[0] = 0; this._dir[1] = 0;     // at the foot — wait our turn, then mount
       const clear = this.ladderMinPy[L] === undefined || this.ladderMinPy[L] > 1.8;
       if (lad.raise >= 0.55 && clear) {
-        this.climbState[i] = 1; this.climbSeg[i] = seg; this.climbLadder[i] = L;
+        this.climbState[i] = 1; this.climbSeg[i] = lad.seg; this.climbLadder[i] = L;
         if (lad.horiz) this.px[i] = lad.along; else this.pz[i] = lad.along; // snap to the rung line
       }
     } else { this._dir[0] = dx / l; this._dir[1] = dz / l; }
