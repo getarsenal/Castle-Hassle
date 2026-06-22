@@ -250,6 +250,15 @@ function blockedAt(x: number, z: number): boolean {
   }
   return false;
 }
+// Wall test with a grid broad-phase. BLOCKED (cell-centre sample) covers the solid
+// interior of every wall, so when the grid reads "open" the exact test almost never
+// disagrees — skip the per-segment scan there. Only where the grid flags a possible
+// wall do we run the exact check, which still threads the narrow gaps at gates,
+// breaches and citadel scaling points (the coarse grid alone closed those off and
+// made storming units mill around the walls). Fast in the open, precise at the walls.
+function blockedFast(x: number, z: number): boolean {
+  return !!BLOCKED[cellOf(x, z)] && blockedAt(x, z);
+}
 // The standing castle section a point falls inside, or -1 for open ground. Towers
 // win ties over the walls they abut (they're the solid mass actually in the way),
 // so a boulder coming down on a tower hits the tower, not a wall behind it. The
@@ -324,7 +333,7 @@ function pathBlocked(x0: number, z0: number, x1: number, z1: number): boolean {
   const steps = Math.max(2, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 3));
   for (let s = 1; s < steps; s++) {
     const t = s / steps;
-    if (BLOCKED[cellOf(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t)]) return true; // grid lookup, not a per-segment scan
+    if (blockedFast(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t)) return true;
   }
   return false;
 }
@@ -1232,12 +1241,9 @@ export class Sim {
       if (Math.abs(this.vx[i]) < 0.04 && Math.abs(this.vz[i]) < 0.04) { this.vx[i] = 0; this.vz[i] = 0; }
 
       let nx = this.px[i] + this.vx[i] * dt, nz = this.pz[i] + this.vz[i] * dt;
-      // Wall collision via the precomputed BLOCKED grid (O(1) cell lookup) instead of
-      // scanning every castle segment per unit per frame — the same grid the flow
-      // field and obstacle avoidance already steer by, so it stays consistent.
-      if (this.py[i] < 1 && BLOCKED[cellOf(nx, nz)]) { // ground units collide with walls
-        if (!BLOCKED[cellOf(nx, this.pz[i])]) { nz = this.pz[i]; this.vz[i] = 0; }
-        else if (!BLOCKED[cellOf(this.px[i], nz)]) { nx = this.px[i]; this.vx[i] = 0; }
+      if (this.py[i] < 1 && blockedFast(nx, nz)) { // ground units collide with walls (grid-accelerated, gap-precise)
+        if (!blockedFast(nx, this.pz[i])) { nz = this.pz[i]; this.vz[i] = 0; }
+        else if (!blockedFast(this.px[i], nz)) { nx = this.px[i]; this.vx[i] = 0; }
         else { nx = this.px[i]; nz = this.pz[i]; this.vx[i] = 0; this.vz[i] = 0; }
       }
       this.px[i] = Math.max(WORLD.minX, Math.min(WORLD.maxX, nx));
