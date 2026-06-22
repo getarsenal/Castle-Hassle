@@ -1448,7 +1448,19 @@ export class Sim {
     // A "break in HERE" order: smash the named section until it's open, even if a
     // way already exists elsewhere — the player chose this wall.
     if (u.objKind === 'breach') {
-      if (u.objSeg >= 0 && CASTLE[u.objSeg] && !CASTLE[u.objSeg].dead) { this.engageWall(i, u, t, u.objSeg); return; }
+      if (u.objSeg >= 0 && CASTLE[u.objSeg] && !CASTLE[u.objSeg].dead) {
+        const g = CASTLE[u.objSeg];
+        const cpx = Math.max(g.x0, Math.min(g.x1, this.px[i])), cpz = Math.max(g.z0, Math.min(g.z1, this.pz[i]));
+        const dxw = cpx - this.px[i], dzw = cpz - this.pz[i], dw = Math.hypot(dxw, dzw);
+        if (dw <= this.CLIMB + 1.5) { this.engageWall(i, u, t, u.objSeg); return; } // at the ordered wall → force it
+        // Another standing wall between us and the target (e.g. the OUTER curtain when
+        // the order is on the inner citadel)? Scale THAT one first — otherwise the
+        // company presses uselessly against a wall it was never told to climb.
+        const dirx = dxw / (dw || 1), dirz = dzw / (dw || 1), probe = this.CLIMB + 2;
+        const ahead = this.wallSegAtPoint(this.px[i] + dirx * probe, this.pz[i] + dirz * probe);
+        if (ahead >= 0 && ahead !== u.objSeg && !CASTLE[ahead].dead) { this.engageWall(i, u, t, ahead); return; }
+        this._dir[0] = dirx; this._dir[1] = dirz; return; // clear path → march to the ordered wall
+      }
       // the wall is rubble — re-home the company onto the keep and pour through,
       // instead of milling on the spot where the wall stood.
       u.objKind = 'storm'; u.objSeg = -1; u.ax = this.keepX; u.az = this.keepZ; u.goal = cellOf(this.keepX, this.keepZ);
