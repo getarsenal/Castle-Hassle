@@ -986,9 +986,11 @@ export class Sim {
   _diag = { aMove: 0, engWall: 0, engGate: 0, useLadder: 0, ladMade: 0, ladCap: 0, ladReuse: 0, noWall: 0 };
   assaultDiag() {
     const F = Faction.Attacker;
-    let total = 0, hold = 0, rout = 0, climbing = 0, onWall = 0, storm = 0, breach = 0, move = 0, atFoot = 0;
+    let total = 0, hold = 0, rout = 0, climbing = 0, onWall = 0, storm = 0, breach = 0, move = 0, atFoot = 0, defWall = 0;
     for (let i = 0; i < this.n; i++) {
-      if (!this.alive[i] || this.fac[i] !== F) continue; total++;
+      if (!this.alive[i]) continue;
+      if (this.fac[i] !== F) { if (this.py[i] > 5) defWall++; continue; } // defenders manning the battlements
+      total++;
       if (this.climbState[i] > 0) { climbing++; continue; }
       if (this.py[i] > 5) { onWall++; continue; }
       const u = this.units[this.unit[i]];
@@ -1002,10 +1004,11 @@ export class Sim {
         if (BLOCKED[cellOf(px + 5, pz)] || BLOCKED[cellOf(px - 5, pz)] || BLOCKED[cellOf(px, pz + 5)] || BLOCKED[cellOf(px, pz - 5)]) atFoot++;
       }
     }
+    let secs = 0; for (let s = 0; s < this.wallAtt.length; s++) if (this.wallAtt[s] > 0) secs++;  // sections under escalade
     const d = this._diag;
     const ev = { aMove: d.aMove, engWall: d.engWall, engGate: d.engGate, useLadder: d.useLadder, ladMade: d.ladMade, ladCap: d.ladCap, ladReuse: d.ladReuse, noWall: d.noWall };
     this._diag = { aMove: 0, engWall: 0, engGate: 0, useLadder: 0, ladMade: 0, ladCap: 0, ladReuse: 0, noWall: 0 };
-    return { total, hold, rout, storm, breach, move, atFoot, climbing, onWall, ladders: this.ladders.length, ev };
+    return { total, hold, rout, storm, breach, move, atFoot, climbing, onWall, defWall, secs, ladders: this.ladders.length, ev };
   }
   private rebuildHash() {
     const total = this.hCols * this.hRows, cols = this.hCols, cell = this.hCellOf, cnt = this.hCount;
