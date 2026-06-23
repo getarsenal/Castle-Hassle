@@ -36,14 +36,14 @@ export class WorldMap3D {
   constructor(private canvas: HTMLCanvasElement, private nodes: CampaignCastle[], private prog: Progress, private onSelect: (c: CampaignCastle) => void) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.08;
-    this.scene.background = new THREE.Color('#c4dcef');
-    this.scene.fog = new THREE.Fog('#cfe1ef', 880, 2300);   // gentle haze far off only
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05;
+    this.scene.background = new THREE.Color('#1b2236');
+    this.scene.fog = new THREE.Fog('#332c44', 820, 2200);   // warm dusk haze — pulls the brand mood far off
     this.camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
-    // lower ambient + a stronger raking sun so hills, coasts and ranges read in relief
-    this.scene.add(new THREE.HemisphereLight('#eaf4ff', '#8a9358', 0.92));
-    const sun = new THREE.DirectionalLight('#fff1d2', 1.55); sun.position.set(-120, 220, 160); this.scene.add(sun);
-    this.scene.add(new THREE.AmbientLight('#fff6e6', 0.38));
+    // dusk lighting: a low warm-gold sun rakes the relief, cool dusk sky fill, muted ambient
+    this.scene.add(new THREE.HemisphereLight('#b9c2e6', '#4a3c28', 0.72));
+    const sun = new THREE.DirectionalLight('#ffce92', 1.4); sun.position.set(-150, 195, 120); this.scene.add(sun);
+    this.scene.add(new THREE.AmbientLight('#5a4e5e', 0.36));
     this.buildSkyDome();
     this.resize();
     this.bind();
@@ -122,19 +122,19 @@ export class WorldMap3D {
     this.heights = this.smoothHeights(raw, mask, 4);
     // 3) geometry
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
-    const green = new THREE.Color('#6fa148'), tan = new THREE.Color('#ccb06a'), haze = new THREE.Color('#cfe1ef');
+    const green = new THREE.Color('#5d7842'), tan = new THREE.Color('#b89c5f'), haze = new THREE.Color('#332c44');
     for (let gy = 0; gy < GH; gy++) {
       const lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       for (let gx = 0; gx < GW; gx++) {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx; const land = mask[i]; const y = this.heights[i];
         pos.push(this.wX(lon), y, this.wZ(lat));
         const latT = (bb.n - lat) / (bb.n - bb.s);
-        if (!land || y < 0.05) c.setRGB(0.30, 0.45, 0.55);
-        else if (y < 2.6) c.set('#ddc794');                                  // beach / coastal flats
+        if (!land || y < 0.05) c.setRGB(0.10, 0.15, 0.26);                   // submerged shelf, deep dusk
+        else if (y < 2.6) c.set('#c7b380');                                  // beach / coastal flats
         else if (y < 9.5) c.copy(green).lerp(tan, Math.min(1, latT * 1.05)); // lowland farmland
-        else if (y < 14) c.set('#83864c');                                   // upland
-        else if (y < 19) c.set('#8e8068');                                   // bare mountain rock
-        else c.set('#efeae0');                                               // snow
+        else if (y < 14) c.set('#6e6b40');                                   // upland
+        else if (y < 19) c.set('#736452');                                   // bare mountain rock
+        else c.set('#d6d0c2');                                               // snow, dusk-lit
         // gentle per-vertex shade jitter so the flat colour bands don't read blocky
         if (land && y >= 0.05) c.offsetHSL((hash(gx * 1.3, gy * 2.7) - 0.5) * 0.012, (hash(gx * 2.1, gy * 0.7) - 0.5) * 0.05, (hash(gx * 1.7, gy * 2.3) - 0.5) * 0.05);
         // dissolve the map edge into haze along a wavy, noisy border (not a hard rectangle)
@@ -206,7 +206,7 @@ export class WorldMap3D {
   private buildWater(mask: Uint8Array) {
     const { GW, GH, bb } = this; const WX = 150, WZ = 104;
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
-    const deep = new THREE.Color('#2f6391'), shallow = new THREE.Color('#62c2cf'), haze = new THREE.Color('#cfe1ef');
+    const deep = new THREE.Color('#142440'), shallow = new THREE.Color('#386b78'), haze = new THREE.Color('#332c44');
     const landNear = (lon: number, lat: number) => {
       const gx = (lon - bb.w) / (bb.e - bb.w) * (GW - 1), gy = (lat - bb.s) / (bb.n - bb.s) * (GH - 1);
       let near = 0; const R = 3;
@@ -331,7 +331,7 @@ export class WorldMap3D {
   // instead of a flat fill — fog still blends the far terrain into the horizon band.
   private buildSkyDome() {
     const geo = new THREE.SphereGeometry(2500, 24, 16);
-    const top = new THREE.Color('#9cc4ec'), bot = new THREE.Color('#eadcc0');
+    const top = new THREE.Color('#161d33'), bot = new THREE.Color('#7c4e37');
     const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 2500) * 1.5 + 0.32)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
