@@ -69,6 +69,19 @@
     /* cinematic vignette over the 3D scenes (battle + map); below the HUD/overlays */
     #vignette { position: fixed; inset: 0; z-index: 3; pointer-events: none;
       background: radial-gradient(ellipse 75% 75% at 50% 46%, transparent 56%, rgba(10,7,4,0.16) 80%, rgba(8,5,3,0.42) 100%); }
+    /* persistent master-mute — always reachable (we force audio on at the gate) */
+    #muteBtn { position: fixed; top: calc(var(--safe-top) + 10px); right: 12px; z-index: 55;
+      width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0;
+      cursor: pointer; pointer-events: auto; color: var(--gold-soft);
+      border: 1px solid rgba(255,225,160,0.22); border-radius: 12px;
+      background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9));
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08); }
+    #muteBtn:active { transform: translateY(1px); }
+    #muteBtn svg { width: 23px; height: 23px; }
+    #muteBtn .slash { display: none; }
+    #muteBtn.off { color: #a98f63; }
+    #muteBtn.off .waves { display: none; }
+    #muteBtn.off .slash { display: block; }
     #flash { position: fixed; inset: 0; z-index: 58; pointer-events: none; opacity: 0; }
     #flash.go { animation: flashFade 0.8s ease-out forwards; }
     @keyframes flashFade { 0% { opacity: 0.66; } 100% { opacity: 0; } }
@@ -82,7 +95,8 @@
        Add new controls to #topLeft or #topRight and the layout stays collision-free. */
     #topHud { position: absolute; top: var(--safe-top); left: 0; right: 0;
       display: flex; justify-content: space-between; align-items: flex-start;
-      gap: 10px; padding: 10px 12px; box-sizing: border-box; pointer-events: none; z-index: 5; }
+      gap: 10px; padding: 10px 12px 10px 12px; box-sizing: border-box; pointer-events: none; z-index: 5; }
+    #topRight { margin-right: 50px; } /* leave room for the always-on mute button */
     #topLeft { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
     #topLeft .topRow { display: flex; gap: 8px; align-items: center; }
     #topRight { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
@@ -357,6 +371,13 @@
   <div id="vignette"></div>
   <div id="fadeBlack"></div>
   <div id="flash"></div>
+  <button id="muteBtn" aria-label="Toggle sound" title="Sound on / off">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9 H8 L13 5 V19 L8 15 H4 Z" fill="currentColor" stroke="none"/>
+      <g class="waves"><path d="M16.4 8.6 a4.5 4.5 0 0 1 0 6.8"/><path d="M18.9 6.2 a8 8 0 0 1 0 11.6"/></g>
+      <path class="slash" d="M16.5 8 L22 16 M22 8 L16.5 16"/>
+    </svg>
+  </button>
   <audio id="titleMusic" loop></audio>
   <script>
     // Startup diagnostics: if the game module fails to load or throws during

@@ -150,7 +150,10 @@ class BattleAudioImpl {
     for (const ev of ['touchend', 'pointerup', 'pointerdown', 'mousedown', 'click', 'keydown']) window.addEventListener(ev, kick, { capture: true, passive: true });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && this.ctx && this.ctx.state !== 'running') this.ctx.resume().catch(() => { /* ignore */ }); });
   }
-  setVolume(v: number) { this.vol = v; if (this.master) this.master.gain.value = v; }
+  setVolume(v: number) { this.vol = v; if (this.master && !this._muted) this.master.gain.value = v; }
+  private _muted = false;
+  get muted() { return this._muted; }
+  setMuted(m: boolean) { this._muted = m; if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : this.vol, this.ctx.currentTime, 0.05); }
 
   // ---- helpers ----
   private now() { return this.ctx!.currentTime + this._t0; }

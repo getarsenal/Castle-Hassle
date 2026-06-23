@@ -509,43 +509,42 @@ function resumeMenuMusic() {
 // fade the menu music out (slowly) when the fighting starts
 function stopMenuMusic() { if (titleMusic && !titleMusic.paused) rampVolume(titleMusic, 0, 2200, true); }
 
-$('startGameBtn')?.addEventListener('click', () => openMap()); // music carries on into the map
-// Intro: after the splash (video or fallback), go to title
-function startIntro() {
-  show('intro', true);
+// ---- master mute (persistent, always reachable) ----
+// We force audio on at the gate, so a one-tap mute is a hard requirement, not a nicety.
+let audioMuted = (() => { try { return localStorage.getItem('ch.muted') === '1'; } catch { return false; } })();
+function applyMute() {
+  battleAudio.setMuted(audioMuted);
+  if (titleMusic) titleMusic.muted = audioMuted;
+  document.getElementById('muteBtn')?.classList.toggle('off', audioMuted);
+}
+function initMuteControl() {
+  applyMute();
+  document.getElementById('muteBtn')?.addEventListener('click', () => {
+    audioMuted = !audioMuted;
+    try { localStorage.setItem('ch.muted', audioMuted ? '1' : '0'); } catch { /* ignore */ }
+    battleAudio.unlock?.(); applyMute(); // the toggle can double as the first audio-unlock gesture
+  });
+}
+
+// The GAME is the hero: the player lands straight on the Castle Hassle title. It
+// loads silent (web audio can't start without a gesture), and "March to War" is
+// the gate — that tap unlocks audio, plays the studio sting WITH sound as a brief
+// "Scheidel Interactive presents" transition, then drops into the campaign.
+$('startGameBtn')?.addEventListener('click', () => playStudioSting(() => openMap()), { once: true });
+function playStudioSting(then: () => void) {
+  battleAudio.unlock?.();
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
-  const card = document.getElementById('introCard');
-  const begin = document.getElementById('introBegin');
-  let advanced = false;
-  // End the splash: fade the whole screen to black, swap to the title behind the
-  // black, then lift the black so the title fades up — with the theme coming in.
-  const go = () => {
-    if (advanced) return; advanced = true; try { vid?.pause?.(); } catch { /* ignore */ }
-    const black = document.getElementById('fadeBlack');
-    if (!black) { show('intro', false); show('titleScreen', true); startMenuMusic(); return; }
-    black.classList.add('on');
-    setTimeout(() => {
-      show('intro', false); show('titleScreen', true);
-      startMenuMusic();
-      black.classList.remove('on');
-    }, 720);
-  };
-  // HARD GATE: nothing happens until the player presses Begin. That deliberate
-  // gesture is what lets the studio sting play WITH sound (browsers block
-  // autoplay-with-audio outright), so the intro is always heard — then it runs to
-  // the end and hands off to the title on its own.
-  const begun = () => {
-    if (begin) begin.style.display = 'none';
-    battleAudio.unlock?.(); // also wake Web Audio on this same gesture
-    if (vid) {
-      vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = false; vid.playsInline = true;
-      vid.addEventListener('ended', go, { once: true });
-      vid.addEventListener('error', () => setTimeout(go, 500), { once: true });
-      vid.play().then(() => { if (card) card.style.opacity = '0'; }).catch(() => setTimeout(go, 500));
-      setTimeout(go, 12000); // safety so a stuck/long clip can never hang the boot
-    } else setTimeout(go, 500);
-  };
-  begin?.addEventListener('click', begun, { once: true });
+  const intro = document.getElementById('intro');
+  const card = document.getElementById('introCard'); if (card) card.style.display = 'none'; // boot no longer uses the card
+  let done = false; const go = () => { if (done) return; done = true; try { vid?.pause?.(); } catch { /* ignore */ } show('intro', false); then(); };
+  if (!vid) { then(); return; }
+  show('titleScreen', false); show('intro', true);
+  vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = battleAudio.muted; vid.playsInline = true;
+  vid.addEventListener('ended', go, { once: true });
+  vid.addEventListener('error', () => setTimeout(go, 300), { once: true });
+  vid.play().catch(() => setTimeout(go, 300));
+  intro?.addEventListener('pointerdown', go, { once: true }); // tap to skip — never trap the player
+  setTimeout(go, 9000); // safety
 }
 
 (window as any).__campaignWin = () => {}; // (placeholder hook)
@@ -555,7 +554,8 @@ newGame(); // a quiet backdrop sim behind the menus
 battleAudio.installUnlock(); // unlock Web Audio on the first real touch (esp. iOS)
 installFeedback(); // game-wide click/press sounds + haptics
 loading.remove();
-startIntro();
+show('titleScreen', true); // land on the game's own title — the hero, and the audio gate
+initMuteControl();
 (window as any).__running = true;
 
 // perf readout (fps / ms / unit count) for on-device testing; tap to hide
