@@ -483,12 +483,12 @@ function startIntro() {
   show('intro', true);
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
   const card = document.getElementById('introCard');
-  if (card) card.style.display = 'none';          // the styled card is a fallback only
+  const begin = document.getElementById('introBegin');
   let advanced = false;
   // End the splash: fade the whole screen to black, swap to the title behind the
   // black, then lift the black so the title fades up — with the theme coming in.
   const go = () => {
-    if (advanced) return; advanced = true; vid?.pause?.();
+    if (advanced) return; advanced = true; try { vid?.pause?.(); } catch { /* ignore */ }
     const black = document.getElementById('fadeBlack');
     if (!black) { show('intro', false); show('titleScreen', true); startMenuMusic(); return; }
     black.classList.add('on');
@@ -498,31 +498,22 @@ function startIntro() {
       black.classList.remove('on');
     }, 720);
   };
-  if (vid) {
-    vid.src = './intro.mp4'; vid.style.display = 'block'; vid.playsInline = true;
-    vid.addEventListener('ended', go);
-    vid.addEventListener('error', () => { if (card) card.style.display = 'flex'; setTimeout(go, 1800); });
-    // Browsers block autoplay-with-sound on cold load, so start muted (so the
-    // splash always plays), and on the first touch unmute + replay from the top
-    // so the player hears it. (The native app can autoplay with audio.)
-    let heard = false; const hint = document.getElementById('introHint');
-    const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
-    const playMuted = () => { vid.muted = true; vid.play().catch(() => { if (card) card.style.display = 'flex'; }); };
-    if (isNative) {
-      // Capacitor's WKWebView doesn't require a gesture for media, so the splash
-      // can play with sound straight away; fall back to muted if it's blocked.
-      vid.muted = false;
-      vid.play().then(() => { heard = true; if (hint) hint.style.display = 'none'; }).catch(playMuted);
-    } else {
-      // Browsers block autoplay-with-sound on cold load: start muted so the splash
-      // always plays, and unmute + replay on first touch so the player hears it.
-      playMuted();
-    }
-    const hear = () => { if (heard) return; heard = true; if (hint) hint.style.display = 'none'; try { vid.muted = false; vid.currentTime = 0; vid.play(); } catch { /* ignore */ } };
-    document.getElementById('intro')?.addEventListener('pointerdown', hear, { once: true });
-    setTimeout(() => { if (hint && !heard) hint.style.display = 'none'; }, 2600);
-    setTimeout(go, 9000); // safety so the splash can never hang the boot
-  } else setTimeout(go, 3000);
+  // HARD GATE: nothing happens until the player presses Begin. That deliberate
+  // gesture is what lets the studio sting play WITH sound (browsers block
+  // autoplay-with-audio outright), so the intro is always heard — then it runs to
+  // the end and hands off to the title on its own.
+  const begun = () => {
+    if (begin) begin.style.display = 'none';
+    battleAudio.unlock?.(); // also wake Web Audio on this same gesture
+    if (vid) {
+      vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = false; vid.playsInline = true;
+      vid.addEventListener('ended', go, { once: true });
+      vid.addEventListener('error', () => setTimeout(go, 500), { once: true });
+      vid.play().then(() => { if (card) card.style.opacity = '0'; }).catch(() => setTimeout(go, 500));
+      setTimeout(go, 12000); // safety so a stuck/long clip can never hang the boot
+    } else setTimeout(go, 500);
+  };
+  begin?.addEventListener('click', begun, { once: true });
 }
 
 (window as any).__campaignWin = () => {}; // (placeholder hook)

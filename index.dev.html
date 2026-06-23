@@ -199,15 +199,22 @@
     #intro, #titleScreen, #map { position: fixed; inset: 0; z-index: 50; display: none; }
     #intro.show, #titleScreen.show { display: flex; }
     #map.show { display: block; }
-    #intro { align-items: center; justify-content: center; background: #0b0f17; animation: fadein 0.8s ease; }
+    #intro { align-items: center; justify-content: center;
+      background: radial-gradient(120% 90% at 50% 18%, #1a1326 0%, #0d0a14 55%, #070509 100%); animation: fadein 0.8s ease; }
     #introVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-    #introCard { text-align: center; animation: fadein 1.2s ease; }
-    #introHint { position: absolute; bottom: calc(var(--safe-bottom) + 28px); left: 0; right: 0; text-align: center;
-      color: rgba(255,255,255,0.85); font: 600 15px 'EB Garamond', Georgia, serif; letter-spacing: 1px; pointer-events: none;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.7); animation: pulseHint 1.3s ease-in-out infinite; }
-    @keyframes pulseHint { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
-    #introMark { font: 800 42px 'EB Garamond', Georgia, serif; letter-spacing: 8px; color: #e9d9b6; }
-    #introSub { font: 600 18px 'EB Garamond', Georgia, serif; letter-spacing: 12px; color: #9fb0c4; margin-top: 6px; }
+    #introCard { position: relative; z-index: 2; text-align: center; display: flex; flex-direction: column; align-items: center; animation: fadein 1.2s ease; transition: opacity .5s ease; }
+    .introCrest { color: #e9c46a; margin-bottom: 18px; filter: drop-shadow(0 4px 14px rgba(0,0,0,0.6)); animation: tsFloat 5s ease-in-out infinite; }
+    #introMark { font: 800 42px 'Cinzel', Georgia, serif; letter-spacing: 8px; color: #ecdcb4; text-shadow: 0 2px 18px rgba(233,196,106,0.25); }
+    #introSub { font: 600 16px 'Cinzel', Georgia, serif; letter-spacing: 11px; color: #9a8f7a; margin-top: 7px; }
+    /* the hard gate: a prominent, on-brand button that starts the audio AND the game */
+    #introBegin { margin-top: 40px; pointer-events: auto; cursor: pointer; border: none;
+      font: 800 18px 'Cinzel', Georgia, serif; letter-spacing: 1.5px; color: #3a2208;
+      background: linear-gradient(#ffe487, #e7a52a); border-top: 1px solid #fff1c4;
+      padding: 15px 40px; border-radius: 13px; box-shadow: 0 6px 0 #b9851c, 0 11px 26px rgba(0,0,0,0.5);
+      animation: introPulse 2.4s ease-in-out infinite; }
+    #introBegin .ib-glyph { font-size: 13px; vertical-align: middle; margin-right: 3px; }
+    #introBegin:active { transform: translateY(2px); box-shadow: 0 4px 0 #b9851c, 0 7px 16px rgba(0,0,0,0.45); animation: none; }
+    @keyframes introPulse { 0%,100% { box-shadow: 0 6px 0 #b9851c, 0 11px 26px rgba(0,0,0,0.5), 0 0 0 0 rgba(255,210,74,0.0); } 55% { box-shadow: 0 6px 0 #b9851c, 0 11px 26px rgba(0,0,0,0.5), 0 0 26px 5px rgba(255,210,74,0.35); } }
     @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 
     #titleScreen { flex-direction: column; align-items: center; justify-content: flex-start; overflow: hidden;
@@ -240,7 +247,15 @@
       width: 72%; height: 30px; background: radial-gradient(closest-side, rgba(0,0,0,0.55), transparent 76%); filter: blur(5px); }
     .tsTag { margin-top: 24px; color: #f1ddb2; font: 600 15px 'EB Garamond', Georgia, serif; letter-spacing: 0.5px;
       text-align: center; line-height: 1.55; max-width: 300px; text-shadow: 0 1px 7px rgba(0,0,0,0.65); }
-    .tsDiv { margin: 15px 0 22px; color: #d8b673; opacity: 0.85; }
+    .tsDiv { margin: 14px 0 16px; color: #d8b673; opacity: 0.85; }
+    /* three heraldic "pillars" — visual game promise, no paragraphs */
+    .tsPillars { display: flex; gap: 14px; justify-content: center; margin: 2px 0 24px; }
+    .tsPillar { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 88px; }
+    .tsPI { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #ffdf8e;
+      background: radial-gradient(circle at 38% 30%, #5a4524, #241804); border: 1px solid rgba(255,216,120,0.4);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,225,160,0.18); }
+    .tsPI svg { width: 27px; height: 27px; }
+    .tsPL { font: 700 11px 'Cinzel', Georgia, serif; letter-spacing: .4px; line-height: 1.25; color: #e7d3a6; text-align: center; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
     #startGameBtn { position: relative; overflow: hidden; pointer-events: auto; border: none; cursor: pointer; width: min(78vw, 360px);
       font: 800 22px 'Cinzel', Georgia, serif; letter-spacing: 1px; color: #3a2208; background: linear-gradient(#ffe487, #e7a52a);
       border-top: 1px solid #fff1c4; padding: 17px 0; border-radius: 14px; box-shadow: 0 6px 0 #b9851c, 0 11px 26px rgba(0,0,0,0.5); }
@@ -425,10 +440,15 @@
   <div id="intro">
     <video id="introVideo" playsinline preload="auto" style="display:none"></video>
     <div id="introCard">
+      <svg class="introCrest" width="74" height="84" viewBox="0 0 74 84" fill="none">
+        <path d="M37 3 L69 13 V40 C69 60 55 74 37 81 C19 74 5 60 5 40 V13 Z" fill="#1b1206" stroke="#caa53c" stroke-width="2.4"/>
+        <path d="M37 16 V66 M20 33 H54" stroke="#e9c46a" stroke-width="3.2" stroke-linecap="round"/>
+        <circle cx="37" cy="33" r="5.4" fill="#1b1206" stroke="#e9c46a" stroke-width="2.4"/>
+      </svg>
       <div id="introMark">SCHEIDEL</div>
       <div id="introSub">INTERACTIVE</div>
+      <button id="introBegin"><span class="ib-glyph">▶</span> Begin</button>
     </div>
-    <div id="introHint">tap for sound</div>
   </div>
 
   <div id="titleScreen">
@@ -488,6 +508,20 @@
         <circle cx="82" cy="7" r="1.7"/><circle cx="108" cy="7" r="1.7"/>
         <path d="M95 1 L101 7 L95 13 L89 7 Z"/>
       </svg>
+      <div class="tsPillars">
+        <div class="tsPillar">
+          <span class="tsPI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 19 L15 9 M14 6 L18 2 L22 6 L18 10 M16 8 L19 11"/><path d="M19 19 L9 9 M10 6 L6 2 L2 6 L6 10 M8 8 L5 11"/></svg></span>
+          <span class="tsPL">Command<br/>Thousands</span>
+        </div>
+        <div class="tsPillar">
+          <span class="tsPI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 21 V10 l3 -2 V10 h3 V8 l3 -2 v4 h3 V8 l3 2 v11 Z"/><path d="M3 21 H21 M10 21 v-4 h4 v4"/></svg></span>
+          <span class="tsPL">Storm<br/>the Walls</span>
+        </div>
+        <div class="tsPillar">
+          <span class="tsPI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 8 l4 5 5 -8 5 8 4 -5 -2 12 H5 Z"/><path d="M5 20 H19"/></svg></span>
+          <span class="tsPL">Take<br/>Jerusalem</span>
+        </div>
+      </div>
       <button id="startGameBtn">March to War</button>
     </div>
     <div class="tsFoot">SCHEIDEL INTERACTIVE</div>
