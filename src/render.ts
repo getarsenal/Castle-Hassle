@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT } from './sim';
 import { makeSoldierTexture, makeArrowTexture, SpriteKind } from './sprites';
-import { stoneTexture, roofTexture, grassTexture, plasterTexture } from './textures';
+import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
 
 const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
 const SPRITE_W = [2.0, 1.8, 1.8, 3.0];
@@ -226,15 +226,22 @@ export class Renderer {
     const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: grass, vertexColors: true }));
     ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
 
-    // a worn dirt approach road from the attacker camp up to the gate (textured-feel
-    // via a darker tinted strip; no moat — the field is fully traversable).
-    const dirt = new THREE.MeshLambertMaterial({ color: '#b59468' });
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(20, 150).rotateX(-Math.PI / 2), dirt);
-    road.position.set(LAYOUT.gate.x, 0.01, LAYOUT.D + 70); road.receiveShadow = true; this.scene.add(road);
-    // a packed-earth apron hugging the castle base so walls don't grow straight from grass
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry((LAYOUT.W + 10) * 2, (LAYOUT.D + 10) * 2).rotateX(-Math.PI / 2),
-      new THREE.MeshLambertMaterial({ color: '#a89071' }));
+    // One packed-earth texture drives the road and the castle courtyard so the bare
+    // ground reads as trodden earth, not flat tan card. (Generated once — no per-frame cost.)
+    const earth = dirtTexture(); earth.wrapS = earth.wrapT = THREE.RepeatWrapping;
+    // The COURTYARD: textured earth inside the walls, seated only ~2m past them so the
+    // castle no longer sits on a big tan box on the grass (it hugs the base instead).
+    const apW = (LAYOUT.W + 2) * 2, apD = (LAYOUT.D + 2) * 2;
+    const apronTex = earth.clone(); apronTex.repeat.set(apW / 12, apD / 12); apronTex.needsUpdate = true;
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry(apW, apD).rotateX(-Math.PI / 2),
+      new THREE.MeshLambertMaterial({ map: apronTex, color: '#b39a72' }));
     apron.position.set(0, 0.005, 0); apron.receiveShadow = true; this.scene.add(apron);
+    // a worn approach road from the attacker camp up to the gate — textured ruts, and a
+    // soft feathered head/edge (vertex alpha-ish via a darker centre) instead of a hard slab.
+    const roadTex = earth.clone(); roadTex.repeat.set(2.2, 16); roadTex.needsUpdate = true;
+    const roadGeo = new THREE.PlaneGeometry(17, 156, 1, 10).rotateX(-Math.PI / 2);
+    const road = new THREE.Mesh(roadGeo, new THREE.MeshLambertMaterial({ map: roadTex, color: '#9c8158' }));
+    road.position.set(LAYOUT.gate.x, 0.012, LAYOUT.D + 72); road.receiveShadow = true; this.scene.add(road);
   }
 
   // shared stone materials (slight tone variation for richness)
@@ -378,21 +385,31 @@ export class Renderer {
       pts.push([x, z, 0.8 + Math.random() * 0.7]);
     }
     const n = pts.length;
-    const trunkGeo = new THREE.CylinderGeometry(0.45, 0.7, 4, 6);
-    const trunk = new THREE.InstancedMesh(trunkGeo, this.stone('#6b4a2c'), n);
-    const canopyGeo = new THREE.IcosahedronGeometry(3.2, 0);
+    const trunkGeo = new THREE.CylinderGeometry(0.32, 0.62, 4.4, 6);
+    const trunk = new THREE.InstancedMesh(trunkGeo, this.stone('#5e4128'), n);
+    // A fuller canopy: three lumps merged into ONE geometry (still one instanced draw),
+    // so each tree reads as a leafy crown instead of a single floating ball.
+    const canopyGeo = mergeGeometries([
+      new THREE.IcosahedronGeometry(2.7, 0),
+      new THREE.IcosahedronGeometry(1.95, 0).translate(1.5, 1.7, 0.5),
+      new THREE.IcosahedronGeometry(1.75, 0).translate(-1.3, 1.25, -0.7),
+    ], false);
     const canopy = new THREE.InstancedMesh(canopyGeo, new THREE.MeshLambertMaterial({ flatShading: true, color: '#ffffff' }), n);
     trunk.frustumCulled = false; canopy.frustumCulled = false;
     const col = new THREE.Color();
     for (let i = 0; i < n; i++) {
       const [x, z, sc] = pts[i];
-      this.dummy.position.set(x, 2 * sc, z); this.dummy.rotation.set(0, Math.random() * 6, 0); this.dummy.scale.set(sc, sc, sc);
+      this.dummy.position.set(x, 2.2 * sc, z); this.dummy.rotation.set(0, Math.random() * 6, 0); this.dummy.scale.set(sc, sc, sc);
       this.dummy.updateMatrix(); trunk.setMatrixAt(i, this.dummy.matrix);
-      this.dummy.position.set(x, (4.2 + Math.random() * 0.8) * sc, z);
-      this.dummy.scale.set(sc * (0.9 + Math.random() * 0.4), sc * (1.0 + Math.random() * 0.5), sc * (0.9 + Math.random() * 0.4));
+      this.dummy.position.set(x, (4.4 + Math.random() * 0.8) * sc, z); this.dummy.rotation.set(0, Math.random() * 6, 0);
+      this.dummy.scale.set(sc * (0.9 + Math.random() * 0.35), sc * (0.95 + Math.random() * 0.45), sc * (0.9 + Math.random() * 0.35));
       this.dummy.updateMatrix(); canopy.setMatrixAt(i, this.dummy.matrix);
-      const g = 0.8 + Math.random() * 0.4; col.setRGB(0.32 * g, 0.55 * g, 0.22 * g); canopy.setColorAt(i, col);
+      // warm, varied foliage — a touch of autumn here and there to match the dusk brand
+      const g = 0.78 + Math.random() * 0.4, warm = Math.random() < 0.22;
+      if (warm) col.setRGB(0.46 * g, 0.4 * g, 0.16 * g); else col.setRGB(0.27 * g, 0.5 * g, 0.2 * g);
+      canopy.setColorAt(i, col);
     }
+    this.dummy.rotation.set(0, 0, 0);
     this.dummy.scale.set(1, 1, 1); this.dummy.rotation.set(0, 0, 0);
     if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
     this.scene.add(trunk); this.scene.add(canopy);

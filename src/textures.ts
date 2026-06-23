@@ -109,6 +109,29 @@ export function grassTexture(base = '#86ab4d'): THREE.CanvasTexture {
   return tex(c);
 }
 
+// ---- packed earth / trodden dirt for roads and courtyards (tileable) ----
+export function dirtTexture(base = '#9c7f55'): THREE.CanvasTexture {
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const ctx = c.getContext('2d')!;
+  const bc = new THREE.Color(base);
+  ctx.fillStyle = `#${bc.getHexString()}`; ctx.fillRect(0, 0, S, S);
+  // earthy mottling — broad damp/dry patches
+  for (let i = 0; i < 640; i++) {
+    const x = Math.random() * S, y = Math.random() * S, rad = 6 + Math.random() * 24;
+    const v = 0.7 + Math.random() * 0.52;
+    ctx.fillStyle = `rgba(${Math.round(bc.r * 255 * v)},${Math.round(bc.g * 255 * v * 0.96)},${Math.round(bc.b * 255 * v * 0.88)},0.42)`;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+  }
+  // scattered pebbles + trodden stones
+  for (let i = 0; i < 240; i++) {
+    const x = Math.random() * S, y = Math.random() * S, r = 1.1 + Math.random() * 2.8;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(184,164,132,0.5)' : 'rgba(68,52,34,0.5)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  }
+  noise(ctx, S, 60, 0.4);
+  return tex(c);
+}
+
 // ---- plaster + timber framing for town houses (tileable) ----
 export function plasterTexture(base = '#d8c39a'): THREE.CanvasTexture {
   const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
