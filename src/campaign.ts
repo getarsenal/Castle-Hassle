@@ -112,6 +112,64 @@ export function garrisonStrength(style: CastleStyle, difficulty: number): number
 // Gold awarded for taking a castle — scales with how late/hard it is.
 export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }
 
+// ---- The Crusade: a country-by-country campaign to Jerusalem ----
+// The realms are crossed west→east in order. Each is its own chapter with its
+// own character of war, and CONQUERING one (taking every stronghold in it)
+// earns a permanent boon that joins your host — so the army you lead into the
+// Holy Land is forged by everything you broke to get there.
+export interface CountryBoon { hp?: number; melee?: number; archer?: number; siege?: number; trebs?: number; gold?: number; }
+export interface Country { key: string; name: string; twist: string; boonLabel: string; boonDesc: string; boon: CountryBoon; }
+export const COUNTRIES: Country[] = [
+  { key: 'Wales', name: 'Wales', twist: 'High keeps on the crags — small garrisons, but tall walls to scale.',
+    boonLabel: 'Welsh Longbowmen', boonDesc: 'Archers strike harder', boon: { archer: 0.15 } },
+  { key: 'England', name: 'England', twist: 'Textbook concentric stone. Learn the siege here.',
+    boonLabel: "King's Treasury", boonDesc: '+300 gold and hardier troops', boon: { hp: 0.06, gold: 300 } },
+  { key: 'France', name: 'France', twist: 'Norman knights sally out — the open field is as much theirs as the wall.',
+    boonLabel: 'Norman Destriers', boonDesc: 'Your men-at-arms hit harder', boon: { melee: 0.10 } },
+  { key: 'The Empire', name: 'The Empire', twist: 'Rhine fortresses, thick and high. Bring engines.',
+    boonLabel: 'Imperial Engineers', boonDesc: 'Stronger siege + a free trebuchet', boon: { siege: 0.22, trebs: 1 } },
+  { key: 'Italy', name: 'Italy', twist: 'City-states behind twin walls, crossbows on every parapet.',
+    boonLabel: 'Genoese Crossbows', boonDesc: 'Archers strike harder still', boon: { archer: 0.15 } },
+  { key: 'Byzantium', name: 'Byzantium', twist: 'Sea-girt strongholds and the dread of Greek fire.',
+    boonLabel: 'Varangian Guard', boonDesc: 'Heavy foot — harder, hardier', boon: { melee: 0.10, hp: 0.06 } },
+  { key: 'Anatolia', name: 'Anatolia', twist: 'Seljuk horse-archers harry the long march across the plateau.',
+    boonLabel: 'Turcopole Outriders', boonDesc: 'Your charge bites deeper', boon: { melee: 0.08 } },
+  { key: 'The Holy Land', name: 'The Holy Land', twist: 'Crusader fortresses — the hardest walls on earth — and, at their heart, Jerusalem.',
+    boonLabel: 'Jerusalem', boonDesc: 'The Holy City', boon: {} },
+];
+export function countryIndex(region: string): number { const i = COUNTRIES.findIndex(c => c.key === region); return i < 0 ? 99 : i; }
+
+export interface CountryStatus extends Country { idx: number; total: number; taken: number; conquered: boolean; ids: number[]; }
+// Per-country tally of strongholds taken, in campaign order.
+export function countriesWithStatus(progress: Progress, castles: CampaignCastle[]): CountryStatus[] {
+  return COUNTRIES.map((c, idx) => {
+    const ids = castles.filter(x => x.region === c.key).map(x => x.id);
+    const taken = ids.filter(id => progress.completed.includes(id)).length;
+    return { ...c, idx, ids, total: ids.length, taken, conquered: ids.length > 0 && taken === ids.length };
+  });
+}
+// The realm currently being fought through (first not-yet-conquered), or the last.
+export function currentCountry(progress: Progress, castles: CampaignCastle[]): CountryStatus {
+  const cs = countriesWithStatus(progress, castles);
+  return cs.find(c => !c.conquered) || cs[cs.length - 1];
+}
+// Sum of the boons from every realm already conquered — folded into the war buff.
+export function countryBoons(progress: Progress, castles: CampaignCastle[]): Required<Omit<CountryBoon, 'gold'>> {
+  const acc = { hp: 0, melee: 0, archer: 0, siege: 0, trebs: 0 };
+  for (const c of countriesWithStatus(progress, castles)) if (c.conquered) {
+    acc.hp += c.boon.hp || 0; acc.melee += c.boon.melee || 0; acc.archer += c.boon.archer || 0;
+    acc.siege += c.boon.siege || 0; acc.trebs += c.boon.trebs || 0;
+  }
+  return acc;
+}
+// If taking `castleId` just completed its realm, return that Country (else null).
+// Call AFTER pushing castleId into progress.completed.
+export function countryJustConquered(castleId: number, progress: Progress, castles: CampaignCastle[]): CountryStatus | null {
+  const c = castles.find(x => x.id === castleId); if (!c) return null;
+  const st = countriesWithStatus(progress, castles).find(s => s.key === c.region);
+  return st && st.conquered ? st : null;
+}
+
 // ---- Raids: optional, repeatable side-battles to fund the army ----
 // Smaller, weaker holdings you can choose to storm for gold. They cost you the
 // same permanent casualties as a siege, so they're a risk/reward grind, not a

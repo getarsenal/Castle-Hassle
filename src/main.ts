@@ -1,7 +1,7 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered } from './campaign';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
@@ -264,6 +264,19 @@ function showEnd() {
       if (firstTake) progress.completed.push(activeCastle.id);
       progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
       if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} gold in spoils.`; }
+      // Did that stronghold complete a whole realm? Crown the chapter and grant its boon.
+      const realm = firstTake ? countryJustConquered(activeCastle.id, progress, castles) : null;
+      if (realm) {
+        if (realm.key === 'The Holy Land') {
+          bannerTitle.textContent = 'JERUSALEM TAKEN';
+          bannerText.textContent = 'The Holy City falls. Your banner flies over Jerusalem — the Crusade is won.';
+        } else {
+          if (realm.boon.gold) progress.gold += realm.boon.gold;
+          bannerTitle.textContent = `${realm.name.toUpperCase()} CONQUERED`;
+          bannerText.textContent = `${realm.name} is yours. ${realm.boonLabel} join your host — ${realm.boonDesc}.`;
+        }
+        bannerTitle.style.color = '#ffd24a';
+      }
     }
   } else if (sim.retreated) {
     bannerTitle.textContent = 'RETREAT SOUNDED';
@@ -386,6 +399,13 @@ let map: WorldMap3D | null = null;
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
 function refreshGoldLabel() { const g = document.getElementById('wcGold'); if (g) g.textContent = ` · ${progress.gold} gold`; }
+// The war buff actually fielded: War-Council upgrades PLUS the permanent boons of
+// every realm already conquered (so the host grows as the Crusade advances east).
+function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
+  const b = computeBuffs(progress.upg), cb = countryBoons(progress, castles);
+  return { atk: { hp: b.atk.hp + cb.hp, melee: b.atk.melee + cb.melee, archer: b.atk.archer + cb.archer, fire: b.atk.fire, siege: b.atk.siege + cb.siege, reload: b.atk.reload },
+    discount: b.recruitDiscount, trebs: b.extraTrebs + cb.trebs };
+}
 function openMap() {
   activeCastle = null; activeRaid = null;
   show('intro', false); show('titleScreen', false); show('muster', false); show('map', true);
@@ -394,7 +414,19 @@ function openMap() {
   if (map) map.destroy();
   const canvas = $('mapCanvas') as HTMLCanvasElement; // re-fetch (destroy swaps the node)
   map = new WorldMap3D(canvas, castles, progress, enterCastle);
+  updateMapHeader();
   resumeMenuMusic(); // the menu theme carries on across the map (until a battle)
+}
+// Map header doubles as the campaign objective: which realm you're in, how much
+// of it has fallen, and a line on what makes its war different.
+function updateMapHeader() {
+  const h = document.getElementById('mapHeader'); if (!h) return;
+  const cc = currentCountry(progress, castles);
+  const onJerusalem = cc.key === 'The Holy Land' && cc.taken >= cc.total - 1 && cc.total > 0;
+  h.innerHTML = onJerusalem
+    ? `<b style="letter-spacing:1.6px">THE ROAD TO JERUSALEM</b>`
+    : `<b style="letter-spacing:1.6px">${cc.name.toUpperCase()}</b><span style="opacity:.7"> · ${cc.taken}/${cc.total} taken</span>` +
+      `<div style="font:600 10px 'EB Garamond',serif;letter-spacing:.3px;opacity:.82;margin-top:3px;white-space:normal;color:#e7d3a6">${cc.twist}</div>`;
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => { feedback.open(); openUpgrades(progress, refreshGoldLabel); });
 document.getElementById('raidsBtn')?.addEventListener('click', () => { feedback.open(); openRaids(progress, raids, enterRaid, refreshGoldLabel); });
@@ -409,7 +441,7 @@ function bringable(key: ArmyKey): number {
 }
 function enterCastle(c: CampaignCastle) {
   activeCastle = c; activeRaid = null; currentNoArtillery = false;
-  const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
+  const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
   // default: bring your whole army
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
@@ -429,7 +461,7 @@ function enterRaid(r: Raid) {
   activeRaid = r; activeCastle = null;
   // a palisade-town raid is an infantry affair — no siege train
   currentNoArtillery = !!r.style.palisade;
-  const buffs = computeBuffs(progress.upg); currentBuff = buffs.atk; currentDiscount = buffs.recruitDiscount; currentExtraTrebs = buffs.extraTrebs;
+  const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
   currentSeed = (r.seedBase + (Date.now() & 0x3ff)) >>> 0; currentDifficulty = r.difficulty; currentStyle = r.style;
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
   show('map', false);
