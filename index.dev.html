@@ -38,20 +38,35 @@
       --leather: #241a0f; --leather-2: #150f08; --leather-edge: #5a4626;
       --parch: #e9d8af; --att: #e8513a; --def: #3d7be0;
       --text: #f3e6cf; --text-dim: #cbb892; --text-faint: #a08c66;
-      --r-sm: 9px; --r-md: 13px; --r-lg: 18px;
+      --r-sm: 11px; --r-md: 14px; --r-lg: 18px; --r-xs: 8px; --r-pill: 999px;
+      /* type ramp — one disciplined scale, used front to back (no more one-off sizes) */
+      --fs-micro: 10px; --fs-caption: 11px; --fs-label: 13px; --fs-body: 15px;
+      --fs-heading: 18px; --fs-title: 22px; --fs-display: 30px; --fs-hero: 42px;
       --sh-1: 0 2px 8px rgba(0,0,0,0.32); --sh-2: 0 8px 26px rgba(0,0,0,0.45); --sh-3: 0 22px 60px rgba(0,0,0,0.6);
+      /* elevation for the chunky gold buttons (one consistent press language) */
+      --gold-drop: 0 5px 0 var(--gold-shadow), var(--sh-1); --gold-drop-press: 0 2px 0 var(--gold-shadow);
+      --ease: cubic-bezier(.2,.8,.3,1); --dur: .12s;
       /* faint repeating grain so panels read as tooled leather / vellum, not flat glass */
       --grain: repeating-linear-gradient(50deg, rgba(255,235,190,0.018) 0 2px, rgba(0,0,0,0.025) 2px 4px);
     }
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    button { font-family: inherit; color: inherit; }
+    /* keyboard accessibility: a visible focus ring on every control (mouse/touch unaffected) */
+    :where(button, [role="button"], a, input, .card, .tool, .preset, .chip, .upgNode .buy):focus-visible {
+      outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--r-sm); }
+    @media (hover: hover) {
+      .ui-btn:hover:not(:disabled), #startGameBtn:hover, #startbtn:hover, #musterBtn:hover:not(:disabled),
+      #warCouncilBtn:hover, #musterMapBtn:hover, #raidsBtn:hover, #muteBtn:hover, .tool:hover, #restartbtn:hover { filter: brightness(1.06); }
+      .card:hover { border-color: rgba(255,225,160,0.4); }
+    }
     /* ---- shared UI components (premium, coherent) ---- */
     .ui-panel { background: var(--grain), radial-gradient(130% 85% at 50% -10%, rgba(126,90,42,0.22), transparent 62%), linear-gradient(180deg, var(--leather), var(--leather-2));
       border: 1px solid var(--leather-edge); border-radius: var(--r-lg);
       box-shadow: var(--sh-2), inset 0 1px 0 rgba(255,225,160,0.12), inset 0 0 30px rgba(0,0,0,0.34); }
-    .ui-btn { font: 800 15px 'Cinzel', Georgia, serif; letter-spacing: .5px; color: #2c1a06; cursor: pointer;
+    .ui-btn { font: 800 var(--fs-body) 'Cinzel', Georgia, serif; letter-spacing: .5px; color: #2c1a06; cursor: pointer;
       background: linear-gradient(var(--gold-bright), var(--gold-deep)); border: none; border-top: 1px solid #fff1c4;
-      border-radius: var(--r-md); box-shadow: 0 4px 0 var(--gold-shadow), var(--sh-1); padding: 11px 18px; }
-    .ui-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--gold-shadow); }
+      border-radius: var(--r-md); box-shadow: var(--gold-drop); min-height: 44px; padding: 11px 18px; }
+    .ui-btn:active { transform: translateY(2px); box-shadow: var(--gold-drop-press); }
     .ui-btn:disabled { background: linear-gradient(#4a3c26, #34291a); color: #8a7a5c; border-top-color: #5a4a30; box-shadow: 0 3px 0 #241a10; cursor: default; }
     .ui-btn--danger { color: #ffe7dd; background: radial-gradient(circle at 42% 30%, #b54632, #6f261c); border-top: 1px solid rgba(255,180,150,0.5); box-shadow: 0 4px 0 #4a160e, var(--sh-1); }
     /* gold filigree divider: a hairline rule with a centred lozenge */
@@ -107,16 +122,16 @@
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
     #perf.hidden { display: none; }
     #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto;
-      border: 1px solid rgba(255,225,160,0.22); background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9)); color: #ffe6a6;
-      box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,225,160,0.08);
-      font: 700 13px 'Cinzel', Georgia, serif; padding: 8px 13px; border-radius: 11px; cursor: pointer; display: none; }
-    #speedBtn { min-width: 44px; text-align: center; }
+      border: 1px solid rgba(255,225,160,0.22); background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9)); color: var(--gold-soft);
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08);
+      font: 700 var(--fs-label) 'Cinzel', Georgia, serif; min-height: 44px; padding: 8px 15px; border-radius: var(--r-sm); cursor: pointer; display: none; }
+    #speedBtn { min-width: 48px; text-align: center; }
     #retreatBtn { border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
     #pauseBtn.show, #retreatBtn.show, #speedBtn.show { display: block; }
     #pauseBtn.on, #speedBtn.fast { background: rgba(200,150,40,0.92); color: #241600; }
     #helpBtn { pointer-events: auto; border: 1px solid rgba(255,225,160,0.22); background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9));
-      box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,225,160,0.08);
-      color: #ffe6a6; font: 700 14px 'Cinzel', Georgia, serif; width: 34px; height: 34px;
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08);
+      color: var(--gold-soft); font: 700 var(--fs-heading) 'Cinzel', Georgia, serif; width: 44px; height: 44px;
       border-radius: 50%; cursor: pointer; display: none; padding: 0; flex-shrink: 0; }
     #helpBtn.show { display: block; }
 
@@ -124,7 +139,7 @@
       background: linear-gradient(180deg, rgba(40,30,18,0.86), rgba(20,15,9,0.86)); border: 1px solid rgba(255,225,160,0.16);
       box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,225,160,0.07);
       border-radius: 14px; padding: 7px 12px; pointer-events: auto;
-      font-size: 12.5px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap; }
+      font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.3px; white-space: nowrap; }
     #topbar .stat { display: flex; gap: 6px; align-items: center; }
     #topbar .dot { width: 10px; height: 10px; border-radius: 50%; }
     #topbar .vs { opacity: .4; }
@@ -141,8 +156,8 @@
       border: 1px solid rgba(255,255,255,0.18); overflow: hidden; }
     #keepFill { height: 100%; width: 0%; border-radius: 6px;
       background: linear-gradient(90deg, #e8b53a, #c43d34); transition: width 0.12s linear; }
-    #startbtn { font: 800 15px 'Cinzel', Georgia, serif; letter-spacing: .4px; color: #2c1a06; background: linear-gradient(var(--gold-bright), var(--gold-deep)); border: none; border-top: 1px solid #fff1c4; border-radius: var(--r-md); padding: 10px 22px; box-shadow: 0 4px 0 var(--gold-shadow), var(--sh-1); cursor: pointer; }
-    #startbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--gold-shadow); }
+    #startbtn { font: 800 var(--fs-body) 'Cinzel', Georgia, serif; letter-spacing: .4px; color: #2c1a06; background: linear-gradient(var(--gold-bright), var(--gold-deep)); border: none; border-top: 1px solid #fff1c4; border-radius: var(--r-md); min-height: 44px; padding: 11px 24px; box-shadow: var(--gold-drop); cursor: pointer; }
+    #startbtn:active { transform: translateY(2px); box-shadow: var(--gold-drop-press); }
 
     /* bottom controls stack: cards → tools → hint (above them) */
     #cards {
@@ -152,27 +167,28 @@
     }
     #cards::-webkit-scrollbar { display: none; }
     .card {
-      flex: 0 0 auto; min-width: 72px; padding: 7px 9px 8px; border-radius: 12px;
+      flex: 0 0 auto; min-width: 72px; padding: 7px 9px 8px; border-radius: var(--r-sm);
       background: linear-gradient(180deg, rgba(40,30,18,0.92), rgba(20,15,9,0.92)); border: 2px solid rgba(255,225,160,0.16);
       box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,225,160,0.08);
       text-align: center; cursor: pointer; transition: transform .08s, border-color .08s;
     }
     .card:active { transform: scale(0.95); }
     .card.sel { border-color: #ffd24a; box-shadow: 0 0 0 1px #ffd24a inset; }
-    .card .name { font-size: 11px; font-weight: 700; }
-    .card .count { font-size: 16px; font-weight: 800; margin-top: 2px; }
+    .card .name { font-size: var(--fs-caption); font-weight: 700; }
+    .card .count { font-size: var(--fs-heading); font-weight: 800; margin-top: 2px; }
     .card .bar { height: 4px; border-radius: 2px; margin-top: 5px; background: rgba(255,255,255,0.15); overflow: hidden; }
     .card .bar > i { display: block; height: 100%; background: #5fd16a; }
     .card .ammo { height: 3px; border-radius: 2px; margin-top: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
     .card .ammo > i { display: block; height: 100%; background: #6fc3e8; }
     .card.routing { opacity: 0.55; }
-    .card.routing .name::after { content: " ⚑"; color: #ffb03a; }
+    .card.routing .name::after { content: ''; display: inline-block; width: 9px; height: 12px; margin-left: 4px; vertical-align: -1px;
+      background: no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 12'%3E%3Cpath d='M2 1 V11' stroke='%23ffb03a' stroke-width='1.4' stroke-linecap='round'/%3E%3Cpath d='M2.7 1.6 H7.4 L5.9 3.6 L7.4 5.6 H2.7 Z' fill='%23ffb03a'/%3E%3C/svg%3E"); }
     .card.assault { border-color: #e8893a; box-shadow: 0 0 10px rgba(232,137,58,0.55); }
     .card.assault.sel { border-color: #ffd24a; }
 
     #tools { position: absolute; bottom: calc(var(--safe-bottom) + 96px); left: 50%; transform: translateX(-50%); display: none; gap: 8px; pointer-events: auto; }
     #tools.show { display: flex; }
-    .tool { font: inherit; font-size: 12px; font-weight: 700; color: #f3e6cf; background: linear-gradient(180deg, rgba(40,30,18,0.94), rgba(20,15,9,0.94)); border: 2px solid rgba(255,225,160,0.2); border-radius: 10px; padding: 7px 12px; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,0.35); }
+    .tool { font: inherit; font-size: var(--fs-label); font-weight: 700; color: var(--text); background: linear-gradient(180deg, rgba(40,30,18,0.94), rgba(20,15,9,0.94)); border: 2px solid rgba(255,225,160,0.2); border-radius: var(--r-sm); min-height: 44px; padding: 9px 15px; cursor: pointer; box-shadow: var(--sh-1); }
     .tool.on { border-color: #ffe27a; color: #ffe27a; box-shadow: 0 0 12px rgba(255,210,74,0.35); }
 
     #hint {
@@ -199,9 +215,9 @@
     #banner h1 { font-size: 33px; font-weight: 800; letter-spacing: 1px; line-height: 1.1; text-shadow: 0 3px 14px rgba(0,0,0,.5); }
     #banner p { font-size: 15px; line-height: 1.5; color: #d8c8a8; max-width: 320px; }
     #banner button, #startbtn { pointer-events: auto; }
-    #restartbtn { font: inherit; font-weight: 700; font-size: 16px; color: #2a1c08; margin-top: 4px;
-      background: linear-gradient(#ffe27a,#ffbe34); border: none; border-radius: 12px; padding: 13px 30px; cursor: pointer; box-shadow: 0 4px 0 #b9851c; }
-    #restartbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #b9851c; }
+    #restartbtn { font: inherit; font-weight: 700; font-size: var(--fs-heading); color: #2a1c08; margin-top: 4px;
+      background: linear-gradient(#ffe27a,#ffbe34); border: none; border-radius: var(--r-md); min-height: 44px; padding: 13px 30px; cursor: pointer; box-shadow: var(--gold-drop); }
+    #restartbtn:active { transform: translateY(2px); box-shadow: var(--gold-drop-press); }
     /* when the battle is over, the end-card stands alone — hide the live HUD behind it */
     #hud.over > :not(#banner) { display: none !important; }
     .hidden { display: none !important; }
@@ -271,13 +287,13 @@
     .tsPI svg { width: 27px; height: 27px; }
     .tsPL { font: 700 11px 'Cinzel', Georgia, serif; letter-spacing: .4px; line-height: 1.25; color: #e7d3a6; text-align: center; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
     #startGameBtn { position: relative; overflow: hidden; pointer-events: auto; border: none; cursor: pointer; width: min(78vw, 360px);
-      font: 800 22px 'Cinzel', Georgia, serif; letter-spacing: 1px; color: #3a2208; background: linear-gradient(#ffe487, #e7a52a);
-      border-top: 1px solid #fff1c4; padding: 17px 0; border-radius: 14px; box-shadow: 0 6px 0 #b9851c, 0 11px 26px rgba(0,0,0,0.5); }
+      font: 800 var(--fs-title) 'Cinzel', Georgia, serif; letter-spacing: 1px; color: #3a2208; background: linear-gradient(#ffe487, #e7a52a);
+      border-top: 1px solid #fff1c4; padding: 17px 0; border-radius: var(--r-md); box-shadow: 0 6px 0 var(--gold-shadow), 0 11px 26px rgba(0,0,0,0.5); }
     #startGameBtn::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 36%, rgba(255,255,255,0.5) 50%, transparent 64%);
       background-size: 250% 100%; animation: tsShine 5s ease-in-out infinite; }
     #startGameBtn:active { transform: translateY(2px); box-shadow: 0 4px 0 #b9851c, 0 7px 16px rgba(0,0,0,0.45); }
     .tsFoot { position: absolute; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 13px); z-index: 2; text-align: center;
-      color: rgba(241,226,194,0.5); font: 600 10.5px 'EB Garamond', Georgia, serif; letter-spacing: 3.5px; }
+      color: rgba(241,226,194,0.5); font: 600 var(--fs-caption) 'EB Garamond', Georgia, serif; letter-spacing: 3.5px; }
 
     #map { background: #1b2236; }
     #mapCanvas { width: 100%; height: 100%; display: block; touch-action: none; }
@@ -342,19 +358,19 @@
     .rrow .own { font-size: 10.5px; font-weight: 700; color: #9fd0ff; margin-top: 3px; }
     .rrow .qty { grid-area: qty; display: flex; align-items: center; gap: 9px; }
     .rrow .ct { font-size: 20px; font-weight: 800; min-width: 46px; text-align: center; color: #ffe6b0; }
-    .rbtn { width: 38px; height: 38px; border-radius: 11px; border: none; font: inherit; font-size: 22px; font-weight: 800; color: #1a2433; background: linear-gradient(180deg,#ffe27a,#ffc23a); box-shadow: 0 3px 0 #c79a20; cursor: pointer; flex: 0 0 auto; }
+    .rbtn { width: 44px; height: 44px; border-radius: var(--r-sm); border: none; font: inherit; font-size: 22px; font-weight: 800; color: #1a2433; background: linear-gradient(180deg,#ffe27a,#ffc23a); box-shadow: 0 3px 0 #c79a20; cursor: pointer; flex: 0 0 auto; }
     .rbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 #c79a20; }
     .rbtn:disabled { opacity: 0.3; box-shadow: 0 3px 0 #8a6c18; }
-    .rbtn.rec { grid-area: rec; width: 100%; height: 38px; font-size: 13.5px; font-weight: 800; letter-spacing: .3px;
+    .rbtn.rec { grid-area: rec; width: 100%; height: 44px; font-size: var(--fs-label); font-weight: 800; letter-spacing: .3px;
       background: linear-gradient(180deg,#8fe07a,#4faa3a); box-shadow: 0 3px 0 #2f7a24; color: #0e2408; white-space: nowrap; }
     .rbtn.rec:active { transform: translateY(2px); box-shadow: 0 1px 0 #2f7a24; }
     .rbtn.rec:disabled { opacity: 0.3; box-shadow: 0 3px 0 #2f5a24; }
     #musterBtn {
-      margin-top: 22px; z-index: 1; font: inherit; font-weight: 800; font-size: 18px; letter-spacing: 0.5px; color: #2a1c08;
+      margin-top: 22px; z-index: 1; font: inherit; font-weight: 800; font-size: var(--fs-heading); letter-spacing: 0.5px; color: #2a1c08;
       background: linear-gradient(180deg,#ffe27a,#ffbe34); border: none; border-radius: 14px; padding: 14px 38px;
-      box-shadow: 0 5px 0 #b9851c, 0 8px 20px rgba(0,0,0,0.35); cursor: pointer;
+      box-shadow: var(--gold-drop); cursor: pointer;
     }
-    #musterBtn:active { transform: translateY(2px); box-shadow: 0 3px 0 #b9851c; }
+    #musterBtn:active { transform: translateY(2px); box-shadow: var(--gold-drop-press); }
     #musterBtn:disabled { opacity: 0.45; }
   
     /* ---- Typography: Cinzel for headings/chrome, EB Garamond for body ---- */
@@ -446,7 +462,7 @@
     <div id="banner"><div class="bannerCard"><h1 id="bannerTitle"></h1><p id="bannerText"></p><button id="restartbtn">Fight Again</button></div></div>
   </div>
   <div id="muster">
-    <button id="musterBack">◂ Map</button>
+    <button id="musterBack"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M15 5 L8 12 L15 19"/></svg>Map</button>
     <h1>MUSTER YOUR ARMY</h1>
     <div class="sub" id="musterTitle">Recruit with your gold, then march the host you can afford.</div>
     <div id="musterBar">
