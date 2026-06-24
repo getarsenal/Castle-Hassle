@@ -316,7 +316,7 @@
     #raidsBtn { right: 14px; bottom: calc(var(--safe-bottom) + 16px); border-left: 3px solid #b54632; }
     #musterBack { position: absolute; top: calc(var(--safe-top) + 16px); left: 14px; z-index: 2;
       pointer-events: auto; border: 1px solid rgba(255,225,160,0.2); background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9)); color: var(--gold-soft);
-      font: 700 13px 'Cinzel', Georgia, serif; letter-spacing: .4px; padding: 8px 14px; border-radius: 10px; cursor: pointer; box-shadow: var(--sh-1); }
+      font: 700 var(--fs-label) 'Cinzel', Georgia, serif; letter-spacing: .4px; min-height: 44px; padding: 8px 14px; border-radius: var(--r-sm); cursor: pointer; box-shadow: var(--sh-1); }
 
     #muster {
       position: fixed; inset: 0; z-index: 40; display: none; flex-direction: column; align-items: center;
@@ -335,9 +335,9 @@
       opacity: 0.55;
     }
     #muster h1 { font-size: 26px; font-weight: 800; color: #ffd24a; letter-spacing: 1px; text-shadow: 0 3px 16px rgba(0,0,0,.5); margin-top: 30px; }
-    #muster .sub { font-size: 12.5px; color: rgba(255,255,255,0.66); margin: 4px 0 18px; }
+    #muster .sub { font-size: var(--fs-label); color: rgba(255,255,255,0.66); margin: 4px 0 18px; }
     #musterBar { width: 100%; max-width: 440px; z-index: 1; display: flex; justify-content: space-between;
-      font-size: 13px; font-weight: 700; margin-bottom: 18px; color: #ffe6b0; }
+      font-size: var(--fs-label); font-weight: 700; margin-bottom: 18px; color: #ffe6b0; }
     #musterBar #musterGold { color: #ffd24a; }
     #musterBar b { color: #ffe6b0; }
     #rosterRows { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 10px; z-index: 1; }
@@ -353,9 +353,9 @@
     .rrow .ic { grid-area: ic; width: 44px; height: 44px; align-self: start; border-radius: 11px; display: flex; align-items: center; justify-content: center; line-height: 0; color: #ffe6a6; background: radial-gradient(circle at 35% 30%, #6a5230, #2c2012); border: 1px solid rgba(255,225,160,0.18); box-shadow: inset 0 1px 0 rgba(255,225,160,0.12); }
     .rrow .ic svg { width: 27px; height: 32px; display: block; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5)); }
     .rrow .info { grid-area: info; min-width: 0; }
-    .rrow .nm { font-size: 15px; font-weight: 800; line-height: 1.15; }
-    .rrow .dsc { font-size: 11px; color: rgba(255,255,255,0.58); line-height: 1.25; margin-top: 1px; }
-    .rrow .own { font-size: 10.5px; font-weight: 700; color: #9fd0ff; margin-top: 3px; }
+    .rrow .nm { font-size: var(--fs-body); font-weight: 800; line-height: 1.15; }
+    .rrow .dsc { font-size: var(--fs-caption); color: rgba(255,255,255,0.58); line-height: 1.25; margin-top: 1px; }
+    .rrow .own { font-size: var(--fs-caption); font-weight: 700; color: #9fd0ff; margin-top: 3px; }
     .rrow .qty { grid-area: qty; display: flex; align-items: center; gap: 9px; }
     .rrow .ct { font-size: 20px; font-weight: 800; min-width: 46px; text-align: center; color: #ffe6b0; }
     .rbtn { width: 44px; height: 44px; border-radius: var(--r-sm); border: none; font: inherit; font-size: 22px; font-weight: 800; color: #1a2433; background: linear-gradient(180deg,#ffe27a,#ffc23a); box-shadow: 0 3px 0 #c79a20; cursor: pointer; flex: 0 0 auto; }

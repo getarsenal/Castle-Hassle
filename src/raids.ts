@@ -11,25 +11,25 @@ function injectStyles() {
   .raidScreen{position:fixed;inset:0;z-index:50;background:linear-gradient(#15110a,#0b0805);
     color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;display:flex;flex-direction:column;overflow:hidden}
   .raidTop{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;border-bottom:1px solid #5a4424}
-  .raidTop h2{margin:0;font-size:22px;color:#ffe6a6;letter-spacing:.5px}
-  .raidGold{font-size:17px;color:#ffd24a;font-weight:700;white-space:nowrap}
-  .raidGold b{font-size:20px}
-  .raidHint{font-size:12px;color:#a08c66;padding:9px 18px 6px;line-height:1.45}
+  .raidTop h2{margin:0;font-size:var(--fs-title);color:#ffe6a6;letter-spacing:.5px}
+  .raidGold{font-size:var(--fs-heading);color:#ffd24a;font-weight:700;white-space:nowrap}
+  .raidGold b{font-size:var(--fs-title)}
+  .raidHint{font-size:var(--fs-label);color:#a08c66;padding:9px 18px 6px;line-height:1.45}
   .raidBody{flex:1;overflow-y:auto;padding:8px 14px 28px}
-  .raidCard{border:1px solid #5a4626;border-radius:13px;padding:13px 14px;margin-bottom:12px;
+  .raidCard{border:1px solid #5a4626;border-radius:var(--r-md);padding:13px 14px;margin-bottom:12px;
     background:repeating-linear-gradient(50deg,rgba(255,235,190,0.018) 0 2px,rgba(0,0,0,0.025) 2px 4px),linear-gradient(180deg,#2a1f12,#1e160c);
     box-shadow:inset 0 1px 0 rgba(255,225,160,0.07),0 3px 10px rgba(0,0,0,0.3)}
-  .raidName{font-size:17px;color:#ffe6a6;font-weight:700;font-family:'Cinzel',Georgia,serif}
-  .raidBlurb{font-size:13px;color:#cbb78f;line-height:1.4;margin:5px 0 10px}
-  .raidMeta{display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:11px}
+  .raidName{font-size:var(--fs-heading);color:#ffe6a6;font-weight:700;font-family:'Cinzel',Georgia,serif}
+  .raidBlurb{font-size:var(--fs-label);color:#cbb78f;line-height:1.4;margin:5px 0 10px}
+  .raidMeta{display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-label);margin-bottom:11px}
   .raidMeta .res{color:#d6b98a}
   .raidMeta .res b{color:#ffd98a}
   .raidReward{color:#ffd24a;font-weight:700}
-  .raidGo{width:100%;border:none;border-radius:9px;padding:11px;cursor:pointer;
-    font:700 15px 'Cinzel',Georgia,serif;color:#241600;background:linear-gradient(#caa33a,#9c7a22)}
-  .raidGo:active{transform:translateY(1px)}
-  .raidClose{border:none;border-radius:9px;padding:9px 18px;background:#3a2e1e;color:#ffe6a6;
-    font:600 15px 'Cinzel',Georgia,serif;cursor:pointer}`;
+  .raidGo{width:100%;border:none;border-radius:var(--r-sm);min-height:44px;padding:12px;cursor:pointer;
+    font:700 var(--fs-body) 'Cinzel',Georgia,serif;color:#241600;background:linear-gradient(#caa33a,#9c7a22);box-shadow:var(--gold-drop)}
+  .raidGo:active{transform:translateY(2px);box-shadow:var(--gold-drop-press)}
+  .raidClose{border:none;border-radius:var(--r-sm);min-height:44px;padding:9px 18px;background:#3a2e1e;color:var(--gold-soft);
+    font:600 var(--fs-body) 'Cinzel',Georgia,serif;cursor:pointer}`;
   document.head.appendChild(s);
 }
 
