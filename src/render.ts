@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Sim, CASTLE, Faction, WORLD, LAYOUT } from './sim';
+import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
 import { makeSoldierTexture, makeArrowTexture, SpriteKind } from './sprites';
 import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
 
@@ -148,6 +148,7 @@ export class Renderer {
     this.buildGround();
     this.buildCastle();
     this.buildProps();
+    this.buildInterior();
     this.buildTrees();
     this.buildSoldiers();
     this.buildShadows();
@@ -413,6 +414,60 @@ export class Renderer {
     this.dummy.scale.set(1, 1, 1); this.dummy.rotation.set(0, 0, 0);
     if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
     this.scene.add(trunk); this.scene.add(canopy);
+  }
+
+  // Dress the bailey so the inside reads as a lived-in castle, not an empty yard:
+  // a cobble approach, a well, scattered stores (barrels/crates/hay) and heraldic
+  // banners on the keep. Everything is merged by material into a handful of static
+  // meshes — no extra per-frame cost.
+  private buildInterior() {
+    const W = LAYOUT.W, D = LAYOUT.D;
+    const keepSeg = CASTLE.find(b => b.kind === 'keep');
+    const kx = keepSeg ? (keepSeg.x0 + keepSeg.x1) / 2 : 0, kz = keepSeg ? (keepSeg.z0 + keepSeg.z1) / 2 : 0;
+    const blocks = CASTLE.filter(b => b.kind === 'building' || b.kind === 'keep').map(b => ({ x0: b.x0 - 1.6, x1: b.x1 + 1.6, z0: b.z0 - 1.6, z1: b.z1 + 1.6 }));
+    const free = (x: number, z: number) => Math.abs(x) < W - T - 1.5 && Math.abs(z) < D - T - 1.5 && !blocks.some(b => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1);
+    const cyl = (rt: number, rb: number, h: number, x: number, y: number, z: number) => new THREE.CylinderGeometry(rt, rb, h, 8).translate(x, y, z);
+    const wood: THREE.BufferGeometry[] = [], hoop: THREE.BufferGeometry[] = [], hay: THREE.BufferGeometry[] = [], wellStone: THREE.BufferGeometry[] = [];
+
+    // cobble approach just inside the gate, aimed at the keep — kept short so it
+    // never runs through an inner wall on a concentric castle
+    const sx = LAYOUT.gate.x, sz = D - T - 2, dxk = kx - sx, dzk = kz - sz, dl = Math.hypot(dxk, dzk) || 1;
+    const plen = Math.min(dl - 6, 30);
+    if (plen > 8) {
+      const earth = dirtTexture('#8c8267'); earth.wrapS = earth.wrapT = THREE.RepeatWrapping; earth.repeat.set(1, plen / 9); earth.needsUpdate = true;
+      const path = new THREE.Mesh(new THREE.PlaneGeometry(6.5, plen).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: earth, color: '#9a8f74' }));
+      path.position.set(sx + dxk / dl * plen / 2, 0.02, sz + dzk / dl * plen / 2); path.rotation.y = Math.atan2(dxk, dzk); path.receiveShadow = true; this.scene.add(path);
+    }
+    // a well, a clear focal point in the bailey
+    let wx = sx + dxk / dl * Math.min(dl * 0.5, 22), wz = sz + dzk / dl * Math.min(dl * 0.5, 22);
+    for (let t = 0; t < 8 && !free(wx, wz); t++) { wx += (Math.random() - 0.5) * 8; wz += (Math.random() - 0.5) * 8; }
+    if (free(wx, wz)) {
+      wellStone.push(cyl(1.5, 1.6, 1.3, wx, 0.65, wz)); hoop.push(cyl(1.55, 1.55, 0.18, wx, 1.32, wz));
+      wood.push(cyl(0.12, 0.12, 3.0, wx - 1.2, 1.5, wz), cyl(0.12, 0.12, 3.0, wx + 1.2, 1.5, wz), this.boxG(0.22, 0.22, 2.7, wx, 3.0, wz), this.boxG(3.0, 0.32, 2.1, wx, 3.45, wz));
+      blocks.push({ x0: wx - 2, x1: wx + 2, z0: wz - 2, z1: wz + 2 });
+    }
+    // scattered stores
+    let placed = 0, guard = 0;
+    while (placed < 20 && guard++ < 600) {
+      const x = (Math.random() * 2 - 1) * (W - T - 2), z = (Math.random() * 2 - 1) * (D - T - 2);
+      if (!free(x, z)) continue;
+      const r = Math.random();
+      if (r < 0.5) { const n2 = 1 + (Math.random() * 3 | 0); for (let k = 0; k < n2; k++) { const bx = x + (Math.random() - 0.5) * 1.8, bz = z + (Math.random() - 0.5) * 1.8; wood.push(cyl(0.5, 0.56, 1.25, bx, 0.62, bz)); hoop.push(cyl(0.58, 0.58, 0.16, bx, 0.9, bz), cyl(0.58, 0.58, 0.16, bx, 0.34, bz)); } }
+      else if (r < 0.78) { wood.push(this.boxG(1.2, 1.1, 1.2, x, 0.55, z, Math.random() * 0.5)); if (Math.random() < 0.5) wood.push(this.boxG(0.9, 0.9, 0.9, x + 0.3, 1.5, z - 0.2, Math.random() * 0.6)); }
+      else hay.push(new THREE.CylinderGeometry(0.8, 0.95, 0.95, 8).rotateZ(Math.PI / 2).translate(x, 0.55, z));
+      blocks.push({ x0: x - 1.4, x1: x + 1.4, z0: z - 1.4, z1: z + 1.4 }); placed++;
+    }
+    const add = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.castShadow = m.receiveShadow = true; this.scene.add(m); } };
+    add(hay, this.stone('#c9a743')); add(hoop, this.stone('#3a2a18'));
+    const ws = this.stone('#cdbf9c'); ws.map = this.texStone; add(wellStone, ws);
+    // heraldic banners on the keep's gate-facing wall (brand tie-in)
+    if (keepSeg) {
+      const kw = keepSeg.x1 - keepSeg.x0, faceZ = keepSeg.z1, red: THREE.BufferGeometry[] = [], blue: THREE.BufferGeometry[] = [], poles: THREE.BufferGeometry[] = [];
+      for (let i = 0; i < 2; i++) { const bx = kx + (i ? 1 : -1) * kw * 0.26; (i ? blue : red).push(new THREE.PlaneGeometry(1.7, 4.0).translate(bx, 6.2, faceZ + 0.25)); poles.push(cyl(0.09, 0.09, 5.0, bx, 6.2, faceZ + 0.25)); }
+      wood.push(...poles);
+      add(red, new THREE.MeshLambertMaterial({ color: '#b5332b', side: THREE.DoubleSide })); add(blue, new THREE.MeshLambertMaterial({ color: '#2f5a8c', side: THREE.DoubleSide }));
+    }
+    add(wood, this.stone('#6e4a2a')); // barrels + crates + well frame + banner poles — one mesh
   }
 
   private buildProps() {
