@@ -56,31 +56,37 @@ function injectStyles() {
   if (styled) return; styled = true;
   const s = document.createElement('style'); s.id = 'upg-styles';
   s.textContent = `
-  .upgScreen{position:fixed;inset:0;z-index:50;background:linear-gradient(#1a130b,#0d0905);
-    color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;display:flex;flex-direction:column;overflow:hidden}
-  .upgTop{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;border-bottom:1px solid #5a4424}
-  .upgTop h2{margin:0;font-size:var(--fs-title);color:#ffe6a6;letter-spacing:.5px}
-  .upgGold{font-size:var(--fs-heading);color:#ffd24a;font-weight:700;white-space:nowrap}
-  .upgGold b{font-size:var(--fs-title)}
-  .upgBody{flex:1;overflow-y:auto;padding:12px 14px 28px}
-  .upgTree{margin-bottom:16px}
-  .upgTree h3{margin:0 0 8px;font-size:var(--fs-heading);color:#e9cf9a;display:flex;align-items:center;gap:8px}
+  .upgScreen{position:fixed;inset:0;z-index:50;color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;display:flex;flex-direction:column;overflow:hidden;
+    background:radial-gradient(125% 70% at 50% -8%,rgba(150,104,48,0.4),transparent 58%),repeating-linear-gradient(50deg,rgba(255,235,190,0.02) 0 2px,rgba(0,0,0,0.03) 2px 4px),linear-gradient(180deg,#2c1f10,#160f07)}
+  .upgTop{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(var(--safe-top) + 14px) 62px 12px 16px;border-bottom:1px solid #6a4f28}
+  .upgTop h2{margin:0;display:inline-flex}
+  .upgGold{display:flex;align-items:center;gap:6px;font-size:var(--fs-heading);color:var(--gold-soft);font-weight:700;white-space:nowrap;
+    padding:6px 14px;border-radius:var(--r-pill);background:linear-gradient(180deg,rgba(64,46,24,0.95),rgba(30,21,11,0.95));border:1px solid rgba(255,225,160,0.3);box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,235,190,0.18)}
+  .upgGold b{font-size:var(--fs-title);color:#ffd24a}
+  .upgBody{flex:1;overflow-y:auto;padding:14px 14px 28px}
+  .upgTree{margin-bottom:18px}
+  .upgTree h3{margin:0 0 9px;font-size:var(--fs-heading);color:#ffe0a4;font-family:'Cinzel',Georgia,serif;display:flex;align-items:center;gap:8px}
   .upgRow{display:flex;gap:9px}
-  .upgNode{flex:1;border:1px solid #5a4626;border-radius:var(--r-sm);padding:9px 9px 10px;position:relative;text-align:center;min-width:0;
-    background:repeating-linear-gradient(50deg,rgba(255,235,190,0.018) 0 2px,rgba(0,0,0,0.025) 2px 4px),linear-gradient(180deg,#2a1f12,#1e160c);
-    box-shadow:inset 0 1px 0 rgba(255,225,160,0.06)}
-  .upgNode .nm{font-size:var(--fs-label);color:#ffe6a6;font-weight:600;line-height:1.15}
-  .upgNode .ds{font-size:var(--fs-caption);color:#cbb78f;margin:4px 0 8px;line-height:1.25;min-height:28px}
-  .upgNode .buy{border:none;border-radius:var(--r-xs);min-height:44px;padding:8px 4px;font:600 var(--fs-label) 'EB Garamond',Georgia,serif;width:100%;cursor:pointer}
-  .upgNode.bought{border-color:#3f7a3a;background:#1c2c18}
-  .upgNode.bought .buy{background:#2f5a2a;color:#bfe6b4}
-  .upgNode.canbuy .buy{background:linear-gradient(#caa33a,#9c7a22);color:#241600}
-  .upgNode.locked{opacity:.55}
-  .upgNode.locked .buy{background:#3a2e1e;color:#9a896c}
-  .upgConn{position:absolute;left:-9px;top:50%;width:9px;height:2px;background:#5a4626}
-  .upgDone{position:absolute;top:6px;right:8px;color:#7fd06a;font-size:var(--fs-label);font-weight:700}
-  .upgClose{border:none;border-radius:var(--r-sm);min-height:44px;padding:9px 18px;background:#3a2e1e;color:var(--gold-soft);font:600 var(--fs-body) 'EB Garamond',Georgia,serif;cursor:pointer}
-  .upgHint{font-size:var(--fs-caption);color:#a08c66;padding:0 18px 12px}`;
+  .upgNode{flex:1;border:1px solid #6a5230;border-top:1px solid rgba(255,225,160,0.22);border-radius:var(--r-md);padding:10px 9px 11px;position:relative;text-align:center;min-width:0;
+    background:repeating-linear-gradient(50deg,rgba(255,235,190,0.02) 0 2px,rgba(0,0,0,0.03) 2px 4px),linear-gradient(180deg,#46331c,#241809);
+    box-shadow:0 4px 12px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,225,160,0.12)}
+  .upgNode .nm{font-size:var(--fs-label);color:#ffe6a6;font-weight:700;line-height:1.15}
+  .upgNode .ds{font-size:var(--fs-caption);color:#d3bd92;margin:4px 0 9px;line-height:1.25;min-height:28px}
+  .upgNode .buy{border:none;border-radius:var(--r-sm);min-height:44px;padding:8px 4px;font:800 var(--fs-label) 'Cinzel',Georgia,serif;width:100%;cursor:pointer;
+    color:#8a7a5c;background:linear-gradient(#4a3c26,#34291a);box-shadow:0 3px 0 #241a10}
+  .upgNode .buy:active{transform:translateY(2px);box-shadow:0 1px 0 #241a10}
+  .upgNode.bought{border-color:#4a8a42;background:linear-gradient(180deg,#244a1e,#16300f)}
+  .upgNode.bought .buy{background:linear-gradient(#3f7a37,#2c5a26);color:#cdeec2;border-top:1px solid rgba(180,240,170,0.4);box-shadow:0 3px 0 #1c3a16}
+  .upgNode.canbuy{border-color:rgba(255,210,120,0.5)}
+  .upgNode.canbuy .buy{background:linear-gradient(var(--gold-bright),var(--gold-deep));color:#2c1a06;border-top:1px solid #fff1c4;box-shadow:var(--gold-drop)}
+  .upgNode.canbuy .buy:active{box-shadow:var(--gold-drop-press)}
+  .upgNode.locked{opacity:.6}
+  .upgConn{position:absolute;left:-9px;top:50%;width:9px;height:2px;background:#6a5230}
+  .upgDone{position:absolute;top:6px;right:8px;color:#8fe07a;font-size:var(--fs-label);font-weight:700}
+  .upgClose{border:1px solid rgba(255,225,160,0.22);border-radius:var(--r-md);min-height:44px;padding:9px 16px;color:var(--gold-soft);font:700 var(--fs-body) 'Cinzel',Georgia,serif;cursor:pointer;
+    background:linear-gradient(180deg,rgba(64,46,24,0.95),rgba(30,21,11,0.95));box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,235,190,0.12)}
+  .upgClose:active{transform:translateY(1px)}
+  .upgHint{font-size:var(--fs-caption);color:#b6a079;padding:10px 18px 4px}`;
   document.head.appendChild(s);
 }
 
@@ -90,7 +96,7 @@ export function openUpgrades(prog: Progress, onClose: () => void) {
   injectStyles();
   const root = document.createElement('div'); root.className = 'upgScreen';
   const render = () => {
-    root.innerHTML = `<div class="upgTop"><button class="upgClose">Back</button><h2>War Council</h2><div class="upgGold"><b>${prog.gold}</b> gold</div></div>`
+    root.innerHTML = `<div class="upgTop"><button class="upgClose">Back</button><h2><span class="gameRibbon">War Council</span></h2><div class="upgGold"><b>${prog.gold}</b> gold</div></div>`
       + `<div class="upgHint">Spend the spoils of conquest on permanent upgrades for your army.</div>`
       + `<div class="upgBody">${TREES.map(t => {
         const lvl = prog.upg[t.key] || 0;

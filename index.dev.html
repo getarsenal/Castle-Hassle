@@ -73,6 +73,13 @@
     .ui-rule { height: 10px; margin: 2px 0 8px; opacity: .85;
       background: linear-gradient(90deg, transparent, var(--gold-line) 14%, var(--gold-line) 86%, transparent) center/100% 1px no-repeat; position: relative; }
     .ui-rule::after { content: ''; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; transform: translate(-50%,-50%) rotate(45deg); background: var(--gold-soft); box-shadow: 0 0 6px rgba(255,210,74,0.6); }
+    /* heraldic ribbon header — a draped banner with pointed ends, used on every screen title */
+    .gameRibbon { position: relative; display: inline-block; padding: 7px 26px; font: 800 var(--fs-title) 'Cinzel', Georgia, serif;
+      letter-spacing: .6px; color: #3a2208; background: linear-gradient(180deg, var(--gold-bright), var(--gold-deep));
+      border-top: 1px solid #fff1c4; text-shadow: 0 1px 0 rgba(255,244,210,0.5);
+      clip-path: polygon(13px 0, calc(100% - 13px) 0, 100% 50%, calc(100% - 13px) 100%, 13px 100%, 0 50%);
+      box-shadow: 0 4px 11px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.3); }
+    .gameRibbon.crim { color: #ffe7dd; background: linear-gradient(180deg, #cc5640, #8a2c1d); border-top-color: rgba(255,180,150,0.55); text-shadow: 0 1px 2px rgba(0,0,0,0.45); }
     @keyframes uiRise { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2433; }
     body { font-family: 'EB Garamond', Georgia, serif; color: #fff; touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -356,7 +363,7 @@
         linear-gradient(#0e1622, #0e1622) 0 16px / 100% 104px no-repeat;
       opacity: 0.55;
     }
-    #muster h1 { font-size: 26px; font-weight: 800; color: #ffd24a; letter-spacing: 1px; text-shadow: 0 3px 16px rgba(0,0,0,.5); margin-top: 30px; }
+    #muster h1 { margin: 28px 0 2px; line-height: 1; font-weight: 400; }
     #muster .sub { font-size: var(--fs-label); color: rgba(255,255,255,0.66); margin: 4px 0 18px; }
     #musterBar { width: 100%; max-width: 440px; z-index: 1; display: flex; justify-content: space-between;
       font-size: var(--fs-label); font-weight: 700; margin-bottom: 18px; color: #ffe6b0; }
@@ -485,7 +492,7 @@
   </div>
   <div id="muster">
     <button id="musterBack"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M15 5 L8 12 L15 19"/></svg>Map</button>
-    <h1>MUSTER YOUR ARMY</h1>
+    <h1><span class="gameRibbon">Muster Your Army</span></h1>
     <div class="sub" id="musterTitle">Recruit with your gold, then march the host you can afford.</div>
     <div id="musterBar">
       <span><span id="musterGold">0</span> gold in the war chest</span>

@@ -41,7 +41,7 @@ function injectStyles() {
       radial-gradient(60% 55% at 6% 22%, rgba(110,80,40,0.22), transparent 60%),
       radial-gradient(60% 55% at 96% 64%, rgba(110,80,40,0.2), transparent 60%),
       repeating-linear-gradient(91deg, rgba(150,118,72,0.055) 0 3px, transparent 3px 7px)}
-  .musTop{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 4px}
+  .musTop{display:flex;align-items:center;justify-content:space-between;padding:calc(var(--safe-top) + 14px) 60px 4px 18px}
   .musTop h2{margin:0;font-size:25px;color:#48330f;letter-spacing:1px;font-family:'Cinzel',Georgia,serif;text-shadow:0 1px 0 rgba(255,250,235,0.4)}
   .musGold{font-size:15px;color:#7a571c;font-weight:700;white-space:nowrap}
   .musGold b{font-size:19px;color:#8a5410}
