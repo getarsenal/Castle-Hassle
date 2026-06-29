@@ -37,8 +37,11 @@ export class WorldMap3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05;
-    this.scene.background = new THREE.Color('#1b2236');
-    this.scene.fog = new THREE.Fog('#332c44', 820, 2200);   // warm dusk haze — pulls the brand mood far off
+    this.scene.background = new THREE.Color('#c3b49a');
+    // ONE warm horizon haze, shared by the fog, the sky-dome base and every map
+    // edge-fade below — so land/sea dissolve seamlessly into a cloudy rim (Total
+    // War style) instead of a hard tile sitting on a mismatched navy/brown void.
+    this.scene.fog = new THREE.Fog('#c3b49a', 720, 2050);
     this.camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
     // dusk lighting: a low warm-gold sun rakes the relief, cool dusk sky fill, muted ambient
     this.scene.add(new THREE.HemisphereLight('#b9c2e6', '#4a3c28', 0.72));
@@ -122,7 +125,7 @@ export class WorldMap3D {
     this.heights = this.smoothHeights(raw, mask, 4);
     // 3) geometry
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
-    const green = new THREE.Color('#5d7842'), tan = new THREE.Color('#b89c5f'), haze = new THREE.Color('#332c44');
+    const green = new THREE.Color('#5d7842'), tan = new THREE.Color('#b89c5f'), haze = new THREE.Color('#c3b49a');
     for (let gy = 0; gy < GH; gy++) {
       const lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       for (let gx = 0; gx < GW; gx++) {
@@ -206,7 +209,7 @@ export class WorldMap3D {
   private buildWater(mask: Uint8Array) {
     const { GW, GH, bb } = this; const WX = 150, WZ = 104;
     const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
-    const deep = new THREE.Color('#142440'), shallow = new THREE.Color('#386b78'), haze = new THREE.Color('#332c44');
+    const deep = new THREE.Color('#142440'), shallow = new THREE.Color('#386b78'), haze = new THREE.Color('#c3b49a');
     const landNear = (lon: number, lat: number) => {
       const gx = (lon - bb.w) / (bb.e - bb.w) * (GW - 1), gy = (lat - bb.s) / (bb.n - bb.s) * (GH - 1);
       let near = 0; const R = 3;
@@ -331,9 +334,11 @@ export class WorldMap3D {
   // instead of a flat fill — fog still blends the far terrain into the horizon band.
   private buildSkyDome() {
     const geo = new THREE.SphereGeometry(2500, 24, 16);
-    const top = new THREE.Color('#161d33'), bot = new THREE.Color('#7c4e37');
+    const top = new THREE.Color('#1b2440'), bot = new THREE.Color('#c3b49a');
     const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 2500) * 1.5 + 0.32)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
+    // a warm pale haze band hugs the horizon (the cloudy rim the map melts into),
+    // ramping up to a deep dusk zenith
+    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 2500) * 1.7 + 0.18)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
   }
@@ -344,14 +349,37 @@ export class WorldMap3D {
     ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; return tex;
   }
-  // soft clouds drifting west→east, high over the map
+  // a puffy cumulus billow: several overlapping soft lobes baked into one sprite,
+  // so clouds read as real volumes, not the old single radial smudge
+  private cloudSprite() {
+    const S = 192, cv = document.createElement('canvas'); cv.width = cv.height = S; const ctx = cv.getContext('2d')!;
+    const lobe = (x: number, y: number, r: number, a: number) => {
+      const g = ctx.createRadialGradient(x, y, r * 0.15, x, y, r);
+      g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(0.62, `rgba(248,246,240,${a * 0.5})`); g.addColorStop(1, 'rgba(248,246,240,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    };
+    const C = S / 2;
+    lobe(C, C + 14, 52, 0.95); lobe(C - 40, C + 20, 34, 0.9); lobe(C + 42, C + 18, 36, 0.9);
+    lobe(C - 14, C - 8, 40, 0.96); lobe(C + 22, C - 4, 38, 0.94); lobe(C - 58, C + 26, 22, 0.8); lobe(C + 60, C + 24, 22, 0.8);
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; return tex;
+  }
+  // soft cumulus drifting west→east high over the map, PLUS a low bank ringing the
+  // map's rim so the edges read as cloud, not a cut tile (Total War horizon).
   private buildClouds() {
-    const tex = this.softSprite('rgba(255,255,255,0.92)');
-    for (let i = 0; i < 14; i++) {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.5, depthWrite: false }));
-      sp.position.set(this.wX(this.bb.w) + Math.random() * (this.wX(this.bb.e) - this.wX(this.bb.w)) + 200, 95 + Math.random() * 60, this.wZ(this.bb.n) + Math.random() * (this.wZ(this.bb.s) - this.wZ(this.bb.n)));
-      const s = 60 + Math.random() * 80; sp.scale.set(s, s * 0.6, 1); sp.renderOrder = 1; this.scene.add(sp);
-      this.clouds.push({ mesh: sp, speed: 0.06 + Math.random() * 0.08 });
+    const tex = this.cloudSprite();
+    const add = (x: number, y: number, z: number, s: number, op: number, drift: number) => {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: op, depthWrite: false }));
+      sp.position.set(x, y, z); sp.scale.set(s, s * 0.62, 1); sp.renderOrder = 1; this.scene.add(sp);
+      this.clouds.push({ mesh: sp, speed: drift });
+    };
+    const xw = this.wX(this.bb.w), xe = this.wX(this.bb.e), zn = this.wZ(this.bb.n), zs = this.wZ(this.bb.s);
+    // high drifting clouds over the map
+    for (let i = 0; i < 16; i++) add(xw + Math.random() * (xe - xw) + 200, 96 + Math.random() * 64, zn + Math.random() * (zs - zn), 64 + Math.random() * 90, 0.5, 0.06 + Math.random() * 0.08);
+    // a low, fat cloud bank wreathing the map edge — fading land/sea dissolve into it
+    const cx = (xw + xe) / 2, cz = (zn + zs) / 2, rx = (xe - xw) / 2, rz = (zs - zn) / 2;
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2 + Math.random() * 0.25, rr = 1.04 + Math.random() * 0.16;
+      add(cx + Math.cos(a) * rx * rr, 14 + Math.random() * 26, cz + Math.sin(a) * rz * rr, 120 + Math.random() * 110, 0.78, 0.015 + Math.random() * 0.03);
     }
   }
   // small V-flocks of gull silhouettes, each a pair of swept wings that flap;
@@ -405,15 +433,20 @@ export class WorldMap3D {
     if (document.getElementById('map3d-styles')) { this.styleEl = document.getElementById('map3d-styles')!; return; }
     const s = document.createElement('style'); s.id = 'map3d-styles';
     s.textContent = `
-    .mapCompass{position:absolute;top:84px;right:14px;width:62px;height:62px;border-radius:50%;
-      background:radial-gradient(circle at 50% 38%,#f6ecd2,#d8c69a);border:2px solid #6b5126;
-      box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:6;font:700 12px 'EB Garamond',Georgia,serif;color:#4a3514;cursor:pointer}
+    .mapCompass{position:absolute;top:86px;right:14px;width:66px;height:66px;border-radius:50%;
+      background:radial-gradient(circle at 50% 36%,#fbf2db,#e7d2a4 62%,#cdb588);border:3px solid #7a5e2e;
+      box-shadow:0 4px 12px rgba(0,0,0,.42),inset 0 2px 5px rgba(255,255,255,.55),inset 0 -3px 7px rgba(120,90,46,.4);
+      z-index:6;font:700 13px 'EB Garamond',Georgia,serif;color:#4a3514;cursor:pointer}
+    /* the bezel ring (N/E/S/W) is FIXED to the housing; only the needle swings */
+    .mapCompass .ring{position:absolute;inset:0}
+    .mapCompass span{position:absolute;left:0;right:0;text-align:center;text-shadow:0 1px 0 rgba(255,255,255,.5)}
+    .mapCompass .n{top:4px;color:#a6301f}.mapCompass .s{bottom:4px}.mapCompass .e{top:26px;right:6px;left:auto}.mapCompass .w{top:26px;left:6px;right:auto}
     .mapCompass .rose{position:absolute;inset:0;transform-origin:50% 50%}
-    .mapCompass span{position:absolute;left:0;right:0;text-align:center}
-    .mapCompass .n{top:3px;color:#a6301f}.mapCompass .s{bottom:3px}.mapCompass .e{top:24px;right:5px;left:auto}.mapCompass .w{top:24px;left:5px;right:auto}
     .mapCompass .needle{position:absolute;left:50%;top:50%;width:0;height:0;transform:translate(-50%,-100%);
-      border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:22px solid #a6301f}
-    .mapCompass .needle.s{transform:translate(-50%,0);border-bottom:none;border-top:22px solid #3a4a66}
+      border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:24px solid #b53322;filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+    .mapCompass .needle.s{transform:translate(-50%,0);border-bottom:none;border-top:24px solid #3a4a66}
+    .mapCompass::after{content:'';position:absolute;left:50%;top:50%;width:7px;height:7px;border-radius:50%;
+      transform:translate(-50%,-50%);background:#7a5e2e;box-shadow:0 0 0 2px rgba(255,255,255,.4)}
     .castlePanel{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(88vw,400px);
       background:linear-gradient(#241a10f2,#160f08f2);border:1px solid #7a5e2e;border-radius:16px;
       padding:20px 20px 18px;color:#f3e6cf;z-index:7;box-shadow:0 6px 22px rgba(0,0,0,.55);display:none;font-family:'EB Garamond',Georgia,serif;text-align:center}
@@ -440,7 +473,7 @@ export class WorldMap3D {
   private makeCompass() {
     this.injectStyles();
     const c = document.createElement('div'); c.className = 'mapCompass'; c.title = 'Tap to face north';
-    c.innerHTML = '<div class="rose"><div class="needle"></div><div class="needle s"></div><span class="n">N</span><span class="s">S</span><span class="e">E</span><span class="w">W</span></div>';
+    c.innerHTML = '<div class="ring"><span class="n">N</span><span class="s">S</span><span class="e">E</span><span class="w">W</span></div><div class="rose"><div class="needle"></div><div class="needle s"></div></div>';
     c.addEventListener('click', () => { this.azReset = true; });
     this.host().appendChild(c); this.compassEl = c; this.compassRose = c.querySelector('.rose') as HTMLElement;
   }
@@ -573,7 +606,7 @@ export class WorldMap3D {
     const { bb } = this; if (!bb) return;
     this.target.x = Math.max(this.wX(bb.w), Math.min(this.wX(bb.e), this.target.x));
     this.target.z = Math.max(this.wZ(bb.n), Math.min(this.wZ(bb.s), this.target.z));
-    this.dist = Math.max(45, Math.min(520, this.dist));
+    this.dist = Math.max(45, Math.min(345, this.dist)); // cap zoom-out so the map's far rim stays wreathed in cloud, never a bare floating tile
   }
   private bind() {
     const c = this.canvas; const pts = new Map<number, { x: number; y: number }>();

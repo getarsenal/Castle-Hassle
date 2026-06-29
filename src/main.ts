@@ -398,7 +398,7 @@ let map: WorldMap3D | null = null;
 
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
-function refreshGoldLabel() { const g = document.getElementById('wcGold'); if (g) g.textContent = ` · ${progress.gold} gold`; }
+function refreshGoldLabel() { const g = document.getElementById('mapGoldVal'); if (g) g.textContent = String(progress.gold); }
 // The war buff actually fielded: War-Council upgrades PLUS the permanent boons of
 // every realm already conquered (so the host grows as the Crusade advances east).
 function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
@@ -408,7 +408,7 @@ function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
 }
 function openMap() {
   activeCastle = null; activeRaid = null;
-  show('intro', false); show('titleScreen', false); show('muster', false); show('map', true);
+  show('titleScreen', false); show('muster', false); show('map', true); // (the sting overlay, if up, fades itself out over the now-visible map)
   banner.classList.remove('show');
   refreshGoldLabel();
   if (map) map.destroy();
@@ -426,7 +426,8 @@ function updateMapHeader() {
   h.innerHTML = onJerusalem
     ? `<b style="letter-spacing:1.6px">THE ROAD TO JERUSALEM</b>`
     : `<b style="letter-spacing:1.6px">${cc.name.toUpperCase()}</b><span style="opacity:.7"> · ${cc.taken}/${cc.total} taken</span>` +
-      `<div style="font:600 10px 'EB Garamond',serif;letter-spacing:.3px;opacity:.82;margin-top:3px;white-space:normal;color:#e7d3a6">${cc.twist}</div>`;
+      `<div style="font:600 10px 'EB Garamond',serif;letter-spacing:.3px;opacity:.82;margin-top:3px;white-space:normal;color:#e7d3a6">${cc.twist}</div>` +
+      `<div class="mapProg"><i style="width:${cc.total ? Math.round(cc.taken / cc.total * 100) : 0}%"></i></div>`;
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => { feedback.open(); openUpgrades(progress, refreshGoldLabel); });
 document.getElementById('raidsBtn')?.addEventListener('click', () => { feedback.open(); openRaids(progress, raids, enterRaid, refreshGoldLabel); });
@@ -479,7 +480,7 @@ const titleMusic = document.getElementById('titleMusic') as HTMLAudioElement | n
 const MUSIC_SRC = './theme.mp3';   // served from the deploy root, like intro.mp4
 const MUSIC_VOL = 0.55;
 const MUSIC_LOOP_END = 38;         // loop just the first 38 seconds of the track
-let musicArmed = false;
+let musicArmed = false, musicStarting = false;
 // loop the opening MUSIC_LOOP_END seconds rather than the whole file
 titleMusic?.addEventListener('timeupdate', () => { if (titleMusic.currentTime >= MUSIC_LOOP_END) titleMusic.currentTime = 0; });
 function rampVolume(a: HTMLAudioElement, to: number, ms: number, thenPause = false) {
@@ -489,13 +490,14 @@ function rampVolume(a: HTMLAudioElement, to: number, ms: number, thenPause = fal
 }
 // first start (on the title) — handles the browser autoplay-gesture gate
 function startMenuMusic() {
-  if (!titleMusic || musicArmed) return;
+  if (!titleMusic || musicArmed || musicStarting) return;
+  musicStarting = true;
   const tryPlay = () => {
     if (musicArmed) return;
     if (!titleMusic.src) titleMusic.src = MUSIC_SRC;
     titleMusic.volume = 0;
-    titleMusic.play().then(() => { musicArmed = true; rampVolume(titleMusic, MUSIC_VOL, 1600); })
-      .catch(() => { document.addEventListener('pointerdown', tryPlay, { once: true }); }); // blocked → start on first touch
+    titleMusic.play().then(() => { musicArmed = true; musicStarting = false; rampVolume(titleMusic, MUSIC_VOL, 1600); })
+      .catch(() => { musicStarting = false; document.addEventListener('pointerdown', tryPlay, { once: true }); }); // blocked → start on first touch
   };
   tryPlay();
 }
@@ -536,10 +538,26 @@ function playStudioSting(then: () => void) {
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
   const intro = document.getElementById('intro');
   const card = document.getElementById('introCard'); if (card) card.style.display = 'none'; // boot no longer uses the card
-  let done = false; const go = () => { if (done) return; done = true; try { vid?.pause?.(); } catch { /* ignore */ } show('intro', false); then(); };
-  if (!vid) { then(); return; }
+  let done = false, musicKicked = false;
+  // start the campaign theme UNDER the sting's tail so there's no silent gap / hard onset
+  const kickMusic = () => { if (musicKicked) return; musicKicked = true; startMenuMusic(); };
+  const go = () => {
+    if (done) return; done = true;
+    kickMusic();
+    then(); // build & show the map BENEATH the still-visible sting…
+    if (intro) { // …then dissolve the sting away to reveal it (a clean visual crossfade)
+      intro.classList.add('fadeout');
+      setTimeout(() => { try { vid?.pause?.(); } catch { /* ignore */ } if (vid) vid.style.display = 'none'; show('intro', false); intro.classList.remove('fadeout'); }, 720);
+    } else show('intro', false);
+  };
+  if (!vid) { kickMusic(); then(); return; }
   show('titleScreen', false); show('intro', true);
-  vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = battleAudio.muted; vid.playsInline = true;
+  vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = battleAudio.muted; vid.playsInline = true; vid.volume = 1;
+  // audio crossfade: in the last ~1.15s duck the sting out as the theme rises in
+  vid.addEventListener('timeupdate', () => {
+    const rem = (vid.duration || 9) - vid.currentTime;
+    if (rem < 1.15) { kickMusic(); vid.volume = Math.max(0, Math.min(1, rem / 1.15)); }
+  });
   vid.addEventListener('ended', go, { once: true });
   vid.addEventListener('error', () => setTimeout(go, 300), { once: true });
   vid.play().catch(() => setTimeout(go, 300));
