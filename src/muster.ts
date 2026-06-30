@@ -152,6 +152,9 @@ export function openMuster(prog: Progress, discount: number, buff: AtkBuff, onCl
   injectStyles();
   const root = document.createElement('div'); root.className = 'musScreen';
   const render = () => {
+    // keep the roll where the player left it — recruiting re-renders the list, and
+    // without this the scroll snaps back to the top after every purchase
+    const keepScroll = (root.querySelector('.musBody') as HTMLElement | null)?.scrollTop ?? 0;
     const a = prog.army;
     const men = a.heavy + a.light + a.archer + a.cavalry;
     const sub = `${men.toLocaleString()} fighting men${a.siege > 0 ? ` and ${a.siege} engine${a.siege === 1 ? '' : 's'}` : ''} under your banner`;
@@ -167,6 +170,8 @@ export function openMuster(prog: Progress, discount: number, buff: AtkBuff, onCl
           + `<div class="hostStats">${statsHTML(r.key, buff, vetMultiplier(vetProgress(prog.vet[r.key].xp).rank))}</div>`
           + vetHTML(r.key, prog) + `</div>`;
       }).join('')}</div>`;
+    const body = root.querySelector('.musBody') as HTMLElement | null;
+    if (body) body.scrollTop = keepScroll; // restore the reading position after the rebuild
     root.querySelector('.musClose')!.addEventListener('click', () => { root.remove(); onClose(); });
     root.querySelectorAll<HTMLButtonElement>('.recruit').forEach(b => b.addEventListener('click', () => {
       const k = b.dataset.k as ArmyKey; const r = ROSTER.find(x => x.key === k)!; const price = recruitPrice(k, r.step, discount);

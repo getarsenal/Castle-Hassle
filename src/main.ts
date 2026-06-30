@@ -92,7 +92,8 @@ function buildMuster() {
       if (progress.gold < price) return;
       progress.gold -= price; progress.army[k] += step; saveProgress(progress);
       (comp as any)[k] = Math.min(bringable(k), (comp as any)[k] + step); // bring the new recruits too
-      buildMuster();
+      ct.textContent = String((comp as any)[k]);
+      updateMuster(); // refresh counts/prices in place — don't rebuild (it would jump scroll to the top)
     });
     rows.appendChild(row);
   }
