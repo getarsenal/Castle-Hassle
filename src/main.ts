@@ -282,18 +282,21 @@ function showEnd() {
   for (let i = 0; i < ARMY_KEYS.length; i++) {
     const k = ARMY_KEYS[i];
     const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
+    const lost = Math.max(0, sp[i] - al[i]);
     if (inCampaign) progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
-    // veterancy: an arm that took the field earns experience — and may be promoted.
-    if (inCampaign && sp[i] > 0) {
+    // veterancy: only an arm that actually FOUGHT earns experience — it must have
+    // drawn blood or shed it. An arm brought along but left in reserve (no kills,
+    // no losses) gains nothing, so honours reflect who did the fighting.
+    const engaged = kills[i] > 0 || lost > 0;
+    if (inCampaign && engaged) {
       const v = progress.vet[k], before = vetRank(v.xp);
-      v.xp += battleXP({ fielded: true, kills: kills[i], survivalRate: rate, won: win });
+      v.xp += battleXP({ engaged: true, kills: kills[i], survivalRate: rate, won: win });
       v.battles++; v.kills += kills[i];
       const after = vetRank(v.xp);
       if (after > before) promotions.push(`<div class="hrow"><span class="hn">${TYPE_NAME[i]}</span><span class="hv">${'★'.repeat(after)} ${RANK_TITLES[after]}</span></div>`);
     }
-    if (i < 4) { brought += sp[i]; fell += Math.max(0, sp[i] - al[i]); }   // count men, not engines
-    if (sp[i] <= 0) continue;                                              // arm wasn't mustered for this battle
-    const lost = Math.max(0, sp[i] - al[i]);
+    if (i < 4) { brought += sp[i]; fell += lost; }   // count men, not engines
+    if (sp[i] <= 0) continue;                         // arm wasn't mustered for this battle
     // engines are "wrecked", men "fell"; an untouched arm reports all returned
     const verb = i === 4 ? 'wrecked' : 'fell';
     const val = lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`;

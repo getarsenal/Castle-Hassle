@@ -106,9 +106,11 @@ export function vetProgress(xp: number): { rank: number; frac: number; cur: numb
   const rank = vetRank(xp), cur = RANK_XP[rank], next = rank + 1 < RANK_XP.length ? RANK_XP[rank + 1] : null;
   return { rank, cur, next, frac: next === null ? 1 : Math.max(0, Math.min(1, (xp - cur) / (next - cur))) };
 }
-// XP an arm earns from a single battle, given what it fielded and did.
-export function battleXP(opts: { fielded: boolean; kills: number; survivalRate: number; won: boolean }): number {
-  if (!opts.fielded) return 0;
+// XP an arm earns from a single battle. Only an arm that actually fought (engaged)
+// earns anything — kills are the bulk of it, with a modest bonus for taking the
+// field and seeing the day won; an arm left in reserve earns nothing.
+export function battleXP(opts: { engaged: boolean; kills: number; survivalRate: number; won: boolean }): number {
+  if (!opts.engaged) return 0;
   return Math.round(10 + opts.kills + (opts.won ? 25 : 0) + opts.survivalRate * 15);
 }
 
