@@ -102,7 +102,7 @@ function updateMuster() {
   for (const el of Array.from(document.querySelectorAll('#rosterRows .ct')) as HTMLElement[]) el.textContent = String((comp as any)[el.dataset.k!]);
   for (const el of Array.from(document.querySelectorAll('#rosterRows .own')) as HTMLElement[]) {
     const k = el.dataset.k as ArmyKey;
-    const levy = k === 'light' ? Math.max(0, LEVY_LIGHT - progress.army.light) : 0;
+    const levy = k === 'light' ? LEVY_LIGHT : 0; // always a flat +250 on top of your standing foot
     const free = k === 'siege' ? currentExtraTrebs : 0;
     el.textContent = `In your host: ${progress.army[k]}`
       + (levy ? ` (+${levy} levy)` : '') + (free ? ` (+${free} free)` : '');
@@ -519,7 +519,10 @@ document.getElementById('musterMapBtn')?.addEventListener('click', () => { feedb
 // the most you can field of a kind: your standing army, plus the free light levy
 // and any free engineer-corps trebuchets
 function bringable(key: ArmyKey): number {
-  if (key === 'light') return Math.max(progress.army.light, LEVY_LIGHT);
+  // the free peasant levy is a flat bonus ON TOP of your standing light foot, so
+  // every spearman you recruit genuinely swells the host (and a wiped army still
+  // fields the levy, so the campaign never softlocks)
+  if (key === 'light') return progress.army.light + LEVY_LIGHT;
   if (key === 'siege') return currentNoArtillery ? 0 : progress.army.siege + currentExtraTrebs;
   return progress.army[key];
 }

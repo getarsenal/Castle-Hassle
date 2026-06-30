@@ -444,6 +444,9 @@ export interface Unit {
 
 // per-type formation spacing
 const SPACING = [1.5, 1.3, 1.4, 2.1, 10];
+// how many trebuchets stand abreast in the battery — a near-square block of ranks
+// (capped so a big siege train stays a tidy battery, never one long line)
+function siegeCols(n: number): number { return Math.min(5, n, Math.max(2, Math.ceil(Math.sqrt(n)))); }
 const ENGAGE = 9; // range at which troops break formation to fight
 // How close a company's body must be to its ordered ground before its men will
 // peel off to chase a nearby enemy. While still marching to an objective they
@@ -695,8 +698,8 @@ export class Sim {
     division(S(C.light), UType.Light, -W * 0.78, F + 56, 1.4, 'Light Inf');
     division(S(C.archer), UType.Archer, 0, F + 74, 1.5, 'Archers');
     division(S(C.cavalry), UType.Cavalry, W * 0.86, F + 56, 2.2, 'Cavalry');
-    // trebuchets form up in RANKS (≤6 across), not one long line strung across the field
-    if (C.siege) { const scols = Math.min(6, C.siege); this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 92, scols, 13), { name: 'Trebuchets', cols: scols, div: UType.Siege }); }
+    // trebuchets form up in a battery of RANKS (a near-square block), not one long line
+    if (C.siege) { const scols = siegeCols(C.siege); this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 92, scols, 13), { name: 'Trebuchets', cols: scols, div: UType.Siege }); }
 
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
@@ -744,8 +747,9 @@ export class Sim {
     u.ax = Math.max(WORLD.minX + 2, Math.min(WORLD.maxX - 2, x));
     u.az = Math.max(WORLD.minZ + 2, Math.min(WORLD.maxZ - 2, z));
     u.facing = facing;
-    // trebuchets line up in a single rank so they spread along the emplacement
-    u.cols = u.type === UType.Siege ? u.count : Math.max(3, Math.min(u.count, Math.round(cols)));
+    // trebuchets draw up in a tidy battery of ranks (a near-square block), not one
+    // long line strung across the field
+    u.cols = u.type === UType.Siege ? siegeCols(u.count) : Math.max(3, Math.min(u.count, Math.round(cols)));
     u.hold = false;
     let cell = cellOf(u.ax, u.az);
     if (BLOCKED[cell]) cell = cellOf(u.ax, u.az + 5); // nudge the flow goal off walls
