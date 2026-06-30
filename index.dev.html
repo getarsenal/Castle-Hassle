@@ -227,9 +227,19 @@
     #hint {
       position: absolute; bottom: calc(var(--safe-bottom) + 152px); left: 50%; transform: translateX(-50%);
       font-size: 12px; color: rgba(247,234,210,0.94); background: linear-gradient(180deg, rgba(48,34,18,0.8), rgba(26,18,10,0.82)); border: 1px solid rgba(255,225,160,0.2);
-      padding: 6px 15px; border-radius: var(--r-sm); pointer-events: none; text-align: center; max-width: 88vw;
+      padding: 6px 34px 6px 15px; border-radius: var(--r-sm); pointer-events: none; text-align: center; max-width: 88vw;
       box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.1);
     }
+    #hint.dismissed { display: none !important; }
+    #hintClose {
+      position: absolute; top: 50%; right: 5px; transform: translateY(-50%);
+      width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+      pointer-events: auto; cursor: pointer; padding: 0; line-height: 1;
+      font-size: 17px; font-weight: 700; color: rgba(247,234,210,0.7);
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,225,160,0.18); border-radius: 50%;
+    }
+    #hintClose:hover { color: #fff; background: rgba(255,255,255,0.14); }
+    #hintClose:active { transform: translateY(-50%) scale(0.9); }
 
     #banner {
       position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
@@ -248,6 +258,16 @@
     }
     #banner h1 { font-size: 33px; font-weight: 800; letter-spacing: 1px; line-height: 1.1; text-shadow: 0 3px 14px rgba(0,0,0,.5); }
     #banner p { font-size: 15px; line-height: 1.5; color: #d8c8a8; max-width: 320px; }
+    #bannerLosses { display: none; width: min(78vw, 290px); flex-direction: column; gap: 1px;
+      border-top: 1px solid rgba(255,225,160,0.16); border-bottom: 1px solid rgba(255,225,160,0.16); padding: 4px 0; }
+    #bannerLosses.show { display: flex; }
+    #bannerLosses .lhead { font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase;
+      color: rgba(255,225,160,0.7); text-align: center; margin: 2px 0 5px; }
+    #bannerLosses .lrow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+      font-size: 13.5px; padding: 2px 4px; }
+    #bannerLosses .ln { color: #e7d8b8; }
+    #bannerLosses .lv { font-weight: 700; color: #f0c98a; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #bannerLosses .lrow.none .lv { color: #9fc77a; }
     #banner button, #startbtn { pointer-events: auto; }
     #restartbtn { font: inherit; font-weight: 700; font-size: var(--fs-heading); color: #2a1c08; margin-top: 4px;
       background: linear-gradient(#ffe27a,#ffbe34); border: none; border-radius: var(--r-md); min-height: 44px; padding: 13px 30px; cursor: pointer; box-shadow: var(--gold-drop); }
@@ -512,10 +532,10 @@
     </div>
     <div id="startbar"><button id="startbtn">Begin Battle</button></div>
     <div id="keepBar"><div id="keepLabel">HOLD THE KEEP</div><div id="keepTrack"><div id="keepFill"></div></div></div>
-    <div id="hint">Tap a unit card, then tap the field to send them. Drag to pan, pinch to zoom.</div>
+    <div id="hint"><span id="hintText">Tap a unit card, then tap the field to send them. Drag to pan, pinch to zoom.</span><button id="hintClose" aria-label="Dismiss">×</button></div>
     <div id="tools"></div>
     <div id="cards"></div>
-    <div id="banner"><div class="bannerCard"><h1 id="bannerTitle"></h1><p id="bannerText"></p><button id="restartbtn">Fight Again</button></div></div>
+    <div id="banner"><div class="bannerCard"><h1 id="bannerTitle"></h1><p id="bannerText"></p><div id="bannerLosses"></div><button id="restartbtn">Fight Again</button></div></div>
   </div>
   <div id="muster">
     <button id="musterBack"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M15 5 L8 12 L15 19"/></svg>Map</button>

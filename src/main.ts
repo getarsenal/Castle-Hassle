@@ -57,8 +57,9 @@ let showRange = true;
 
 // ---------------- HUD refs ----------------
 const cardsEl = $('cards'), attCountEl = $('attCount'), defCountEl = $('defCount');
-const hintEl = $('hint'), startbar = $('startbar'), startBtn = $('startbtn'), toolsEl = $('tools');
-const banner = $('banner'), bannerTitle = $('bannerTitle'), bannerText = $('bannerText'), restartBtn = $('restartbtn');
+const hintEl = $('hint'), hintText = $('hintText'), hintClose = $('hintClose'), startbar = $('startbar'), startBtn = $('startbtn'), toolsEl = $('tools');
+const banner = $('banner'), bannerTitle = $('bannerTitle'), bannerText = $('bannerText'), bannerLosses = $('bannerLosses'), restartBtn = $('restartbtn');
+hintClose.addEventListener('click', () => hintEl.classList.add('dismissed'));
 
 // ---------------- Muster screen ----------------
 const comp: ArmyComp = { ...DEFAULT_COMP };
@@ -133,6 +134,7 @@ function newGame() {
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
   banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
+  hintEl.classList.remove('dismissed'); // a fresh battle brings its guidance back
   battleAudio.stopAmbience(); // silence any prior battle's din behind the new setup
   buildCards(); updateHint(); updateTools();
 }
@@ -183,12 +185,12 @@ function updateTopbar() {
 }
 function updateHint() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
-  if (attackArm >= 0 && attackArm === selected) hintEl.textContent = a && (a.type === UType.Archer) ? 'ATTACK: tap an enemy unit to focus your volleys on it' : 'ATTACK: tap an enemy unit and your arm charges in to fight it';
-  else if (a && a.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
-  else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
-  else if (a) hintEl.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
-  else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
-  else hintEl.textContent = 'Select an arm, then tap the keep to storm or a gate to break in — engines batter the walls on their own.';
+  if (attackArm >= 0 && attackArm === selected) hintText.textContent = a && (a.type === UType.Archer) ? 'ATTACK: tap an enemy unit to focus your volleys on it' : 'ATTACK: tap an enemy unit and your arm charges in to fight it';
+  else if (a && a.type === UType.Siege) hintText.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
+  else if (a && a.type === UType.Archer) hintText.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
+  else if (a) hintText.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
+  else if (sim.phase === 'deploy') hintText.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
+  else hintText.textContent = 'Select an arm, then tap the keep to storm or a gate to break in — engines batter the walls on their own.';
 }
 // keep the cavalry charge button's label/state live (cooldown ticks every frame)
 function tickChargeBtn() {
@@ -270,17 +272,30 @@ function showEnd() {
   // disperse). Casualties stick whether you win, retreat, or are broken — raids
   // cost just as dearly, so they aren't a free purse.
   let casualtyLine = '';
-  if (inCampaign) {
-    const sp = sim.attackerSpawned(), al = sim.attackerAlive();
-    let brought = 0, fell = 0;
-    for (let i = 0; i < ARMY_KEYS.length; i++) {
-      const k = ARMY_KEYS[i];
-      const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
-      progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
-      if (i < 4) { brought += sp[i]; fell += Math.max(0, sp[i] - al[i]); }   // count men, not engines
-    }
-    casualtyLine = fell > 0 ? `  ${fell} of ${brought} fell and will not rise again.` : '  Not a single man was lost.';
+  // The Butcher's Bill — a per-arm tally of who marched out and who came home, shown
+  // for every battle. In a campaign the survival rate also attrits your standing host.
+  const sp = sim.attackerSpawned(), al = sim.attackerAlive();
+  let brought = 0, fell = 0;
+  const rows: string[] = [];
+  for (let i = 0; i < ARMY_KEYS.length; i++) {
+    const k = ARMY_KEYS[i];
+    const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
+    if (inCampaign) progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
+    if (i < 4) { brought += sp[i]; fell += Math.max(0, sp[i] - al[i]); }   // count men, not engines
+    if (sp[i] <= 0) continue;                                              // arm wasn't mustered for this battle
+    const lost = Math.max(0, sp[i] - al[i]);
+    // engines are "wrecked", men "fell"; an untouched arm reports all returned
+    const verb = i === 4 ? 'wrecked' : 'fell';
+    const val = lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`;
+    rows.push(`<div class="lrow${lost > 0 ? '' : ' none'}"><span class="ln">${TYPE_NAME[i]}</span><span class="lv">${val}</span></div>`);
   }
+  if (rows.length) {
+    bannerLosses.innerHTML = `<div class="lhead">The Butcher's Bill</div>${rows.join('')}`;
+    bannerLosses.classList.add('show');
+  } else {
+    bannerLosses.innerHTML = ''; bannerLosses.classList.remove('show');
+  }
+  if (inCampaign) casualtyLine = fell > 0 ? `  ${fell} of ${brought} fell and will not rise again.` : '  Not a single man was lost.';
   if (win && activeRaid) {
     bannerTitle.textContent = 'RAID SUCCESSFUL';
     bannerTitle.style.color = '#5fd16a';
