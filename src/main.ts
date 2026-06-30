@@ -29,7 +29,7 @@ let paused = false;
 let gameSpeed = 1; // battle tempo: 1x / 2x / 3x
 const pauseBtn = document.getElementById('pauseBtn'), retreatBtn = document.getElementById('retreatBtn');
 const speedBtn = document.getElementById('speedBtn');
-pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
+pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.title = paused ? 'Resume' : 'Pause'; }); // icon swaps via .on in CSS
 function applySpeed() { if (!speedBtn) return; speedBtn.textContent = `${gameSpeed}x`; speedBtn.classList.toggle('fast', gameSpeed > 1); }
 speedBtn?.addEventListener('click', () => { gameSpeed = gameSpeed >= 3 ? 1 : gameSpeed + 1; applySpeed(); });
 const helpBtn = document.getElementById('helpBtn');
@@ -110,7 +110,7 @@ function newGame() {
   renderer = new Renderer(sim, app);
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
-  if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.textContent = 'Pause'; }
+  if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
   banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
   battleAudio.stopAmbience(); // silence any prior battle's din behind the new setup
   buildCards(); updateHint(); updateTools();
@@ -150,7 +150,7 @@ function updateTopbar() {
   pauseBtn?.classList.toggle('show', inBattle);
   speedBtn?.classList.toggle('show', inBattle);
   retreatBtn?.classList.toggle('show', inBattle);
-  helpBtn?.classList.toggle('show', sim.phase === 'deploy' || inBattle);
+  helpBtn?.classList.toggle('show', sim.phase === 'deploy'); // help lives on the deploy screen; battle top stays uncluttered
   const cp = sim.captureProgress;
   if (keepBar && keepFill && keepLabel) {
     const showBar = sim.phase === 'battle' && cp > 0.001;

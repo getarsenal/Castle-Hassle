@@ -58,7 +58,8 @@ function injectStyles() {
   s.textContent = `
   .upgScreen{position:fixed;inset:0;z-index:50;color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;display:flex;flex-direction:column;overflow:hidden;
     background:radial-gradient(125% 70% at 50% -8%,rgba(150,104,48,0.4),transparent 58%),repeating-linear-gradient(50deg,rgba(255,235,190,0.02) 0 2px,rgba(0,0,0,0.03) 2px 4px),linear-gradient(180deg,#2c1f10,#160f07)}
-  .upgTop{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(var(--safe-top) + 14px) 62px 12px 16px;border-bottom:1px solid #6a4f28}
+  .upgTop{display:flex;flex-direction:column;align-items:center;gap:11px;padding:calc(var(--safe-top) + 12px) 14px 13px;border-bottom:1px solid #6a4f28}
+  .upgBar{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:50px}
   .upgTop h2{margin:0;display:inline-flex}
   .upgGold{display:flex;align-items:center;gap:6px;font-size:var(--fs-heading);color:var(--gold-soft);font-weight:700;white-space:nowrap;
     padding:6px 14px;border-radius:var(--r-pill);background:linear-gradient(180deg,rgba(64,46,24,0.95),rgba(30,21,11,0.95));border:1px solid rgba(255,225,160,0.3);box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,235,190,0.18)}
@@ -96,7 +97,7 @@ export function openUpgrades(prog: Progress, onClose: () => void) {
   injectStyles();
   const root = document.createElement('div'); root.className = 'upgScreen';
   const render = () => {
-    root.innerHTML = `<div class="upgTop"><button class="upgClose">Back</button><h2><span class="gameRibbon">War Council</span></h2><div class="upgGold"><b>${prog.gold}</b> gold</div></div>`
+    root.innerHTML = `<div class="upgTop"><div class="upgBar"><button class="upgClose">Back</button><div class="upgGold"><b>${prog.gold}</b> gold</div></div><h2><span class="gameRibbon">War Council</span></h2></div>`
       + `<div class="upgHint">Spend the spoils of conquest on permanent upgrades for your army.</div>`
       + `<div class="upgBody">${TREES.map(t => {
         const lvl = prog.upg[t.key] || 0;

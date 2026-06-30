@@ -10,7 +10,8 @@ function injectStyles() {
   s.textContent = `
   .raidScreen{position:fixed;inset:0;z-index:50;color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;display:flex;flex-direction:column;overflow:hidden;
     background:radial-gradient(125% 70% at 50% -8%,rgba(150,80,48,0.36),transparent 58%),repeating-linear-gradient(50deg,rgba(255,235,190,0.02) 0 2px,rgba(0,0,0,0.03) 2px 4px),linear-gradient(180deg,#291810,#160d07)}
-  .raidTop{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(var(--safe-top) + 14px) 62px 12px 16px;border-bottom:1px solid #6a4428}
+  .raidTop{display:flex;flex-direction:column;align-items:center;gap:11px;padding:calc(var(--safe-top) + 12px) 14px 13px;border-bottom:1px solid #6a4428}
+  .raidBar{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:50px}
   .raidTop h2{margin:0;display:inline-flex}
   .raidGold{display:flex;align-items:center;gap:6px;font-size:var(--fs-heading);color:var(--gold-soft);font-weight:700;white-space:nowrap;
     padding:6px 14px;border-radius:var(--r-pill);background:linear-gradient(180deg,rgba(64,46,24,0.95),rgba(30,21,11,0.95));border:1px solid rgba(255,225,160,0.3);box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,235,190,0.18)}
@@ -41,7 +42,7 @@ function injectStyles() {
 export function openRaids(prog: Progress, raids: Raid[], onRaid: (r: Raid) => void, onClose: () => void) {
   injectStyles();
   const root = document.createElement('div'); root.className = 'raidScreen';
-  root.innerHTML = `<div class="raidTop"><button class="raidClose">Back</button><h2><span class="gameRibbon crim">Raids</span></h2><div class="raidGold"><b>${prog.gold}</b> gold</div></div>`
+  root.innerHTML = `<div class="raidTop"><div class="raidBar"><button class="raidClose">Back</button><div class="raidGold"><b>${prog.gold}</b> gold</div></div><h2><span class="gameRibbon crim">Raids</span></h2></div>`
     + `<div class="raidHint">Optional battles to fill the war chest. Win and the spoils are yours — but your dead don't return, so raid only what your army can break.</div>`
     + `<div class="raidBody">${raids.map(r => `<div class="raidCard"><div class="raidName">${r.name}</div>`
       + `<div class="raidBlurb">${r.blurb}</div>`

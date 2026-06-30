@@ -128,33 +128,36 @@
       padding: 3px 6px; pointer-events: auto; letter-spacing: 0.2px;
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
     #perf.hidden { display: none; }
-    #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto;
-      border: 1px solid rgba(255,225,160,0.22); background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9)); color: var(--gold-soft);
-      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08);
-      font: 700 var(--fs-label) 'Cinzel', Georgia, serif; min-height: 44px; padding: 8px 15px; border-radius: var(--r-sm); cursor: pointer; display: none; }
-    #speedBtn { min-width: 48px; text-align: center; }
-    #retreatBtn { border-color: rgba(180,90,40,0.5); background: rgba(60,30,16,0.9); color: #e8b787; }
-    #pauseBtn.show, #retreatBtn.show, #speedBtn.show { display: block; }
-    #pauseBtn.on, #speedBtn.fast { background: rgba(200,150,40,0.92); color: #241600; }
-    #helpBtn { pointer-events: auto; border: 1px solid rgba(255,225,160,0.22); background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9));
-      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08);
+    #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto; width: 44px; height: 44px; padding: 0;
+      align-items: center; justify-content: center; flex-shrink: 0;
+      border: 1px solid rgba(255,225,160,0.26); background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.92)); color: var(--gold-soft);
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.14);
+      font: 800 var(--fs-body) 'Cinzel', Georgia, serif; border-radius: var(--r-md); cursor: pointer; display: none; }
+    #pauseBtn svg, #retreatBtn svg { width: 22px; height: 22px; display: block; }
+    #pauseBtn .playIc { display: none; }
+    #pauseBtn.on .pauseIc { display: none; } #pauseBtn.on .playIc { display: block; }
+    #retreatBtn { border-color: rgba(190,95,45,0.55); background: linear-gradient(180deg, rgba(86,40,22,0.92), rgba(44,20,11,0.92)); color: #f0c39a; }
+    #pauseBtn.show, #retreatBtn.show, #speedBtn.show { display: inline-flex; }
+    #pauseBtn.on, #speedBtn.fast { background: linear-gradient(180deg, #e8b73e, #c6921f); color: #241600; border-color: #ffe6a6; }
+    #helpBtn { pointer-events: auto; border: 1px solid rgba(255,225,160,0.26); background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.92));
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.14);
       color: var(--gold-soft); font: 700 var(--fs-heading) 'Cinzel', Georgia, serif; width: 44px; height: 44px;
       border-radius: 50%; cursor: pointer; display: none; padding: 0; flex-shrink: 0; }
     #helpBtn.show { display: block; }
 
     #topbar { display: flex; gap: 8px; align-items: center;
-      background: linear-gradient(180deg, rgba(40,30,18,0.86), rgba(20,15,9,0.86)); border: 1px solid rgba(255,225,160,0.16);
-      box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,225,160,0.07);
-      border-radius: 14px; padding: 7px 12px; pointer-events: auto;
-      font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.3px; white-space: nowrap; }
+      background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.92)); border: 1px solid rgba(255,225,160,0.26);
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.16);
+      border-radius: var(--r-md); padding: 8px 13px; pointer-events: auto; color: var(--gold-soft);
+      font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; }
     #topbar .stat { display: flex; gap: 6px; align-items: center; }
     #topbar .dot { width: 10px; height: 10px; border-radius: 50%; }
     #topbar .vs { opacity: .4; }
     .dot.att { background: #e8513a; } .dot.def { background: #3d7be0; }
     /* legacy anchors no longer used for layout (kept harmless) */
-    /* Begin button: directly under the topbar, deploy only */
-    #startbar { position: absolute; top: calc(var(--safe-top) + 54px); left: 50%; transform: translateX(-50%); pointer-events: auto; }
-    #keepBar { position: absolute; top: calc(var(--safe-top) + 52px); left: 50%; transform: translateX(-50%);
+    /* Begin button: centred, dropped clear of the top HUD (count chip + perf row) — deploy only */
+    #startbar { position: absolute; top: calc(var(--safe-top) + 92px); left: 50%; transform: translateX(-50%); pointer-events: auto; }
+    #keepBar { position: absolute; top: calc(var(--safe-top) + 92px); left: 50%; transform: translateX(-50%);
       width: min(72vw, 300px); display: none; text-align: center; }
     #keepBar.show { display: block; }
     #keepLabel { font: 700 11px 'EB Garamond', Georgia, serif; letter-spacing: 1.5px; color: #ffe1a0;
@@ -174,15 +177,15 @@
     }
     #cards::-webkit-scrollbar { display: none; }
     .card {
-      flex: 0 0 auto; min-width: 72px; padding: 7px 9px 8px; border-radius: var(--r-sm);
-      background: linear-gradient(180deg, rgba(40,30,18,0.92), rgba(20,15,9,0.92)); border: 2px solid rgba(255,225,160,0.16);
-      box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,225,160,0.08);
-      text-align: center; cursor: pointer; transition: transform .08s, border-color .08s;
+      flex: 0 0 auto; min-width: 76px; padding: 8px 10px 9px; border-radius: var(--r-md);
+      background: linear-gradient(180deg, rgba(92,67,37,0.95), rgba(38,27,14,0.95)); border: 1px solid rgba(255,225,160,0.24); border-top: 2px solid rgba(255,225,160,0.3);
+      box-shadow: 0 4px 0 rgba(0,0,0,0.36), 0 7px 14px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,235,190,0.16);
+      text-align: center; cursor: pointer; transition: transform .08s, border-color .08s, box-shadow .08s;
     }
-    .card:active { transform: scale(0.95); }
-    .card.sel { border-color: #ffd24a; box-shadow: 0 0 0 1px #ffd24a inset; }
-    .card .name { font-size: var(--fs-caption); font-weight: 700; }
-    .card .count { font-size: var(--fs-heading); font-weight: 800; margin-top: 2px; }
+    .card:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,0.36), 0 3px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,235,190,0.16); }
+    .card.sel { border-color: var(--gold); border-top-color: var(--gold); box-shadow: 0 0 0 1px var(--gold) inset, 0 4px 0 rgba(0,0,0,0.36), 0 7px 16px rgba(0,0,0,0.45); }
+    .card .name { font-size: var(--fs-caption); font-weight: 700; color: var(--gold-soft); }
+    .card .count { font-size: var(--fs-heading); font-weight: 800; margin-top: 2px; color: #fff4e2; }
     .card .bar { height: 4px; border-radius: 2px; margin-top: 5px; background: rgba(255,255,255,0.15); overflow: hidden; }
     .card .bar > i { display: block; height: 100%; background: #5fd16a; }
     .card .ammo { height: 3px; border-radius: 2px; margin-top: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
@@ -190,18 +193,23 @@
     .card.routing { opacity: 0.55; }
     .card.routing .name::after { content: ''; display: inline-block; width: 9px; height: 12px; margin-left: 4px; vertical-align: -1px;
       background: no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 12'%3E%3Cpath d='M2 1 V11' stroke='%23ffb03a' stroke-width='1.4' stroke-linecap='round'/%3E%3Cpath d='M2.7 1.6 H7.4 L5.9 3.6 L7.4 5.6 H2.7 Z' fill='%23ffb03a'/%3E%3C/svg%3E"); }
-    .card.assault { border-color: #e8893a; box-shadow: 0 0 10px rgba(232,137,58,0.55); }
+    .card.assault { border-color: #e8893a; border-top-color: #e8893a; box-shadow: 0 0 12px rgba(232,137,58,0.55), 0 4px 0 rgba(0,0,0,0.34); }
     .card.assault.sel { border-color: #ffd24a; }
 
     #tools { position: absolute; bottom: calc(var(--safe-bottom) + 96px); left: 50%; transform: translateX(-50%); display: none; gap: 8px; pointer-events: auto; }
     #tools.show { display: flex; }
-    .tool { font: inherit; font-size: var(--fs-label); font-weight: 700; color: var(--text); background: linear-gradient(180deg, rgba(40,30,18,0.94), rgba(20,15,9,0.94)); border: 2px solid rgba(255,225,160,0.2); border-radius: var(--r-sm); min-height: 44px; padding: 9px 15px; cursor: pointer; box-shadow: var(--sh-1); }
-    .tool.on { border-color: #ffe27a; color: #ffe27a; box-shadow: 0 0 12px rgba(255,210,74,0.35); }
+    .tool { font: inherit; font-size: var(--fs-label); font-weight: 700; color: var(--text);
+      background: linear-gradient(180deg, rgba(74,54,30,0.95), rgba(34,24,13,0.95)); border: 1px solid rgba(255,225,160,0.26); border-top: 2px solid rgba(255,225,160,0.28);
+      border-radius: var(--r-md); min-height: 44px; padding: 9px 16px; cursor: pointer;
+      box-shadow: 0 4px 0 rgba(0,0,0,0.34), 0 6px 12px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,235,190,0.14); }
+    .tool:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,235,190,0.14); }
+    .tool.on { border-color: #ffe27a; border-top-color: #ffe27a; color: #ffe27a; box-shadow: 0 0 12px rgba(255,210,74,0.4), inset 0 1px 0 rgba(255,235,190,0.14); }
 
     #hint {
       position: absolute; bottom: calc(var(--safe-bottom) + 134px); left: 50%; transform: translateX(-50%);
-      font-size: 12px; color: rgba(243,230,207,0.9); background: rgba(22,16,9,0.66); border: 1px solid rgba(255,225,160,0.12);
-      padding: 5px 14px; border-radius: 10px; pointer-events: none; text-align: center; max-width: 88vw;
+      font-size: 12px; color: rgba(247,234,210,0.94); background: linear-gradient(180deg, rgba(48,34,18,0.8), rgba(26,18,10,0.82)); border: 1px solid rgba(255,225,160,0.2);
+      padding: 6px 15px; border-radius: var(--r-sm); pointer-events: none; text-align: center; max-width: 88vw;
+      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.1);
     }
 
     #banner {
@@ -478,9 +486,9 @@
         <div id="perf" title="Tap to hide">– fps</div>
       </div>
       <div id="topRight">
-        <button id="retreatBtn">Retreat</button>
-        <button id="speedBtn">1x</button>
-        <button id="pauseBtn">Pause</button>
+        <button id="retreatBtn" title="Sound the retreat" aria-label="Retreat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15 5 10l5-5"/><path d="M5 10h10a5 5 0 0 1 5 5 5 5 0 0 1-5 5H8"/></svg></button>
+        <button id="speedBtn" title="Battle speed">1x</button>
+        <button id="pauseBtn" title="Pause" aria-label="Pause"><svg class="pauseIc" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><svg class="playIc" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg></button>
       </div>
     </div>
     <div id="startbar"><button id="startbtn">Begin Battle</button></div>

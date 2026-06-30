@@ -41,7 +41,8 @@ function injectStyles() {
       radial-gradient(60% 55% at 6% 22%, rgba(110,80,40,0.22), transparent 60%),
       radial-gradient(60% 55% at 96% 64%, rgba(110,80,40,0.2), transparent 60%),
       repeating-linear-gradient(91deg, rgba(150,118,72,0.055) 0 3px, transparent 3px 7px)}
-  .musTop{display:flex;align-items:center;justify-content:space-between;padding:calc(var(--safe-top) + 14px) 60px 4px 18px}
+  .musTop{display:flex;flex-direction:column;align-items:center;gap:9px;padding:calc(var(--safe-top) + 12px) 16px 4px}
+  .musBar{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:48px}
   .musTop h2{margin:0;font-size:25px;color:#48330f;letter-spacing:1px;font-family:'Cinzel',Georgia,serif;text-shadow:0 1px 0 rgba(255,250,235,0.4)}
   .musGold{font-size:15px;color:#7a571c;font-weight:700;white-space:nowrap}
   .musGold b{font-size:19px;color:#8a5410}
@@ -82,7 +83,7 @@ export function openMuster(prog: Progress, discount: number, onClose: () => void
     const a = prog.army;
     const men = a.heavy + a.light + a.archer + a.cavalry;
     const sub = `${men.toLocaleString()} fighting men${a.siege > 0 ? ` and ${a.siege} engine${a.siege === 1 ? '' : 's'}` : ''} under your banner`;
-    root.innerHTML = `<div class="musTop"><button class="musClose">Done</button><h2>Your Host</h2><div class="musGold"><b>${prog.gold}</b> gold</div></div>`
+    root.innerHTML = `<div class="musTop"><div class="musBar"><button class="musClose">Done</button><div class="musGold"><b>${prog.gold}</b> gold</div></div><h2>Your Host</h2></div>`
       + `<div class="musSub">${sub}</div><div class="musRule"></div>`
       + `<div class="musBody">${ROSTER.map(r => {
         const price = recruitPrice(r.key, r.step, discount);
