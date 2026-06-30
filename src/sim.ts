@@ -301,7 +301,11 @@ const BLOCKED = new Uint8Array(NCELLS);
 // and towers/keep/buildings are impassable. This lets the attacker field reach EVERY
 // cell with a gradient toward the cheapest way in — breach, then gate, then wall —
 // so troops are never left with no direction (the cause of them balling up at a wall).
-const X_INF = 1e9, X_GATE = 16, X_WALL = 20;
+// Forcing an opening is cheap; SCALING an intact wall is dear — so once anything
+// is breached (cost 0), the storm funnels through the gap/gate from well across the
+// bailey instead of throwing men at the nearest intact wall. (Escalade still happens
+// when there's no opening and the gate is far: a near wall then beats the long walk.)
+const X_INF = 1e9, X_GATE = 30, X_WALL = 64;
 const CROSS = new Float32Array(NCELLS);
 function crossAt(x: number, z: number): number {
   let pen = 0;

@@ -178,8 +178,10 @@ export class Renderer {
     // arm shows the area its men actually cover, not a single circle from the centre
     this.fanGeoDisc = new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2);
     this.fanGeoEdge = new THREE.RingGeometry(0.97, 1.0, 48).rotateX(-Math.PI / 2);
-    this.fanMatDisc = new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.05, depthWrite: false });
-    this.fanMatEdge = new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.4, depthWrite: false });
+    // soft fill + a FAINT edge: per-company discs union into one honest reach
+    // region without the bold ring-per-company clutter of before
+    this.fanMatDisc = new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.06, depthWrite: false });
+    this.fanMatEdge = new THREE.MeshBasicMaterial({ color: '#ffe7a0', transparent: true, opacity: 0.16, depthWrite: false });
 
     this.preview = new THREE.Mesh(new THREE.BoxGeometry(1, 0.25, 1), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.9 }));
     this.preview.visible = false; this.scene.add(this.preview);

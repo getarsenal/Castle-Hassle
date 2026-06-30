@@ -735,11 +735,11 @@ function frame(now: number) {
   // range overlay: one fan per company, so the reach reads from each group's
   // position (deploy the front ranks forward and you can see them gain the wall)
   if (a && a.alive > 0 && (a.type === UType.Archer || a.type === UType.Siege) && showRange && rep) {
-    // ONE clean ring covering the whole arm's reach, not a crowding ring per company
+    // One soft disc PER COMPANY at the TRUE firing radius — they union into a single
+    // honest reach region (no inflated ring that claims range the archers don't have,
+    // and nothing that grows while focus-firing).
     const r = sim.unitRange(rep.id);
-    const comps = sim.divCompanies(selected).filter(u => u.alive > 0);
-    let spread = 0; for (const u of comps) spread = Math.max(spread, Math.hypot(u.cx - a.cx, u.cz - a.cz));
-    renderer.setRangeFans([{ x: a.cx, z: a.cz, r: r + spread }]);
+    renderer.setRangeFans(sim.divCompanies(selected).filter(u => u.alive > 0).map(u => ({ x: u.cx, z: u.cz, r })));
   } else renderer.setRangeFans(null);
 
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
