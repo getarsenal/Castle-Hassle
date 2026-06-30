@@ -26,62 +26,80 @@ function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
   ctx.closePath();
 }
 
+// Palette. The team SURCOAT/SHIELD is drawn in a pure GREEN KEY that the soldier
+// fragment shader swaps for the faction colour — so the body stays detailed
+// (steel / leather / skin) and only the heraldry carries red-vs-blue.
+const C = { OUT: '#241a10', STEEL: '#868d99', STEELD: '#565c67', SKIN: '#c89a6c', LEA: '#6e4a28', LEAD: '#48301a', WOOD: '#5a3f22', KEY: '#16b416', BOSS: '#caa84e' };
+
 function drawSoldier(ctx: CanvasRenderingContext2D, kind: SpriteKind) {
   const cx = S / 2;
-  // ---- outline pass (dark, slightly inflated) then body pass (white) ----
-  const passes: [string, number][] = [['#2b2b2b', 3.2], ['#ffffff', 0]];
-
-  for (const [color, g] of passes) {
-    ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // outline = true: one dark, inflated silhouette pass. outline = false: colour the
+  // parts on top, leaving the inflated edge as a baked dark outline.
+  const draw = (g: number, outline: boolean) => {
+    const fill = (c: string) => { const col = outline ? C.OUT : c; ctx.fillStyle = col; ctx.strokeStyle = col; };
 
     if (kind === 'cavalry') {
-      // horse body + neck + head
-      rr(ctx, cx - 26 - g, 50 - g, 46 + g * 2, 17 + g * 2, 8); ctx.fill();
-      rr(ctx, cx + 8 - g, 34 - g, 14 + g * 2, 20 + g * 2, 6); ctx.fill();
-      rr(ctx, cx + 16 - g, 30 - g, 12 + g * 2, 10 + g * 2, 4); ctx.fill();
-      // legs
-      rr(ctx, cx - 20 - g, 64 - g, 7 + g * 2, 14 + g * 2, 3); ctx.fill();
+      fill(C.LEA); rr(ctx, cx - 26 - g, 50 - g, 46 + g * 2, 17 + g * 2, 8); ctx.fill();              // barding/body
+      rr(ctx, cx + 8 - g, 34 - g, 14 + g * 2, 20 + g * 2, 6); ctx.fill();                            // neck
+      fill(C.LEAD); rr(ctx, cx + 16 - g, 30 - g, 12 + g * 2, 10 + g * 2, 4); ctx.fill();             // head
+      rr(ctx, cx - 20 - g, 64 - g, 7 + g * 2, 14 + g * 2, 3); ctx.fill();                            // legs
       rr(ctx, cx + 12 - g, 64 - g, 7 + g * 2, 14 + g * 2, 3); ctx.fill();
-      // rider torso + head
-      rr(ctx, cx - 10 - g, 24 - g, 18 + g * 2, 22 + g * 2, 7); ctx.fill();
-      rr(ctx, cx - 6 - g, 10 - g, 14 + g * 2, 14 + g * 2, 6); ctx.fill();
-      // lance
-      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 16, 8); ctx.lineTo(cx + 26, 60); ctx.stroke();
-      continue;
+      fill(C.KEY); rr(ctx, cx - 10 - g, 24 - g, 18 + g * 2, 22 + g * 2, 7); ctx.fill();              // rider surcoat (team)
+      fill(C.STEEL); rr(ctx, cx - 6 - g, 10 - g, 14 + g * 2, 14 + g * 2, 6); ctx.fill();             // helm
+      fill(C.WOOD); ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 16, 8); ctx.lineTo(cx + 26, 60); ctx.stroke(); // lance
+      return;
     }
     if (kind === 'siege') {
-      // trebuchet: base, A-frame, throwing arm + counterweight
-      rr(ctx, cx - 30 - g, 66 - g, 60 + g * 2, 9 + g * 2, 3); ctx.fill();        // base beam
+      fill(C.WOOD); rr(ctx, cx - 30 - g, 66 - g, 60 + g * 2, 9 + g * 2, 3); ctx.fill();
       ctx.lineWidth = 6 + g;
-      ctx.beginPath(); ctx.moveTo(cx - 14, 70); ctx.lineTo(cx, 30); ctx.lineTo(cx + 14, 70); ctx.stroke(); // A-frame
-      ctx.beginPath(); ctx.moveTo(cx - 22, 18); ctx.lineTo(cx + 20, 44); ctx.stroke();                      // arm
-      rr(ctx, cx + 14 - g, 44 - g, 14 + g * 2, 14 + g * 2, 4); ctx.fill();        // counterweight
-      continue;
+      ctx.beginPath(); ctx.moveTo(cx - 14, 70); ctx.lineTo(cx, 30); ctx.lineTo(cx + 14, 70); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 22, 18); ctx.lineTo(cx + 20, 44); ctx.stroke();
+      fill(C.STEELD); rr(ctx, cx + 14 - g, 44 - g, 14 + g * 2, 14 + g * 2, 4); ctx.fill();
+      return;
     }
 
-    // foot soldiers: legs, torso, head/helmet
-    rr(ctx, cx - 10 - g, 52 - g, 8 + g * 2, 20 + g * 2, 3); ctx.fill();
+    // foot soldiers — legs, body, head
+    fill(C.LEAD); rr(ctx, cx - 10 - g, 52 - g, 8 + g * 2, 20 + g * 2, 3); ctx.fill();
     rr(ctx, cx + 2 - g, 52 - g, 8 + g * 2, 20 + g * 2, 3); ctx.fill();
-    rr(ctx, cx - 13 - g, 26 - g, 26 + g * 2, 30 + g * 2, 9); ctx.fill();  // torso
-    rr(ctx, cx - 8 - g, 8 - g, 16 + g * 2, 16 + g * 2, 7); ctx.fill();    // head
 
     if (kind === 'heavy') {
-      rr(ctx, cx - 22 - g, 28 - g, 13 + g * 2, 26 + g * 2, 4); ctx.fill();          // tall shield
-      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 13, 4); ctx.lineTo(cx + 13, 58); ctx.stroke(); // spear
+      fill(C.KEY); rr(ctx, cx - 13 - g, 26 - g, 26 + g * 2, 30 + g * 2, 9); ctx.fill();              // surcoat over mail (team)
+      if (!outline) { fill(C.STEELD); rr(ctx, cx - 13, 47, 26, 9, 4); ctx.fill(); }                   // mail skirt below the surcoat
+      fill(C.STEEL); rr(ctx, cx - 8 - g, 8 - g, 16 + g * 2, 16 + g * 2, 7); ctx.fill();              // great helm
+      if (!outline) { fill(C.SKIN); rr(ctx, cx - 4, 16, 8, 4, 2); ctx.fill(); }                       // visor slit
+      fill(C.KEY); rr(ctx, cx - 23 - g, 27 - g, 14 + g * 2, 28 + g * 2, 5); ctx.fill();              // tall shield (team)
+      if (!outline) { fill(C.BOSS); ctx.beginPath(); ctx.arc(cx - 16, 41, 3.6, 0, 7); ctx.fill();     // boss
+        fill(C.STEEL); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx - 16, 29); ctx.lineTo(cx - 16, 53); ctx.moveTo(cx - 22, 41); ctx.lineTo(cx - 10, 41); ctx.stroke(); } // cross
+      fill(C.WOOD); ctx.lineWidth = 3.5 + g; ctx.beginPath(); ctx.moveTo(cx + 14, 4); ctx.lineTo(cx + 14, 58); ctx.stroke(); // spear shaft
+      if (!outline) { fill(C.STEEL); ctx.beginPath(); ctx.moveTo(cx + 14, 2); ctx.lineTo(cx + 18, 12); ctx.lineTo(cx + 10, 12); ctx.fill(); } // spearhead
     } else if (kind === 'light') {
-      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.moveTo(cx + 12, 30); ctx.lineTo(cx + 22, 12); ctx.stroke(); // raised sword
-      rr(ctx, cx - 19 - g, 32 - g, 9 + g * 2, 16 + g * 2, 3); ctx.fill();           // small buckler
+      fill(C.KEY); rr(ctx, cx - 13 - g, 26 - g, 26 + g * 2, 30 + g * 2, 9); ctx.fill();              // tabard (team)
+      if (!outline) { fill(C.LEA); rr(ctx, cx - 13, 47, 26, 9, 4); ctx.fill(); }                      // leather skirt
+      fill(C.LEAD); rr(ctx, cx - 8 - g, 8 - g, 16 + g * 2, 16 + g * 2, 7); ctx.fill();               // cap
+      if (!outline) { fill(C.SKIN); rr(ctx, cx - 5, 14, 10, 8, 4); ctx.fill(); }                      // face
+      fill(C.KEY); rr(ctx, cx - 20 - g, 32 - g, 11 + g * 2, 14 + g * 2, 5); ctx.fill();              // buckler (team)
+      if (!outline) { fill(C.BOSS); ctx.beginPath(); ctx.arc(cx - 14, 39, 3, 0, 7); ctx.fill(); }
+      fill(C.WOOD); ctx.lineWidth = 3.5 + g; ctx.beginPath(); ctx.moveTo(cx + 11, 30); ctx.lineTo(cx + 23, 10); ctx.stroke(); // sword
+      if (!outline) { fill(C.STEEL); ctx.lineWidth = 3.5; ctx.beginPath(); ctx.moveTo(cx + 11, 30); ctx.lineTo(cx + 23, 10); ctx.stroke(); }
     } else if (kind === 'archer') {
-      ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.arc(cx + 13, 34, 18, -1.15, 1.15); ctx.stroke();           // bow
-      ctx.lineWidth = 1.5 + g; ctx.beginPath(); ctx.moveTo(cx + 13 + 18 * Math.cos(-1.15), 34 + 18 * Math.sin(-1.15)); ctx.lineTo(cx + 13 + 18 * Math.cos(1.15), 34 + 18 * Math.sin(1.15)); ctx.stroke(); // string
+      fill(C.KEY); rr(ctx, cx - 12 - g, 26 - g, 24 + g * 2, 30 + g * 2, 9); ctx.fill();              // tunic (team)
+      if (!outline) { fill(C.LEA); rr(ctx, cx - 12, 47, 24, 9, 4); ctx.fill(); fill(C.LEAD); rr(ctx, cx - 12, 30, 5, 22, 3); ctx.fill(); } // skirt + quiver baldric
+      fill(C.LEAD); rr(ctx, cx - 7 - g, 9 - g, 15 + g * 2, 15 + g * 2, 7); ctx.fill();               // hood
+      if (!outline) { fill(C.SKIN); rr(ctx, cx - 4, 15, 9, 8, 4); ctx.fill(); }                       // face
+      fill(C.WOOD); ctx.lineWidth = 4 + g; ctx.beginPath(); ctx.arc(cx + 13, 34, 18, -1.15, 1.15); ctx.stroke(); // bow
+      if (!outline) { ctx.strokeStyle = '#d9cdb0'; ctx.lineWidth = 1.4; ctx.beginPath();
+        ctx.moveTo(cx + 13 + 18 * Math.cos(-1.15), 34 + 18 * Math.sin(-1.15)); ctx.lineTo(cx + 13 + 18 * Math.cos(1.15), 34 + 18 * Math.sin(1.15)); ctx.stroke(); } // string
     }
-  }
+  };
+  draw(3.0, true);   // dark outline
+  draw(0, false);    // coloured detail
 
   // ---- baked shading (survives the per-instance tint multiply) ----
   ctx.globalCompositeOperation = 'source-atop';
   // vertical: bright top highlight -> neutral -> deep bottom shadow (grounds it)
   const vg = ctx.createLinearGradient(0, 0, 0, S);
-  vg.addColorStop(0, 'rgba(255,255,255,0.46)');
+  vg.addColorStop(0, 'rgba(255,255,255,0.34)');
   vg.addColorStop(0.4, 'rgba(255,255,255,0)');
   vg.addColorStop(0.78, 'rgba(0,0,0,0.12)');
   vg.addColorStop(1, 'rgba(0,0,0,0.42)');

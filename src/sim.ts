@@ -686,7 +686,8 @@ export class Sim {
     division(S(C.light), UType.Light, -W * 0.78, F + 56, 1.4, 'Light Inf');
     division(S(C.archer), UType.Archer, 0, F + 74, 1.5, 'Archers');
     division(S(C.cavalry), UType.Cavalry, W * 0.86, F + 56, 2.2, 'Cavalry');
-    if (C.siege) this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 92, C.siege, 13), { name: 'Trebuchets', cols: C.siege, div: UType.Siege });
+    // trebuchets form up in RANKS (≤6 across), not one long line strung across the field
+    if (C.siege) { const scols = Math.min(6, C.siege); this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 92, scols, 13), { name: 'Trebuchets', cols: scols, div: UType.Siege }); }
 
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });

@@ -53,6 +53,18 @@ const SOLDIER_VERT = `
 const COL_ATTACK = new THREE.Color('#e0552f');
 const COL_DEFEND = new THREE.Color('#3f86d8');
 
+// Soldier fragment: keep the baked detail (steel/leather/skin/weapon) and tint ONLY
+// the green-keyed surcoat/shield with the per-instance faction colour (vColor). The
+// instance colour's brightness also darkens the whole body, so the corpse grey-out
+// still works.
+const SOLDIER_FRAG = `
+  vec4 texColor = texture2D( map, vMapUv );
+  float keyAmt = smoothstep(0.16, 0.32, texColor.g - max(texColor.r, texColor.b));
+  float vlum = max(max(vColor.r, vColor.g), vColor.b);
+  vec3 body = texColor.rgb * (0.6 + 0.4 * vlum);
+  vec3 team = vColor.rgb * clamp(texColor.g * 1.45, 0.0, 1.0);
+  diffuseColor = vec4( mix(body, team, keyAmt), texColor.a );`;
+
 function jit(i: number, s: number): number { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); }
 
 interface SegVis { box: THREE.Mesh; mat: THREE.MeshLambertMaterial; base: THREE.Color; extras: THREE.Object3D[]; h: number; maxhp: number; prevHp: number; crumbling: number; }
@@ -124,6 +136,7 @@ export class Renderer {
   private coastal = false;
   constructor(private sim: Sim, canvasParent: HTMLElement, env?: { biome: Biome; coastal: boolean }) {
     this.biomeCfg = BIOMES[env?.biome ?? 'britain']; this.coastal = !!env?.coastal;
+    (window as any).__r = this; // console/QA access (like __sim / __map / __audio)
     // Mobile is fill-rate + draw-call bound. Render at device-pixel 1 (the HUD
     // is DOM so text stays crisp) and skip MSAA — the chunky art doesn't need it.
     this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -278,7 +291,7 @@ export class Renderer {
   private buildHorizon() {
     const B = this.biomeCfg;
     const RINGS = 16, SEG = 120, r0 = 250, r1 = 560;
-    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), tmp = new THREE.Color();
+    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), groundC = new THREE.Color(B.ground), tmp = new THREE.Color();
     const seaDir = Math.PI, seaHalf = this.coastal ? 1.0 : -1;        // ~57° sea gap to the north
     const arc = (a: number) => { let d = Math.abs(a - seaDir); if (d > Math.PI) d = 2 * Math.PI - d; return d; };
     const smooth = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
@@ -286,11 +299,13 @@ export class Renderer {
     // sines → soft ridgelines, never spiky)
     const hAt = (ang: number, t: number) => {
       const rise = smooth(0, 0.34, t);                                // low at the field edge, full hills beyond
-      let n = Math.sin(ang * 2.7 + 1.3) * 0.5 + Math.sin(ang * 5.1 + 4.1) * 0.28 + Math.sin(ang * 9.3 + 2.0) * 0.16;
+      // INTEGER angular frequencies so the ridge wraps seamlessly (ang=0 ≡ ang=2π) —
+      // non-integers tore a visible gap at the closing seam
+      let n = Math.sin(ang * 3 + 1.3) * 0.5 + Math.sin(ang * 5 + 4.1) * 0.28 + Math.sin(ang * 9 + 2.0) * 0.16;
       n = 0.5 + 0.5 * (n * 0.5 + 0.5);                                // [0.5,1]
-      n *= 0.82 + 0.32 * Math.sin(ang * 1.7 + t * 3.2);               // slow swell so ridge depth varies
+      n *= 0.82 + 0.32 * Math.sin(ang * 2 + t * 3.2);                 // slow swell so ridge depth varies
       // snow peaks get a sharper, taller profile so the range towers; rolling hills stay gentle
-      if (B.snow) n = Math.pow(n, 0.55) * (0.9 + 0.5 * Math.max(0, Math.sin(ang * 4.3 + 0.7)));
+      if (B.snow) n = Math.pow(n, 0.55) * (0.9 + 0.5 * Math.max(0, Math.sin(ang * 4 + 0.7)));
       let h = B.hillH * rise * n * (B.dune ? 0.62 : 1);
       if (this.coastal) h *= smooth(seaHalf - 0.05, seaHalf + 0.45, arc(ang)); // drop to sea level on the coast flank
       return h;
@@ -304,6 +319,7 @@ export class Renderer {
         const frac = Math.max(0, Math.min(1, y / (B.hillH * 0.8)));
         tmp.copy(cBase).lerp(cTop, frac * 0.85);
         if (B.snow && frac > 0.42) tmp.lerp(snow, smooth(0.42, 0.9, frac));
+        tmp.lerp(groundC, Math.max(0, 1 - frac * 2.4) * 0.45);       // hill feet melt into the field colour (smooths the terrain→backdrop seam)
         tmp.lerp(fog, Math.pow(t, 2.4) * (B.snow ? 0.55 : 0.9));      // far rim melts into the haze (peaks keep their snow)
         col.push(tmp.r, tmp.g, tmp.b);
       }
@@ -631,6 +647,10 @@ export class Renderer {
         shader.vertexShader = 'attribute vec3 iPos;\nattribute float iScale;\nattribute float iPhase;\nattribute float iState;\nattribute float iYaw;\n'
           + 'uniform float uTime;\nuniform vec3 uRight;\nuniform float uHalfH;\n'
           + shader.vertexShader.replace('#include <begin_vertex>', SOLDIER_VERT);
+        // tint only the heraldry (green key) with the faction colour; keep the rest baked
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <color_fragment>', '')
+          .replace('#include <map_fragment>', SOLDIER_FRAG);
       };
       mat.customProgramCacheKey = () => 'castleSoldier';
       const geo = new THREE.PlaneGeometry(SPRITE_W[t], SPRITE_H[t]);
