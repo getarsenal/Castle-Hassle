@@ -828,6 +828,25 @@ export class Sim {
       const u = comps[k]; u.assault = false; u.objKind = 'hold'; u.objSeg = -1; this.setAnchor(u, cx, cz, facing, Math.max(3, Math.round(Math.sqrt(u.count) * 1.4)));
     }
   }
+  // nearest living ENEMY soldier to a tapped point — backs the "Attack" command
+  // (returns its position so the order targets the unit the player tapped).
+  enemyPosNear(x: number, z: number, maxDist = 20): { x: number; z: number } | null {
+    let bi = -1, bd = maxDist * maxDist;
+    for (let i = 0; i < this.n; i++) {
+      if (!this.alive[i] || this.fac[i] !== Faction.Defender) continue;
+      const d2 = (this.px[i] - x) ** 2 + (this.pz[i] - z) ** 2;
+      if (d2 < bd) { bd = d2; bi = i; }
+    }
+    return bi >= 0 ? { x: this.px[bi], z: this.pz[bi] } : null;
+  }
+  // Order an arm to ATTACK a point: ranged focus-fire it, melee march in and
+  // engage (cavalry get a charge). Reuses the existing order plumbing.
+  attackTargetDiv(div: number, x: number, z: number) {
+    const cs = this.divCompanies(div); if (!cs.length) return;
+    const ranged = cs[0].type === UType.Archer || cs[0].type === UType.Siege;
+    if (ranged) { this.setFocusDiv(div, x, z); for (const u of cs) u.holdFire = false; }
+    else { this.orderDivision(div, x, z, x, z); if (cs[0].type === UType.Cavalry) this.chargeDiv(div); }
+  }
   // southernmost line you may muster on during deploy (just outside the walls)
   deployLine(): number { return LAYOUT.front + 8; }
   setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.holdFire = false; } }  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }

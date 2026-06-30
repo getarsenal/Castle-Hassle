@@ -25,6 +25,7 @@ const $ = (id: string) => document.getElementById(id)!;
 let sim: Sim;
 let renderer: Renderer;
 let selected = -1;
+let attackArm = -1; // div currently in "Attack — tap an enemy" targeting mode (-1 = off)
 let paused = false;
 let gameSpeed = 1; // battle tempo: 1x / 2x / 3x
 const pauseBtn = document.getElementById('pauseBtn'), retreatBtn = document.getElementById('retreatBtn');
@@ -125,7 +126,7 @@ function buildCards() {
     const card = document.createElement('div'); card.className = 'card'; card.dataset.div = String(div);
     const ranged = a.type === UType.Archer || a.type === UType.Siege;
     card.innerHTML = `<div class="name">${TYPE_NAME[a.type]}</div><div class="count">${a.alive}</div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
-    card.addEventListener('click', () => { selected = selected === div ? -1 : div; refreshCards(); updateHint(); updateTools(); });
+    card.addEventListener('click', () => { selected = selected === div ? -1 : div; attackArm = -1; refreshCards(); updateHint(); updateTools(); });
     cardsEl.appendChild(card);
   }
 }
@@ -161,7 +162,8 @@ function updateTopbar() {
 }
 function updateHint() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
-  if (a && a.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
+  if (attackArm >= 0 && attackArm === selected) hintEl.textContent = a && (a.type === UType.Archer) ? 'ATTACK: tap an enemy unit to focus your volleys on it' : 'ATTACK: tap an enemy unit and your arm charges in to fight it';
+  else if (a && a.type === UType.Siege) hintEl.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
   else if (a && a.type === UType.Archer) hintEl.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
   else if (a) hintEl.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
   else if (sim.phase === 'deploy') hintEl.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
@@ -186,6 +188,13 @@ function updateTools() {
   if (!a || (!ranged && !canAssault)) { toolsEl.classList.remove('show'); return; }
   toolsEl.classList.add('show');
   const comps = sim.divCompanies(selected);
+  // "Attack" — for every fighting arm: tap it, then tap an enemy to attack that unit
+  if (a.type !== UType.Siege && sim.phase === 'battle') {
+    const on = attackArm === selected;
+    const atk = document.createElement('button'); atk.className = 'tool atkTool' + (on ? ' on' : ''); atk.textContent = on ? 'Pick target…' : 'Attack';
+    atk.addEventListener('click', () => { attackArm = on ? -1 : selected; updateHint(); updateTools(); });
+    toolsEl.appendChild(atk);
+  }
   if (canAssault) {
     const on = sim.assaultingDiv(selected);
     const ab = document.createElement('button'); ab.className = 'tool' + (on ? ' on' : '');
@@ -368,10 +377,16 @@ function bindInput() {
 
 function handleTap(cx: number, cy: number) {
   const p = groundAt(cx, cy); if (!p) return;
+  // ATTACK mode: this tap names the enemy to attack (focus-fire / charge in)
+  if (attackArm >= 0 && attackArm === selected && sim.phase !== 'over') {
+    const tgt = sim.enemyPosNear(p.x, p.z, 24);
+    if (tgt) { sim.attackTargetDiv(selected, tgt.x, tgt.z); renderer.pingMove(tgt.x, tgt.z); }
+    attackArm = -1; refreshCards(); updateHint(); updateTools(); return;
+  }
   // tapping near your troops selects that ARM (the nearest company's division)
   let best = -1, bd = 13;
   for (const u of sim.playerUnits()) { if (u.alive <= 0) continue; const d = Math.hypot(u.cx - p.x, u.cz - p.z); if (d < bd) { bd = d; best = u.div; } }
-  if (best >= 0) { selected = best; refreshCards(); updateHint(); updateTools(); return; }
+  if (best >= 0) { selected = best; attackArm = -1; refreshCards(); updateHint(); updateTools(); return; }
   if (selected >= 0 && sim.phase !== 'over') {
     const a = sim.divAgg(selected);
     if (a.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); return; } sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }
