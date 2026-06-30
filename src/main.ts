@@ -468,7 +468,7 @@ function updateMapHeader() {
 }
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => { feedback.open(); openUpgrades(progress, refreshGoldLabel); });
 document.getElementById('raidsBtn')?.addEventListener('click', () => { feedback.open(); openRaids(progress, raids, enterRaid, refreshGoldLabel); });
-document.getElementById('musterMapBtn')?.addEventListener('click', () => { feedback.open(); openMuster(progress, computeBuffs(progress.upg).recruitDiscount, refreshGoldLabel); });
+document.getElementById('musterMapBtn')?.addEventListener('click', () => { feedback.open(); openMuster(progress, computeBuffs(progress.upg).recruitDiscount, warBuffs().atk, refreshGoldLabel); });
 
 // the most you can field of a kind: your standing army, plus the free light levy
 // and any free engineer-corps trebuchets

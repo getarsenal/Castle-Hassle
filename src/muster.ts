@@ -3,7 +3,49 @@
 // a rank of little figures so the size of your host reads at a glance. A styled
 // DOM screen reached from the world map.
 import { Progress, ArmyKey, recruitPrice, saveProgress } from './campaign';
+import { AtkBuff } from './sim';
 import { UNIT_ART } from './uniticons';
+
+// ---- The muster roll's stat-block, in the chronicler's tongue. Base numbers come
+// straight from the sim; the player's war-buffs (War Council upgrades + the boons of
+// conquered realms) are folded in so the roll shows what each company will ACTUALLY
+// field. ----
+const pctUp = (m: number) => Math.round((m - 1) * 100);
+function statRow(desc: string, val: string): string {
+  return `<div class="srow"><span class="d">${desc}</span>${val ? `<b class="v">${val}</b>` : ''}</div>`;
+}
+function boonLine(key: ArmyKey, b: AtkBuff): string {
+  const p: string[] = [];
+  if (b.hp > 1.005) p.push(`+${pctUp(b.hp)}% hardiness`);
+  if ((key === 'heavy' || key === 'light' || key === 'cavalry') && b.melee > 1.005) p.push(`+${pctUp(b.melee)}% bite`);
+  if (key === 'archer' && b.archer > 1.005) p.push(`+${pctUp(b.archer)}% arrow-sting`);
+  if (key === 'archer' && b.fire) p.push('shafts wreathed in fire');
+  if (key === 'siege' && b.siege > 1.005) p.push(`+${pctUp(b.siege)}% stone-force`);
+  if (key === 'siege' && b.reload < 0.995) p.push(`${Math.round((1 / b.reload - 1) * 100)}% swifter winding`);
+  return p.length ? `<div class="boon">⚜ The War Council’s blessing — ${p.join(' · ')}</div>` : '';
+}
+function statsHTML(key: ArmyKey, b: AtkBuff): string {
+  const hp = (base: number) => Math.round(base * b.hp);
+  const mel = (base: number) => Math.round(base * b.melee);
+  let rows = '';
+  if (key === 'heavy') rows = statRow('Harnessed in mail and plate', `${hp(120)} vigour`)
+    + statRow('The weight of a knight’s blade', `${mel(9)} might`)
+    + statRow('Holds the shield-wall — slow, unyielding', '');
+  else if (key === 'light') rows = statRow('Lightly girt, swift afoot', `${hp(70)} vigour`)
+    + statRow('Darting spear-thrusts, oft renewed', `${mel(7)} might`)
+    + statRow('May break into a sprint to close the field', '');
+  else if (key === 'archer') rows = statRow('Scarce armoured — frail in the press', `${hp(55)} vigour`)
+    + statRow('Bodkin shafts loosed from afar', `${Math.round(12 * b.archer)} sting`)
+    + statRow('Reach of forty paces · a quiver of sixteen', '')
+    + statRow('May loose a massed volley — farther, harder, slower', '');
+  else if (key === 'cavalry') rows = statRow('Barded destriers, proud and stout', `${hp(95)} vigour`)
+    + statRow('Lance and longsword both', `${mel(15)} might`)
+    + statRow('The thundering charge strikes near threefold', '');
+  else if (key === 'siege') rows = statRow('Great engines of oak and iron', `${hp(260)} vigour`)
+    + statRow('Hurls stone to shatter wall and gate', `${Math.round(200 * b.siege)} ruin`)
+    + statRow('Reach of one hundred paces · sixteen stones', '');
+  return rows + boonLine(key, b);
+}
 
 // hand-inked soldier silhouettes (currentColor = ink), one per arm
 export const ICONS: Record<ArmyKey, string> = {
@@ -71,13 +113,18 @@ function injectStyles() {
     border-top:1px dashed rgba(92,66,30,0.4);min-height:24px}
   .rfig{line-height:0;color:#43301a}
   .rfig svg{width:14px;height:18px;display:block}
-  .rank .empty{font-style:italic;font-size:12px;color:#8a6c3e;padding:2px}`;
+  .rank .empty{font-style:italic;font-size:12px;color:#8a6c3e;padding:2px}
+  .hostStats{margin-top:9px;padding-top:8px;border-top:1px dashed rgba(92,66,30,0.4)}
+  .hostStats .srow{display:flex;justify-content:space-between;align-items:baseline;gap:14px;line-height:1.55}
+  .hostStats .srow .d{font-size:12.5px;font-style:italic;color:#5c441f}
+  .hostStats .srow .v{flex:0 0 auto;font-family:'Cinzel',Georgia,serif;font-size:11.5px;font-weight:700;color:#43300f;white-space:nowrap}
+  .hostStats .boon{margin-top:6px;font-size:11.5px;font-weight:600;color:#7a5410;line-height:1.4;font-style:italic}`;
   document.head.appendChild(s);
 }
 
 // Show the "Your Host" overlay. `discount` is the Quartermaster recruitment
 // multiplier (1 = full price). onClose fires when the player returns to the map.
-export function openMuster(prog: Progress, discount: number, onClose: () => void) {
+export function openMuster(prog: Progress, discount: number, buff: AtkBuff, onClose: () => void) {
   injectStyles();
   const root = document.createElement('div'); root.className = 'musScreen';
   const render = () => {
@@ -92,7 +139,8 @@ export function openMuster(prog: Progress, discount: number, onClose: () => void
         return `<div class="hostCard"><div class="hostTop"><span class="bigic"><img src="${UNIT_ART[r.key]}" alt=""></span>`
           + `<div class="hostMeta"><div class="hostName">${r.name}</div><div class="hostNum"><b>${num}</b> · ${r.sub}</div></div>`
           + `<button class="recruit" data-k="${r.key}" ${prog.gold < price ? 'disabled' : ''}>Recruit +${r.step}<span>${price} gold</span></button></div>`
-          + `<div class="rank">${rankFigures(r.key, num, r.per)}</div></div>`;
+          + `<div class="rank">${rankFigures(r.key, num, r.per)}</div>`
+          + `<div class="hostStats">${statsHTML(r.key, buff)}</div></div>`;
       }).join('')}</div>`;
     root.querySelector('.musClose')!.addEventListener('click', () => { root.remove(); onClose(); });
     root.querySelectorAll<HTMLButtonElement>('.recruit').forEach(b => b.addEventListener('click', () => {
