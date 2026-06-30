@@ -1126,7 +1126,10 @@ export class Sim {
           if (d2 < nd2 && !(isMelee && Math.abs(this.py[cached] - my) > 2.5)) { nearest = cached; nd2 = d2; }
         }
         if (--this._scanCd[i] <= 0) {
-          const sr = Math.min(SRAD[t], 4); let done = false;
+          // Archers must SEE every enemy they can SHOOT: scan out to their firing
+          // range (RANGE=40 → ~7 buckets), not the melee-contact cap of 4 buckets
+          // (24m) that left in-range foes beyond ~24m completely untargeted.
+          const sr = t === UType.Archer ? 7 : Math.min(SRAD[t], 4); let done = false;
           for (let rr = hr - sr; rr <= hr + sr && !done; rr++) for (let cc = hc - sr; cc <= hc + sr && !done; cc++) {
             if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
             const k = rr * this.hCols + cc, bs = this.hStart[k]; const bn = Math.min(this.hStart[k + 1] - bs, 18);
@@ -1139,7 +1142,10 @@ export class Sim {
             }
           }
           this._near[i] = nearest;
-          this._scanCd[i] = nearest >= 0 ? 4 : 8; // engaged -> stay sharp; nothing found -> coast
+          // engaged -> stay sharp; nothing found -> coast. Archers scan a far wider
+          // ring, so they coast a little longer (the cheap cached-target check below
+          // keeps them firing every frame between rescans).
+          this._scanCd[i] = nearest >= 0 ? (t === UType.Archer ? 7 : 4) : (t === UType.Archer ? 10 : 8);
         }
       }
 

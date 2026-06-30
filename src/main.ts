@@ -107,6 +107,7 @@ let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
+  (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
   renderer = new Renderer(sim, app);
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
@@ -734,8 +735,11 @@ function frame(now: number) {
   // range overlay: one fan per company, so the reach reads from each group's
   // position (deploy the front ranks forward and you can see them gain the wall)
   if (a && a.alive > 0 && (a.type === UType.Archer || a.type === UType.Siege) && showRange && rep) {
+    // ONE clean ring covering the whole arm's reach, not a crowding ring per company
     const r = sim.unitRange(rep.id);
-    renderer.setRangeFans(sim.divCompanies(selected).filter(u => u.alive > 0).map(u => ({ x: u.cx, z: u.cz, r })));
+    const comps = sim.divCompanies(selected).filter(u => u.alive > 0);
+    let spread = 0; for (const u of comps) spread = Math.max(spread, Math.hypot(u.cx - a.cx, u.cz - a.cz));
+    renderer.setRangeFans([{ x: a.cx, z: a.cz, r: r + spread }]);
   } else renderer.setRangeFans(null);
 
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
