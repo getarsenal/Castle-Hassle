@@ -29,7 +29,7 @@ export const TREES: UpgTree[] = [
     { name: 'Fire Arrows', desc: 'Your archers loose flaming arrows', cost: 560 },
   ] },
   { key: 'engineer', title: 'Siege Engineer', nodes: [
-    { name: 'Counterweights', desc: '+22% boulder damage', cost: 150 },
+    { name: 'Counter­weights', desc: '+22% boulder damage', cost: 150 }, // soft hyphen: breaks cleanly as "Counter-/weights" if the card is narrow
     { name: 'Siege Workshop', desc: '+2 free trebuchets', cost: 340 },
     { name: 'Master Engineers', desc: '+44% boulder damage, faster reload', cost: 600 },
   ] },
@@ -71,7 +71,7 @@ function injectStyles() {
   .upgNode{flex:1;border:1px solid #6a5230;border-top:1px solid rgba(255,225,160,0.22);border-radius:var(--r-md);padding:10px 9px 11px;position:relative;text-align:center;min-width:0;
     background:repeating-linear-gradient(50deg,rgba(255,235,190,0.02) 0 2px,rgba(0,0,0,0.03) 2px 4px),linear-gradient(180deg,#46331c,#241809);
     box-shadow:0 4px 12px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,225,160,0.12)}
-  .upgNode .nm{font-size:var(--fs-label);color:#ffe6a6;font-weight:700;line-height:1.15}
+  .upgNode .nm{font-size:var(--fs-label);color:#ffe6a6;font-weight:700;line-height:1.15;overflow-wrap:break-word;hyphens:auto}
   .upgNode .ds{font-size:var(--fs-caption);color:#d3bd92;margin:4px 0 9px;line-height:1.25;min-height:28px}
   .upgNode .buy{border:none;border-radius:var(--r-sm);min-height:44px;padding:8px 4px;font:800 var(--fs-label) 'Cinzel',Georgia,serif;width:100%;cursor:pointer;
     color:#8a7a5c;background:linear-gradient(#4a3c26,#34291a);box-shadow:0 3px 0 #241a10}

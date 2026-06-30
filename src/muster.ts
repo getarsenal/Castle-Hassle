@@ -3,6 +3,7 @@
 // a rank of little figures so the size of your host reads at a glance. A styled
 // DOM screen reached from the world map.
 import { Progress, ArmyKey, recruitPrice, saveProgress } from './campaign';
+import { UNIT_ART } from './uniticons';
 
 // hand-inked soldier silhouettes (currentColor = ink), one per arm
 export const ICONS: Record<ArmyKey, string> = {
@@ -54,8 +55,8 @@ function injectStyles() {
   .hostCard{margin-bottom:12px;padding:10px 12px 11px;border:1px solid rgba(92,66,30,0.42);border-radius:8px;
     background:linear-gradient(180deg,rgba(255,250,234,0.42),rgba(150,116,70,0.12))}
   .hostTop{display:flex;align-items:center;gap:12px}
-  .bigic{flex:0 0 auto;color:#3a2913;line-height:0}
-  .bigic svg{width:38px;height:46px;display:block}
+  .bigic{flex:0 0 auto;line-height:0}
+  .bigic img{width:52px;height:52px;border-radius:13px;display:block;border:1px solid rgba(90,64,28,0.55);box-shadow:0 2px 7px rgba(60,40,16,0.4)}
   .hostMeta{flex:1;min-width:0}
   .hostName{font-family:'Cinzel',Georgia,serif;font-size:15.5px;font-weight:700;color:#3a2710;line-height:1.1}
   .hostNum{font-size:12.5px;color:#6a4c20}
@@ -88,7 +89,7 @@ export function openMuster(prog: Progress, discount: number, onClose: () => void
       + `<div class="musBody">${ROSTER.map(r => {
         const price = recruitPrice(r.key, r.step, discount);
         const num = prog.army[r.key];
-        return `<div class="hostCard"><div class="hostTop"><span class="bigic">${ICONS[r.key]}</span>`
+        return `<div class="hostCard"><div class="hostTop"><span class="bigic"><img src="${UNIT_ART[r.key]}" alt=""></span>`
           + `<div class="hostMeta"><div class="hostName">${r.name}</div><div class="hostNum"><b>${num}</b> · ${r.sub}</div></div>`
           + `<button class="recruit" data-k="${r.key}" ${prog.gold < price ? 'disabled' : ''}>Recruit +${r.step}<span>${price} gold</span></button></div>`
           + `<div class="rank">${rankFigures(r.key, num, r.per)}</div></div>`;
