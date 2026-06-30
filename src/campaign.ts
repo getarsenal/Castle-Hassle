@@ -75,13 +75,44 @@ export type ArmyKey = keyof Army;
 export const ARMY_KEYS: ArmyKey[] = ['heavy', 'light', 'archer', 'cavalry', 'siege'];
 export const STARTING_ARMY: Army = { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 };
 export const STARTING_GOLD = 250;
-// gold to raise one soldier / engine of each kind
-export const RECRUIT_COST: Army = { heavy: 0.6, light: 0.4, archer: 0.5, cavalry: 1.0, siege: 32 };
+// gold to raise one soldier / engine of each kind. Tiered so a purchase carries
+// weight: light foot are cheap fodder, archers and horse sit in the middle, and
+// the heavy men-at-arms and the great siege engines are the big-ticket buys you
+// save up for — so kitting out a wall-breaking battery or a wall of plate feels
+// like a real investment.
+export const RECRUIT_COST: Army = { heavy: 1.4, light: 0.35, archer: 0.7, cavalry: 1.0, siege: 60 };
 // you can always field a free peasant levy of this many light foot, so a wiped
 // army never softlocks the campaign — but they're conscript fodder.
 export const LEVY_LIGHT = 250;
 
-export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; }
+// ---- veterancy: each ARM (not each man) is a standing corps that earns honours ----
+// Castle Hassle has no persistent identity below the arm, so the arm is what ranks
+// up: every battle an arm fights feeds it experience (men it fells, blood shed,
+// fields won), and as that experience mounts the whole corps grows hardier and
+// deadlier. One rank lifts both vigour and bite a little, so a long-served arm is
+// meaningfully better than a freshly-raised one without eclipsing the War Council.
+export interface Vet { xp: number; battles: number; kills: number; }
+export type VetRoll = Record<ArmyKey, Vet>;
+export const freshVet = (): VetRoll => ({ heavy: z(), light: z(), archer: z(), cavalry: z(), siege: z() });
+function z(): Vet { return { xp: 0, battles: 0, kills: 0 }; }
+// cumulative XP for each rank, lowest → highest. Five grades.
+export const RANK_XP = [0, 150, 450, 1000, 2000];
+export const RANK_TITLES = ['Raw Levy', 'Blooded', 'Seasoned', 'Veteran', 'Legendary'];
+export function vetRank(xp: number): number { let r = 0; for (let i = 0; i < RANK_XP.length; i++) if (xp >= RANK_XP[i]) r = i; return r; }
+// the combat edge a rank confers — applied to the arm's vigour AND its bite/sting.
+export function vetMultiplier(rank: number): number { return 1 + 0.05 * rank; }
+// progress (0..1) toward the next rank, and the XP span of the current band.
+export function vetProgress(xp: number): { rank: number; frac: number; cur: number; next: number | null } {
+  const rank = vetRank(xp), cur = RANK_XP[rank], next = rank + 1 < RANK_XP.length ? RANK_XP[rank + 1] : null;
+  return { rank, cur, next, frac: next === null ? 1 : Math.max(0, Math.min(1, (xp - cur) / (next - cur))) };
+}
+// XP an arm earns from a single battle, given what it fielded and did.
+export function battleXP(opts: { fielded: boolean; kills: number; survivalRate: number; won: boolean }): number {
+  if (!opts.fielded) return 0;
+  return Math.round(10 + opts.kills + (opts.won ? 25 : 0) + opts.survivalRate * 15);
+}
+
+export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; }
 const KEY = 'castlehassle.campaign.v1';
 export function loadProgress(): Progress {
   try {
@@ -89,10 +120,11 @@ export function loadProgress(): Progress {
     if (p && typeof p.unlocked === 'number') {
       const army: Army = { ...STARTING_ARMY, ...(p.army || {}) };           // migrate old saves → a fresh army
       const gold = typeof p.gold === 'number' ? p.gold : STARTING_GOLD;
-      return { unlocked: p.unlocked, completed: p.completed || [], gold, upg: p.upg || {}, army };
+      const vet: VetRoll = { ...freshVet(), ...(p.vet || {}) };             // older saves start their corps green
+      return { unlocked: p.unlocked, completed: p.completed || [], gold, upg: p.upg || {}, army, vet };
     }
   } catch { /* ignore */ }
-  return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY } };
+  return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY }, vet: freshVet() };
 }
 export function saveProgress(p: Progress) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 // recruitment price, with the Quartermaster discount applied

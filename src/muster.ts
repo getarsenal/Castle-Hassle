@@ -2,7 +2,7 @@
 // with gold (carried over between sieges), and see each arm drawn out in ink as
 // a rank of little figures so the size of your host reads at a glance. A styled
 // DOM screen reached from the world map.
-import { Progress, ArmyKey, recruitPrice, saveProgress } from './campaign';
+import { Progress, ArmyKey, recruitPrice, saveProgress, vetProgress, vetMultiplier, RANK_TITLES } from './campaign';
 import { AtkBuff } from './sim';
 import { UNIT_ART } from './uniticons';
 
@@ -24,9 +24,11 @@ function boonLine(key: ArmyKey, b: AtkBuff): string {
   if (key === 'siege' && b.reload < 0.995) p.push(`${Math.round((1 / b.reload - 1) * 100)}% swifter winding`);
   return p.length ? `<div class="boon">⚜ The War Council’s blessing — ${p.join(' · ')}</div>` : '';
 }
-function statsHTML(key: ArmyKey, b: AtkBuff): string {
-  const hp = (base: number) => Math.round(base * b.hp);
-  const mel = (base: number) => Math.round(base * b.melee);
+function statsHTML(key: ArmyKey, b: AtkBuff, vm: number): string {
+  // vm = the arm's veterancy multiplier, folded in alongside the War Council buffs so
+  // the roll shows what a seasoned company ACTUALLY fields.
+  const hp = (base: number) => Math.round(base * b.hp * vm);
+  const mel = (base: number) => Math.round(base * b.melee * vm);
   let rows = '';
   if (key === 'heavy') rows = statRow('Harnessed in mail and plate', `${hp(120)} vigour`)
     + statRow('The weight of a knight’s blade', `${mel(9)} might`)
@@ -35,16 +37,30 @@ function statsHTML(key: ArmyKey, b: AtkBuff): string {
     + statRow('Darting spear-thrusts, oft renewed', `${mel(7)} might`)
     + statRow('May break into a sprint to close the field', '');
   else if (key === 'archer') rows = statRow('Scarce armoured — frail in the press', `${hp(55)} vigour`)
-    + statRow('Bodkin shafts loosed from afar', `${Math.round(12 * b.archer)} sting`)
+    + statRow('Bodkin shafts loosed from afar', `${Math.round(12 * b.archer * vm)} sting`)
     + statRow('Reach of forty paces · a quiver of sixteen', '')
     + statRow('May loose a massed volley — farther, harder, slower', '');
   else if (key === 'cavalry') rows = statRow('Barded destriers, proud and stout', `${hp(95)} vigour`)
     + statRow('Lance and longsword both', `${mel(15)} might`)
     + statRow('The thundering charge strikes near threefold', '');
   else if (key === 'siege') rows = statRow('Great engines of oak and iron', `${hp(260)} vigour`)
-    + statRow('Hurls stone to shatter wall and gate', `${Math.round(200 * b.siege)} ruin`)
+    + statRow('Hurls stone to shatter wall and gate', `${Math.round(200 * b.siege * vm)} ruin`)
     + statRow('Reach of one hundred paces · sixteen stones', '');
   return rows + boonLine(key, b);
+}
+
+// The arm's veterancy: a star-rank with its honour-name, a tally of the slain, and a
+// bar creeping toward the next grade — so the player watches a corps grow legendary.
+function vetHTML(key: ArmyKey, prog: Progress): string {
+  const v = prog.vet[key], { rank, frac, next } = vetProgress(v.xp);
+  const stars = rank > 0 ? `<span class="vstars">${'★'.repeat(rank)}</span>` : '';
+  const edge = rank > 0 ? ` · +${Math.round((vetMultiplier(rank) - 1) * 100)}% mettle` : '';
+  const tally = v.kills > 0 ? `<span class="vkills">${v.kills.toLocaleString()} felled</span>` : '';
+  const nextLine = next === null
+    ? `<div class="vnext">The highest honour — none stand above them.</div>`
+    : `<div class="vnext">${(next - v.xp).toLocaleString()} more deeds to ${RANK_TITLES[rank + 1]}</div>`;
+  return `<div class="hostVet"><div class="vrow"><span class="vrank">${stars}${RANK_TITLES[rank]}${edge}</span>${tally}</div>`
+    + `<div class="vbar"><i style="width:${Math.round(frac * 100)}%"></i></div>${nextLine}</div>`;
 }
 
 // hand-inked soldier silhouettes (currentColor = ink), one per arm
@@ -118,7 +134,15 @@ function injectStyles() {
   .hostStats .srow{display:flex;justify-content:space-between;align-items:baseline;gap:14px;line-height:1.55}
   .hostStats .srow .d{font-size:12.5px;font-style:italic;color:#5c441f}
   .hostStats .srow .v{flex:0 0 auto;font-family:'Cinzel',Georgia,serif;font-size:11.5px;font-weight:700;color:#43300f;white-space:nowrap}
-  .hostStats .boon{margin-top:6px;font-size:11.5px;font-weight:600;color:#7a5410;line-height:1.4;font-style:italic}`;
+  .hostStats .boon{margin-top:6px;font-size:11.5px;font-weight:600;color:#7a5410;line-height:1.4;font-style:italic}
+  .hostVet{margin-top:9px;padding-top:8px;border-top:1px dashed rgba(92,66,30,0.4)}
+  .hostVet .vrow{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .hostVet .vrank{font-family:'Cinzel',Georgia,serif;font-size:12px;font-weight:700;color:#7a5410}
+  .hostVet .vstars{color:#c8901f;margin-right:4px;letter-spacing:1px}
+  .hostVet .vkills{font-size:11.5px;font-style:italic;color:#6a4c20;white-space:nowrap}
+  .hostVet .vbar{margin:5px 0 3px;height:5px;border-radius:999px;background:rgba(90,64,28,0.22);box-shadow:inset 0 1px 1px rgba(60,40,16,0.3);overflow:hidden}
+  .hostVet .vbar>i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#b9802a,#e7b64c);box-shadow:0 0 5px rgba(220,160,60,0.5)}
+  .hostVet .vnext{font-size:10.5px;color:#8a6c3e;font-style:italic}`;
   document.head.appendChild(s);
 }
 
@@ -140,7 +164,8 @@ export function openMuster(prog: Progress, discount: number, buff: AtkBuff, onCl
           + `<div class="hostMeta"><div class="hostName">${r.name}</div><div class="hostNum"><b>${num}</b> · ${r.sub}</div></div>`
           + `<button class="recruit" data-k="${r.key}" ${prog.gold < price ? 'disabled' : ''}>Recruit +${r.step}<span>${price} gold</span></button></div>`
           + `<div class="rank">${rankFigures(r.key, num, r.per)}</div>`
-          + `<div class="hostStats">${statsHTML(r.key, buff)}</div></div>`;
+          + `<div class="hostStats">${statsHTML(r.key, buff, vetMultiplier(vetProgress(prog.vet[r.key].xp).rank))}</div>`
+          + vetHTML(r.key, prog) + `</div>`;
       }).join('')}</div>`;
     root.querySelector('.musClose')!.addEventListener('click', () => { root.remove(); onClose(); });
     root.querySelectorAll<HTMLButtonElement>('.recruit').forEach(b => b.addEventListener('click', () => {

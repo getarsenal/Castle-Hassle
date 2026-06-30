@@ -453,7 +453,7 @@ const CHASE_LEASH = 22;
 
 export interface Projectile {
   active: boolean; x: number; y: number; z: number; vx: number; vy: number; vz: number;
-  tx: number; tz: number; ty: number; dmg: number; fac: Faction;
+  tx: number; tz: number; ty: number; dmg: number; fac: Faction; src: number; // src = firing arm's UType (for kill credit)
   wall: number;   // target wall-segment index for boulders, else -1
   big: boolean;   // boulder vs arrow (render size)
   fire: boolean;  // flaming arrow (tower archers)
@@ -513,8 +513,17 @@ export class Sim {
   attackerAliveStart = 0; defenderAliveStart = 0;
 
   private difficulty: number;
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; this.atk = atk; generateCastle(seed, style); this.setup(); }
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF, vet: number[] = [1, 1, 1, 1, 1]) { this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; this.atk = atk; for (let i = 0; i < 5; i++) this.vetMul[i] = vet[i] ?? 1; generateCastle(seed, style); this.setup(); }
   atk: AtkBuff = NO_BUFF;
+  // per-arm veterancy combat multiplier (attacker only), indexed by UType. Lifts both
+  // hp at spawn and the arm's damage. Defaults to 1 (a green, unranked host).
+  vetMul = [1, 1, 1, 1, 1];
+  // kills credited to each attacker arm this battle, indexed by UType — drives XP.
+  attackerKills = [0, 0, 0, 0, 0];
+  // transient: while a projectile's impact is being resolved, which attacker arm
+  // (UType) loosed it, so a felling shot can be credited. -1 = not an attacker shot.
+  private _shotCredit = -1;
+  private creditAtkKill(type: number) { if (type >= 0 && type < 5) this.attackerKills[type]++; }
 
   private rnd() { // mulberry32
     this.seed |= 0; this.seed = (this.seed + 0x6D2B79F5) | 0;
@@ -562,7 +571,7 @@ export class Sim {
       const id = this.n++;
       const [x, z, y] = place(i);
       this.px[id] = x; this.pz[id] = z; this.py[id] = y; sx += x; sz += z;
-      this.hp[id] = HP[type] * (faction === Faction.Attacker ? this.atk.hp : 1); this.cd[id] = this.rnd() * 0.5; this.ammo[id] = AMMO[type];
+      this.hp[id] = HP[type] * (faction === Faction.Attacker ? this.atk.hp * this.vetMul[type] : 1); this.cd[id] = this.rnd() * 0.5; this.ammo[id] = AMMO[type];
       this.unit[id] = this.units.length; this.fac[id] = faction; this.typ[id] = type;
       this.alive[id] = 1; this.slot[id] = this.typeCount[type]++;
     }
@@ -1251,7 +1260,7 @@ export class Sim {
           }
           const mrng = t === UType.Archer ? RANGE[UType.Light] : RANGE[t];
           const charge = t === UType.Cavalry && u.chargeT > 0 ? CHARGE_DMG : 1;
-          const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee : 1) * charge;
+          const mdmg = (t === UType.Archer ? MELEE[UType.Light] : MELEE[t]) * (u.faction === Faction.Attacker ? this.atk.melee * this.vetMul[t] : 1) * charge;
           // An attacker still fighting its way IN (storming/breaching, not yet inside the
           // walls) must keep scaling — it does not get dragged off to chase a defender,
           // which is what left whole arms swirling at the foot of the wall instead of
@@ -1259,7 +1268,7 @@ export class Sim {
           // once it's inside it fights/chases normally to clear the bailey.
           const assaultingOut = u.faction === Faction.Attacker && (u.objKind === 'storm' || u.objKind === 'breach') && !this.insideWalls(this.px[i], this.pz[i]);
           if (nearest >= 0 && dist <= mrng) {
-            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg * this.defenseMul(nearest); this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg * this.defenseMul(nearest); this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) { this.kill(nearest, this.units[this.unit[nearest]]); if (u.faction === Faction.Attacker) this.creditAtkKill(t); } }
             if (assaultingOut) { this.assaultMove(i, u, t); dx = this._dir[0]; dz = this._dir[1]; } // press on up the wall even while trading blows
           } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !assaultingOut && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
                      && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
@@ -1651,7 +1660,7 @@ export class Sim {
     // wall-top / ladder melee against an adjacent same-level enemy
     if (nearest >= 0 && Math.abs(this.py[nearest] - this.py[i]) < 2.5) {
       const dd = Math.hypot(this.px[nearest] - this.px[i], this.pz[nearest] - this.pz[i]);
-      if (dd < 2.2 && this.cd[i] <= 0) { const dmg = (MELEE[t] || 7) * 1.4 * (u.faction === Faction.Attacker ? this.atk.melee : 1); this.hp[nearest] -= dmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) this.kill(nearest, this.units[this.unit[nearest]]); }
+      if (dd < 2.2 && this.cd[i] <= 0) { const dmg = (MELEE[t] || 7) * 1.4 * (u.faction === Faction.Attacker ? this.atk.melee * this.vetMul[t] : 1); this.hp[nearest] -= dmg; this.cd[i] = ATKCD[t]; if (this.hp[nearest] <= 0) { this.kill(nearest, this.units[this.unit[nearest]]); if (u.faction === Faction.Attacker) this.creditAtkKill(t); } }
     }
     const st = this.climbState[i];
     if (st === 1) {                       // ascending
@@ -1734,8 +1743,8 @@ export class Sim {
       if (h > 0) { const lineY = sy + (ty - sy) * f; const deficit = h - lineY; if (deficit > need) need = deficit; }
     }
     if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
-    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction;
-    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer : 1.25) * dmgMul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction; p.src = this.typ[i];
+    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.atk.archer * this.vetMul[this.typ[i]] : 1.25) * dmgMul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
@@ -1761,8 +1770,8 @@ export class Sim {
     const tx = (seg.x0 + seg.x1) / 2 + (this.rnd() - 0.5) * 5, tz = (seg.z0 + seg.z1) / 2 + (this.rnd() - 0.5) * 4;
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / BOULDER_SPEED;
-    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction;
-    p.dmg = BOULDER_DMG * this.atk.siege; p.wall = segIdx; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction; p.src = this.typ[i];
+    p.dmg = BOULDER_DMG * this.atk.siege * this.vetMul[this.typ[i]]; p.wall = segIdx; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
   }
 
@@ -1783,7 +1792,7 @@ export class Sim {
 
   private getProj(): Projectile {
     for (const p of this.projectiles) if (!p.active) return p;
-    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, ty: 0, dmg: 0, fac: 0, wall: -1, big: false, fire: false, splash: 0, bolt: false };
+    const p: Projectile = { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, tx: 0, tz: 0, ty: 0, dmg: 0, fac: 0, src: -1, wall: -1, big: false, fire: false, splash: 0, bolt: false };
     this.projectiles.push(p); return p;
   }
   // Anti-personnel blast: the man at the point of impact is killed outright; a
@@ -1797,7 +1806,7 @@ export class Sim {
     if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5) dmg *= bolt ? 0.68 : 0.5;
     dmg *= this.defenseMul(j); // a shield wall turns arrows too
     this.hp[j] -= dmg;
-    if (this.hp[j] <= 0) this.kill(j, this.units[this.unit[j]]);
+    if (this.hp[j] <= 0) { this.kill(j, this.units[this.unit[j]]); if (this._shotCredit >= 0) this.creditAtkKill(this._shotCredit); }
   }
   private artySplash(x: number, z: number, fac: Faction, dmg: number, radius: number) {
     const r2 = radius * radius;
@@ -1824,7 +1833,7 @@ export class Sim {
     const sc = 0.8 + d0 * 0.03;
     const tx = this.px[target] + (this.rnd() - 0.5) * 2 * sc, tz = this.pz[target] + (this.rnd() - 0.5) * 2 * sc, ty = 1;
     const d = Math.hypot(tx - sx, tz - sz) || 1, tof = d / BOLT_SPEED;
-    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = Faction.Defender;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = Faction.Defender; p.src = -1;
     p.dmg = BALLISTA_DMG; p.wall = -1; p.big = false; p.fire = false; p.bolt = true; p.splash = ARTY_SPLASH;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof;
     e.aimX = tx; e.aimZ = tz;
@@ -1860,6 +1869,7 @@ export class Sim {
       p.vy -= PROJ_G * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
       const dxz = Math.hypot(p.x - p.tx, p.z - p.tz);
       if (p.y <= 0 || dxz < 1.4) {
+        this._shotCredit = p.fac === Faction.Attacker ? p.src : -1; // credit this shot's felling blows to the arm that loosed it
         if (p.wall >= 0) {
           // Boulder: damage whatever solid section it actually comes down on —
           // walls AND towers are real objects, so a shot scattered onto a tower
@@ -1886,6 +1896,7 @@ export class Sim {
           }
           if (best >= 0) this.applyRangedHit(best, p.dmg, false);
         }
+        this._shotCredit = -1;
         p.active = false;
       }
     }

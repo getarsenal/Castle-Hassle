@@ -1,7 +1,8 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP } from './campaign';
+import { playConquest } from './conquest';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
@@ -127,7 +128,7 @@ let currentBuff: AtkBuff = NO_BUFF;
 let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
-  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, vetMulArray());
   (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal });
   bindInput();
@@ -274,13 +275,22 @@ function showEnd() {
   let casualtyLine = '';
   // The Butcher's Bill — a per-arm tally of who marched out and who came home, shown
   // for every battle. In a campaign the survival rate also attrits your standing host.
-  const sp = sim.attackerSpawned(), al = sim.attackerAlive();
+  const sp = sim.attackerSpawned(), al = sim.attackerAlive(), kills = sim.attackerKills;
   let brought = 0, fell = 0;
   const rows: string[] = [];
+  const promotions: string[] = []; // arms that earned a higher rank this battle
   for (let i = 0; i < ARMY_KEYS.length; i++) {
     const k = ARMY_KEYS[i];
     const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
     if (inCampaign) progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
+    // veterancy: an arm that took the field earns experience — and may be promoted.
+    if (inCampaign && sp[i] > 0) {
+      const v = progress.vet[k], before = vetRank(v.xp);
+      v.xp += battleXP({ fielded: true, kills: kills[i], survivalRate: rate, won: win });
+      v.battles++; v.kills += kills[i];
+      const after = vetRank(v.xp);
+      if (after > before) promotions.push(`<div class="hrow"><span class="hn">${TYPE_NAME[i]}</span><span class="hv">${'★'.repeat(after)} ${RANK_TITLES[after]}</span></div>`);
+    }
     if (i < 4) { brought += sp[i]; fell += Math.max(0, sp[i] - al[i]); }   // count men, not engines
     if (sp[i] <= 0) continue;                                              // arm wasn't mustered for this battle
     const lost = Math.max(0, sp[i] - al[i]);
@@ -290,7 +300,8 @@ function showEnd() {
     rows.push(`<div class="lrow${lost > 0 ? '' : ' none'}"><span class="ln">${TYPE_NAME[i]}</span><span class="lv">${val}</span></div>`);
   }
   if (rows.length) {
-    bannerLosses.innerHTML = `<div class="lhead">The Butcher's Bill</div>${rows.join('')}`;
+    bannerLosses.innerHTML = `<div class="lhead">The Butcher's Bill</div>${rows.join('')}`
+      + (promotions.length ? `<div class="lhead hon">Honours Won</div>${promotions.join('')}` : '');
     bannerLosses.classList.add('show');
   } else {
     bannerLosses.innerHTML = ''; bannerLosses.classList.remove('show');
@@ -307,9 +318,10 @@ function showEnd() {
     bannerText.textContent = sim.captureProgress >= 0.999 ? 'Your banner flies over the keep — the castle is yours.' : 'The garrison is shattered — the castle is yours.';
     if (activeCastle) {
       const firstTake = !progress.completed.includes(activeCastle.id);
+      const goldBefore = progress.gold; let goldGained = 0;
       if (firstTake) progress.completed.push(activeCastle.id);
       progress.unlocked = Math.max(progress.unlocked, Math.min(activeCastle.id + 1, castles.length - 1));
-      if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; bannerText.textContent += `  +${reward} gold in spoils.`; }
+      if (firstTake) { const reward = goldReward(activeCastle.tier); progress.gold += reward; goldGained += reward; bannerText.textContent += `  +${reward} gold in spoils.`; }
       // Did that stronghold complete a whole realm? Crown the chapter and grant its boon.
       const realm = firstTake ? countryJustConquered(activeCastle.id, progress, castles) : null;
       if (realm) {
@@ -317,12 +329,14 @@ function showEnd() {
           bannerTitle.textContent = 'JERUSALEM TAKEN';
           bannerText.textContent = 'The Holy City falls. Your banner flies over Jerusalem — the Crusade is won.';
         } else {
-          if (realm.boon.gold) progress.gold += realm.boon.gold;
+          if (realm.boon.gold) { progress.gold += realm.boon.gold; goldGained += realm.boon.gold; }
           bannerTitle.textContent = `${realm.name.toUpperCase()} CONQUERED`;
           bannerText.textContent = `${realm.name} is yours. ${realm.boonLabel} join your host — ${realm.boonDesc}.`;
         }
         bannerTitle.style.color = '#ffd24a';
       }
+      // queue the grand conquest flourish to play once we're back on the campaign map
+      if (firstTake) pendingConquest = { id: activeCastle.id, name: activeCastle.name, goldBefore, goldGained, realm: realm && realm.key !== 'The Holy Land' ? realm.name : realm ? 'Jerusalem' : null };
     }
   } else if (sim.retreated) {
     bannerTitle.textContent = 'RETREAT SOUNDED';
@@ -447,6 +461,8 @@ let progress: Progress = loadProgress();
 let activeCastle: CampaignCastle | null = null;
 let activeRaid: Raid | null = null;
 let map: WorldMap3D | null = null;
+// a freshly-taken castle, queued so its conquest flourish plays when we land on the map
+let pendingConquest: { id: number; name: string; goldBefore: number; goldGained: number; realm: string | null } | null = null;
 
 function show(id: string, on: boolean) { const el = document.getElementById(id); if (el) el.classList.toggle('show', on); }
 
@@ -458,6 +474,9 @@ function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
   return { atk: { hp: b.atk.hp + cb.hp, melee: b.atk.melee + cb.melee, archer: b.atk.archer + cb.archer, fire: b.atk.fire, siege: b.atk.siege + cb.siege, reload: b.atk.reload },
     discount: b.recruitDiscount, trebs: b.extraTrebs + cb.trebs };
 }
+// per-arm veterancy combat multiplier, indexed by UType (= ARMY_KEYS order), folded
+// into the Sim so a long-served arm fields hardier, deadlier men.
+function vetMulArray(): number[] { return ARMY_KEYS.map(k => vetMultiplier(vetRank(progress.vet[k].xp))); }
 function openMap() {
   activeCastle = null; activeRaid = null;
   show('titleScreen', false); show('muster', false); show('map', true); // (the sting overlay, if up, fades itself out over the now-visible map)
@@ -468,6 +487,18 @@ function openMap() {
   map = new WorldMap3D(canvas, castles, progress, enterCastle);
   updateMapHeader();
   resumeMenuMusic(); // the menu theme carries on across the map (until a battle)
+  // a castle just fell? play its conquest flourish over the now-visible map.
+  if (pendingConquest) {
+    const pc = pendingConquest; pendingConquest = null;
+    const goldEl = document.getElementById('mapGoldVal');
+    if (goldEl) goldEl.textContent = String(pc.goldBefore); // start at the pre-spoils sum; the coins tick it up
+    const from = map.screenOf(pc.id); map.flourishConquest(pc.id);
+    playConquest({
+      name: pc.name, realm: pc.realm, from, goldBefore: pc.goldBefore, goldGained: pc.goldGained,
+      goldEl, coffer: document.getElementById('mapGold'),
+      onCoin: () => feedback.coin(), onLand: () => feedback.reward(),
+    });
+  }
 }
 // Map header doubles as the campaign objective: which realm you're in, how much
 // of it has fallen, and a line on what makes its war different.

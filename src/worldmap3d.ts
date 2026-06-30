@@ -21,6 +21,7 @@ export class WorldMap3D {
   private readonly K = 11; private lonMid = 0; private myMid = 0;
   private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private pitch = 40 * Math.PI / 180;
   private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh }[] = [];
+  private flourish?: { grp: THREE.Group; ring: THREE.Mesh; glow: THREE.Sprite; t0: number };
   private labels: THREE.Sprite[] = [];
   private water?: THREE.Mesh; private waterBase?: Float32Array;
   private banners: { mesh: THREE.Mesh; phase: number; base: Float32Array }[] = [];
@@ -650,6 +651,40 @@ export class WorldMap3D {
     p.needsUpdate = true;
   }
 
+  // Page-pixel position of a castle marker (just above its keep), for launching the
+  // conquest coins from the right spot. Null if the castle is off-screen / behind us.
+  screenOf(nodeId: number): { x: number; y: number } | null {
+    const m = this.markers.find(mk => mk.node.id === nodeId); if (!m) return null;
+    this.updateCamera(); this.camera.updateMatrixWorld();
+    const v = m.pos.clone(); v.y += 7; v.project(this.camera);
+    if (v.z > 1) return null; // behind the camera
+    const r = this.canvas.getBoundingClientRect();
+    return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height };
+  }
+  // A burst of gold over a just-taken castle: an expanding ring + a swelling glow that
+  // fade over ~1.4s, animated in frame().
+  flourishConquest(nodeId: number) {
+    const m = this.markers.find(mk => mk.node.id === nodeId); if (!m) return;
+    if (this.flourish) this.scene.remove(this.flourish.grp);
+    const grp = new THREE.Group(); grp.position.copy(m.pos); grp.position.y += 0.6;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(4, 6, 40).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.95, depthWrite: false, depthTest: false }));
+    ring.renderOrder = 3;
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.softSprite('rgba(255,224,130,0.95)'), transparent: true, opacity: 0.9, depthWrite: false, depthTest: false }));
+    glow.scale.set(30, 30, 1); glow.position.y = 4; glow.renderOrder = 3;
+    grp.add(ring); grp.add(glow); this.scene.add(grp);
+    this.flourish = { grp, ring, glow, t0: performance.now() };
+  }
+  private stepFlourish() {
+    const fl = this.flourish; if (!fl) return;
+    const e = (performance.now() - fl.t0) / 1400;
+    if (e >= 1) { this.scene.remove(fl.grp); this.flourish = undefined; return; }
+    const s = 1 + e * 3.2; fl.ring.scale.set(s, 1, s);
+    (fl.ring.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - e);
+    const gs = 30 * (1 + e * 0.7); fl.glow.scale.set(gs, gs, 1);
+    (fl.glow.material as THREE.SpriteMaterial).opacity = 0.9 * (1 - e * e);
+  }
+
   private frame() {
     if (this.cssW() === 0) return; // map hidden behind muster/battle — don't burn cycles
     if (!this.ready) { this.renderer.render(this.scene, this.camera); return; }
@@ -677,6 +712,7 @@ export class WorldMap3D {
       bd.grp.children.forEach((b, k) => { const a = 0.55 * Math.sin(this.pulse * 7 + bd.phase + k * 0.7); (b as any).lw.rotation.z = a; (b as any).rw.rotation.z = a; });
     }
     if (this.march) this.stepMarch();
+    this.stepFlourish();
     this.renderer.render(this.scene, this.camera);
   }
 }
