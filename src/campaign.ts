@@ -112,6 +112,23 @@ export function garrisonStrength(style: CastleStyle, difficulty: number): number
 // Gold awarded for taking a castle — scales with how late/hard it is.
 export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }
 
+// ---- Siege scenery: which biome surrounds the battlefield, and is it on a coast ----
+// Drives the battle map's horizon (hills/mountains/dunes), ground tint and sky so a
+// siege LOOKS like where it is on the campaign map.
+export type Biome = 'britain' | 'france' | 'alpine' | 'med' | 'desert';
+export function biomeFor(region: string): Biome {
+  switch (region) {
+    case 'France': return 'france';
+    case 'The Empire': return 'alpine';     // Rhine/Alps: green valleys under snowy peaks
+    case 'Italy': case 'Byzantium': case 'Anatolia': return 'med';  // dry golden hills, cypress
+    case 'The Holy Land': return 'desert';  // sand, dunes, palms
+    default: return 'britain';              // Wales / England — lush green hills
+  }
+}
+// The genuinely sea-girt strongholds — they get an ocean flank behind the castle.
+const COASTAL_CASTLES = new Set(['Caernarfon', 'Conwy', 'Harlech', 'Dover', 'Rhodes', 'Acre']);
+export function isCoastal(name: string): boolean { return COASTAL_CASTLES.has(name); }
+
 // ---- The Crusade: a country-by-country campaign to Jerusalem ----
 // The realms are crossed west→east in order. Each is its own chapter with its
 // own character of war, and CONQUERING one (taking every stronghold in it)

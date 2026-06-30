@@ -1,8 +1,24 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
+import { Biome } from './campaign';
 import { makeSoldierTexture, makeArrowTexture, SpriteKind } from './sprites';
 import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
+
+// Per-region siege scenery: sky, fog, light, ground and the horizon ring of
+// hills/mountains/dunes — so a battle looks like where it is in the world.
+interface BiomeCfg {
+  bg: string; skyTop: string; skyBot: string; fog: string; fogNear: number; fogFar: number;
+  hemiSky: string; hemiGround: string; sun: string; sunInt: number; amb: string;
+  ground: string; sand: boolean; hill: string; hillTop: string; snow: boolean; hillH: number; dune: boolean; tree: string;
+}
+const BIOMES: Record<Biome, BiomeCfg> = {
+  britain: { bg: '#bcd6ef', skyTop: '#bcd9f0', skyBot: '#ece6d2', fog: '#cfe0df', fogNear: 380, fogFar: 980, hemiSky: '#fff4da', hemiGround: '#6d7b3e', sun: '#ffe1ad', sunInt: 2.0, amb: '#fff0d6', ground: '#9bbb5c', sand: false, hill: '#5d7a3e', hillTop: '#86a35a', snow: false, hillH: 62, dune: false, tree: '#3f5a2a' },
+  france:  { bg: '#c2dbef', skyTop: '#c1dcf0', skyBot: '#eee8d4', fog: '#d6e2dc', fogNear: 400, fogFar: 1000, hemiSky: '#fff6e0', hemiGround: '#76833f', sun: '#ffe6b6', sunInt: 2.0, amb: '#fff2da', ground: '#a4c062', sand: false, hill: '#6c8a44', hillTop: '#90ab5e', snow: false, hillH: 40, dune: false, tree: '#46622e' },
+  alpine:  { bg: '#c4daf0', skyTop: '#bcd6f2', skyBot: '#e6eef2', fog: '#dbe6ee', fogNear: 420, fogFar: 1040, hemiSky: '#f4f8ff', hemiGround: '#5e6f3f', sun: '#ffe9c2', sunInt: 1.95, amb: '#eef2ff', ground: '#8fae58', sand: false, hill: '#586b42', hillTop: '#c9d2cf', snow: true, hillH: 150, dune: false, tree: '#33502a' },
+  med:     { bg: '#cdd9dd', skyTop: '#bcd2dc', skyBot: '#efe6c8', fog: '#e4ddc4', fogNear: 360, fogFar: 960, hemiSky: '#fff3cf', hemiGround: '#8a8048', sun: '#ffe0a0', sunInt: 2.1, amb: '#fff0cc', ground: '#a9a866', sand: false, hill: '#8a7d4a', hillTop: '#a99a60', snow: false, hillH: 58, dune: false, tree: '#5a6a35' },
+  desert:  { bg: '#e0d6bd', skyTop: '#cdd4cf', skyBot: '#f1e4c2', fog: '#e9dcbe', fogNear: 380, fogFar: 980, hemiSky: '#fff0c8', hemiGround: '#b09255', sun: '#ffe2a4', sunInt: 2.15, amb: '#fff0cf', ground: '#cdb27f', sand: true, hill: '#c9b07f', hillTop: '#dcc699', snow: false, hillH: 42, dune: true, tree: '#7a7e40' },
+};
 
 const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
 const SPRITE_W = [2.0, 1.8, 1.8, 3.0];
@@ -104,7 +120,10 @@ export class Renderer {
   private focusT = 0; private focusX = 0; private focusZ = 0; // victory push-in toward the keep
   focusKeep(x: number, z: number) { this.focusT = 1; this.focusX = x; this.focusZ = z; }
 
-  constructor(private sim: Sim, canvasParent: HTMLElement) {
+  private biomeCfg: BiomeCfg = BIOMES.britain;
+  private coastal = false;
+  constructor(private sim: Sim, canvasParent: HTMLElement, env?: { biome: Biome; coastal: boolean }) {
+    this.biomeCfg = BIOMES[env?.biome ?? 'britain']; this.coastal = !!env?.coastal;
     // Mobile is fill-rate + draw-call bound. Render at device-pixel 1 (the HUD
     // is DOM so text stays crisp) and skip MSAA — the chunky art doesn't need it.
     this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -121,14 +140,16 @@ export class Renderer {
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     canvasParent.appendChild(this.gl.domElement);
 
-    this.scene.background = new THREE.Color('#b7d3ec');
-    // warm golden haze on the horizon so the big field reads with depth
-    this.scene.fog = new THREE.Fog('#e7d9bd', 235, 590);
-    this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 1100);
+    const B = this.biomeCfg;
+    this.scene.background = new THREE.Color(B.bg);
+    // light, far biome haze so the horizon hills read with depth without the old
+    // wall of fog swallowing the field
+    this.scene.fog = new THREE.Fog(B.fog, B.fogNear, B.fogFar);
+    this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 1400);
 
     // Warm raking key light (low golden sun) + cool sky fill so shadows stay alive.
-    this.scene.add(new THREE.HemisphereLight('#fff4da', '#6d7b3e', 0.78));
-    const sun = new THREE.DirectionalLight('#ffe1ad', 2.0); sun.position.set(96, 132, 64);
+    this.scene.add(new THREE.HemisphereLight(B.hemiSky, B.hemiGround, 0.78));
+    const sun = new THREE.DirectionalLight(B.sun, B.sunInt); sun.position.set(96, 132, 64);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1536, 1536); // frozen + re-baked rarely, so 1536 stays crisp on the big static structures at a fraction of 2048's memory/bake cost
     const sc = sun.shadow.camera as THREE.OrthographicCamera;
@@ -139,13 +160,14 @@ export class Renderer {
     sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = true; this.sun = sun;
     this.scene.add(sun); this.scene.add(sun.target); // target defaults to the castle centre (origin)
     const fill = new THREE.DirectionalLight('#aac6e4', 0.3); fill.position.set(-70, 55, -45); this.scene.add(fill);
-    this.scene.add(new THREE.AmbientLight('#fff0d6', 0.18));
+    this.scene.add(new THREE.AmbientLight(B.amb, 0.18));
 
     this.sscale = new Float32Array(sim.n);
     for (let i = 0; i < sim.n; i++) this.sscale[i] = 0.9 + jit(i, 1) * 0.28;
 
     this.buildSky();
     this.buildGround();
+    this.buildHorizon();
     this.buildCastle();
     this.buildProps();
     this.buildInterior();
@@ -211,22 +233,24 @@ export class Renderer {
   }
 
   private buildSky() {
-    const geo = new THREE.SphereGeometry(560, 24, 16);
-    const top = new THREE.Color('#bcd9f0'), bot = new THREE.Color('#f4ead2');
+    const geo = new THREE.SphereGeometry(640, 24, 16);
+    const top = new THREE.Color(this.biomeCfg.skyTop), bot = new THREE.Color(this.biomeCfg.skyBot);
     const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 560) * 1.4 + 0.25)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
+    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 640) * 1.4 + 0.25)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
   }
 
   private buildGround() {
     const g = new THREE.PlaneGeometry(760, 760, 80, 80); g.rotateX(-Math.PI / 2);
-    // gentle vertex tint variation on top of the grass texture for large-scale richness
-    const base = new THREE.Color('#9bbb5c'); const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
+    // gentle vertex tint variation on top of the ground texture for large-scale richness
+    const base = new THREE.Color(this.biomeCfg.ground); const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
     for (let i = 0; i < pos.count; i++) { const n = 0.9 + ((Math.sin(pos.getX(i) * 0.07) * Math.cos(pos.getZ(i) * 0.06) + 1) / 2) * 0.2; c.copy(base).multiplyScalar(n); colors.push(c.r, c.g, c.b); }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const grass = this.texGrass.clone(); grass.wrapS = grass.wrapT = THREE.RepeatWrapping; grass.repeat.set(60, 60); grass.needsUpdate = true;
-    const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: grass, vertexColors: true }));
+    // grass for green biomes; the packed-earth texture (warm) reads as sand for desert
+    const groundTex = (this.biomeCfg.sand ? dirtTexture('#cdb583') : this.texGrass).clone();
+    groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping; groundTex.repeat.set(60, 60); groundTex.needsUpdate = true;
+    const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: groundTex, vertexColors: true }));
     ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
 
     // One packed-earth texture drives the road and the castle courtyard so the bare
@@ -245,6 +269,58 @@ export class Renderer {
     const roadGeo = new THREE.PlaneGeometry(17, 156, 1, 10).rotateX(-Math.PI / 2);
     const road = new THREE.Mesh(roadGeo, new THREE.MeshLambertMaterial({ map: roadTex, color: '#9c8158' }));
     road.position.set(LAYOUT.gate.x, 0.012, LAYOUT.D + 72); road.receiveShadow = true; this.scene.add(road);
+  }
+
+  // A ring of procedural hills / mountains / dunes around the playable field, so the
+  // map edge is real scenery instead of a wall of fog. A coastal castle gets an ocean
+  // flank (behind it, to the north) in place of the hills there.
+  private buildHorizon() {
+    const B = this.biomeCfg;
+    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), tmp = new THREE.Color();
+    const geos: THREE.BufferGeometry[] = [];
+    const seaDir = Math.PI;                       // ocean sits to the NORTH, behind the castle
+    const seaHalf = this.coastal ? 1.0 : -1;      // ~57° gap each side of north for the sea
+    const arc = (a: number) => { let d = Math.abs(a - seaDir); if (d > Math.PI) d = 2 * Math.PI - d; return d; };
+    const N = 72;
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI * 2 + (jit(i, 13) - 0.5) * 0.05;
+      if (this.coastal && arc(ang) < seaHalf) continue;
+      const rad = 290 + jit(i, 7) * 165;
+      const x = Math.sin(ang) * rad, z = Math.cos(ang) * rad;
+      const w = (B.dune ? 96 : 74) * (0.7 + jit(i, 3) * 0.9);
+      const h = B.hillH * (0.42 + jit(i, 5) * (B.snow ? 1.25 : 0.85));
+      const dome = new THREE.IcosahedronGeometry(1, B.dune ? 1 : 2);
+      const p = dome.attributes.position as THREE.BufferAttribute;
+      for (let v = 0; v < p.count; v++) {
+        if (p.getY(v) < 0) p.setY(v, p.getY(v) * 0.12);                 // flatten the buried base
+        else if (!B.dune) {                                            // crinkle the upper relief
+          const n = (jit(i * 9 + v, 9) - 0.5) * 0.55;
+          p.setX(v, p.getX(v) * (1 + n)); p.setZ(v, p.getZ(v) * (1 + n)); p.setY(v, p.getY(v) * (1 + (jit(i * 5 + v, 11) - 0.5) * 0.5));
+        }
+      }
+      dome.scale(w, h, w * (0.75 + jit(i, 4) * 0.5));
+      dome.rotateY(jit(i, 6) * 6.283);
+      dome.translate(x, -h * 0.16, z);
+      const pp = dome.attributes.position; const cols: number[] = [];
+      for (let v = 0; v < pp.count; v++) {
+        const frac = Math.max(0, Math.min(1, (pp.getY(v) + h * 0.16) / h));
+        tmp.copy(cBase).lerp(cTop, frac * 0.9);
+        if (B.snow && frac > 0.6) tmp.lerp(snow, Math.min(1, (frac - 0.6) / 0.4));
+        cols.push(tmp.r, tmp.g, tmp.b);
+      }
+      dome.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+      dome.deleteAttribute('uv'); dome.deleteAttribute('normal');
+      geos.push(dome);
+    }
+    if (geos.length) this.scene.add(new THREE.Mesh(mergeGeometries(geos, false)!, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })));
+    if (this.coastal) this.buildOcean();
+  }
+
+  private buildOcean() {
+    const beach = new THREE.Mesh(new THREE.PlaneGeometry(940, 96).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#cdbd92' }));
+    beach.position.set(0, 0.03, -188); beach.receiveShadow = true; this.scene.add(beach);
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(1200, 680).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#2f6188' }));
+    sea.position.set(0, 0.13, -560); this.scene.add(sea);
   }
 
   // shared stone materials (slight tone variation for richness)
@@ -380,7 +456,8 @@ export class Renderer {
     // rejection-sample positions: outside the castle, clear of the south army lane
     const pts: [number, number, number][] = [];
     let guard = 0;
-    while (pts.length < 40 && guard++ < 2000) {
+    const treeN = this.biomeCfg.sand ? 8 : 40; // deserts are near-barren
+    while (pts.length < treeN && guard++ < 2000) {
       const x = WORLD.minX + 8 + Math.random() * (WORLD.maxX - WORLD.minX - 16);
       const z = WORLD.minZ + 8 + Math.random() * (WORLD.maxZ - WORLD.minZ - 16);
       if (Math.abs(x) < W + 16 && Math.abs(z) < D + 16) continue;          // not on the castle
@@ -399,7 +476,7 @@ export class Renderer {
     ], false);
     const canopy = new THREE.InstancedMesh(canopyGeo, new THREE.MeshLambertMaterial({ flatShading: true, color: '#ffffff' }), n);
     trunk.frustumCulled = false; canopy.frustumCulled = false;
-    const col = new THREE.Color();
+    const col = new THREE.Color(), treeBase = new THREE.Color(this.biomeCfg.tree);
     for (let i = 0; i < n; i++) {
       const [x, z, sc] = pts[i];
       this.dummy.position.set(x, 2.2 * sc, z); this.dummy.rotation.set(0, Math.random() * 6, 0); this.dummy.scale.set(sc, sc, sc);
@@ -407,9 +484,10 @@ export class Renderer {
       this.dummy.position.set(x, (4.4 + Math.random() * 0.8) * sc, z); this.dummy.rotation.set(0, Math.random() * 6, 0);
       this.dummy.scale.set(sc * (0.9 + Math.random() * 0.35), sc * (0.95 + Math.random() * 0.45), sc * (0.9 + Math.random() * 0.35));
       this.dummy.updateMatrix(); canopy.setMatrixAt(i, this.dummy.matrix);
-      // warm, varied foliage — a touch of autumn here and there to match the dusk brand
-      const g = 0.78 + Math.random() * 0.4, warm = Math.random() < 0.22;
-      if (warm) col.setRGB(0.46 * g, 0.4 * g, 0.16 * g); else col.setRGB(0.27 * g, 0.5 * g, 0.2 * g);
+      // foliage tinted to the biome (olive in the south, deep conifer in the Alps),
+      // with an occasional warm/autumn crown — rare in the arid south
+      const g = 0.78 + Math.random() * 0.4, warm = Math.random() < (this.biomeCfg.sand ? 0.06 : 0.2);
+      if (warm) col.setRGB(0.46 * g, 0.4 * g, 0.16 * g); else col.copy(treeBase).multiplyScalar(g);
       canopy.setColorAt(i, col);
     }
     this.dummy.rotation.set(0, 0, 0);

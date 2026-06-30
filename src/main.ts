@@ -1,7 +1,7 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome } from './campaign';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
@@ -103,13 +103,15 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
+let currentBiome: Biome = 'britain';
+let currentCoastal = false;
 let currentBuff: AtkBuff = NO_BUFF;
 let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff);
   (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
-  renderer = new Renderer(sim, app);
+  renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal });
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
@@ -460,6 +462,7 @@ function enterCastle(c: CampaignCastle) {
   activeCastle = c; activeRaid = null; currentNoArtillery = false;
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
+  currentBiome = biomeFor(c.region); currentCoastal = isCoastal(c.name);
   // default: bring your whole army
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
   show('map', false);
@@ -480,6 +483,7 @@ function enterRaid(r: Raid) {
   currentNoArtillery = !!r.style.palisade;
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
   currentSeed = (r.seedBase + (Date.now() & 0x3ff)) >>> 0; currentDifficulty = r.difficulty; currentStyle = r.style;
+  currentBiome = 'britain'; currentCoastal = false; // raids are generic holdings — keep the home greenwood
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
   show('map', false);
   ($('musterTitle') as HTMLElement) && (($('musterTitle') as HTMLElement).textContent = `Raid · ${r.name}`);
