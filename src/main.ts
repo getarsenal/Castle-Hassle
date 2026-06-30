@@ -1,7 +1,7 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP } from './campaign';
 import { playConquest } from './conquest';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
@@ -127,9 +127,12 @@ let currentBiome: Biome = 'britain';
 let currentCoastal = false;
 let currentBuff: AtkBuff = NO_BUFF;
 let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
+// per-arm veterancy multipliers to field. null = derive from the live save (normal
+// play); the dev Battle Lab can pin a flat [1,1,1,1,1] to test a green host.
+let currentVet: number[] | null = null;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
-  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, vetMulArray());
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, currentVet ?? vetMulArray());
   (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal });
   bindInput();
@@ -531,7 +534,7 @@ function bringable(key: ArmyKey): number {
   return progress.army[key];
 }
 function enterCastle(c: CampaignCastle) {
-  activeCastle = c; activeRaid = null; currentNoArtillery = false;
+  activeCastle = c; activeRaid = null; currentNoArtillery = false; currentVet = null;
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
   currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
   currentBiome = biomeFor(c.region); currentCoastal = isCoastal(c.name);
@@ -550,7 +553,7 @@ function enterCastle(c: CampaignCastle) {
 // pays its gold reward (repeatable) instead of unlocking the next siege. A fresh
 // seed each time so the fort varies from raid to raid.
 function enterRaid(r: Raid) {
-  activeRaid = r; activeCastle = null;
+  activeRaid = r; activeCastle = null; currentVet = null;
   // a palisade-town raid is an infantry affair — no siege train
   currentNoArtillery = !!r.style.palisade;
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
@@ -741,8 +744,12 @@ function devDiagText(): string {
 function startCustomBattle(cfg: DevConfig) {
   comp.heavy = cfg.army.heavy; comp.light = cfg.army.light; comp.archer = cfg.army.archer;
   comp.cavalry = cfg.army.cavalry; comp.siege = cfg.army.siege;
-  currentSeed = (cfg.seed >>> 0) || 1; currentDifficulty = cfg.difficulty; currentStyle = cfg.style; currentBuff = NO_BUFF;
-  currentDiscount = 1; currentExtraTrebs = 0; currentNoArtillery = false;
+  currentSeed = (cfg.seed >>> 0) || 1; currentDifficulty = cfg.difficulty; currentStyle = cfg.style;
+  currentNoArtillery = false;
+  // optionally fold in the player's real progression so a dev battle reflects an
+  // upgraded, veteran host; otherwise field a clean, un-buffed, green army.
+  if (cfg.progression) { const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs; currentVet = null; }
+  else { currentBuff = NO_BUFF; currentDiscount = 1; currentExtraTrebs = 0; currentVet = [1, 1, 1, 1, 1]; }
   activeCastle = null; activeRaid = null;
   stopMenuMusic();
   for (const id of ['intro', 'titleScreen', 'map', 'muster', 'banner']) show(id, false);
@@ -750,7 +757,55 @@ function startCustomBattle(cfg: DevConfig) {
   newGame();
   if (cfg.autoBegin) { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); }
 }
-const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText });
+// ---- dev campaign god-tools (delegated to from the dev panel) ----
+const ARM_NAMES = ARMY_KEYS.map((_, i) => TYPE_NAME[i]);
+const onMapScreen = () => !!document.getElementById('map')?.classList.contains('show');
+// reflect a save change: refresh the gold chip, and if we're on the map, rebuild it
+// so marker unlock/complete states update (openMap re-instances WorldMap3D).
+function devRefreshMap() { refreshGoldLabel(); if (onMapScreen()) openMap(); else updateMapHeader(); }
+// play the conquest flourish over the current objective as a preview (grants a token
+// 500 gold so the coffer tick is real and the save stays consistent).
+function devPreviewConquest() {
+  if (!onMapScreen()) openMap();
+  if (!map) return;
+  const id = Math.min(progress.unlocked, castles.length - 1);
+  const before = progress.gold, gain = 500; progress.gold += gain; saveProgress(progress);
+  const goldEl = document.getElementById('mapGoldVal'); if (goldEl) goldEl.textContent = String(before);
+  map.flourishConquest(id);
+  playConquest({ name: castles[id].name, realm: null, from: map.screenOf(id), goldBefore: before, goldGained: gain,
+    goldEl, coffer: document.getElementById('mapGold'), onCoin: () => feedback.coin(), onLand: () => feedback.reward() });
+}
+const devCampaign = {
+  state: () => {
+    const cc = currentCountry(progress, castles);
+    return {
+      gold: progress.gold, unlocked: progress.unlocked, completed: progress.completed.length,
+      totalCastles: castles.length, realm: cc.name,
+      vet: ARMY_KEYS.map((k, i) => { const r = vetRank(progress.vet[k].xp); return { key: k, name: ARM_NAMES[i], rank: r, title: RANK_TITLES[r], kills: progress.vet[k].kills }; }),
+      castles: castles.map(c => ({ id: c.id, name: c.name, done: progress.completed.includes(c.id), locked: c.id > progress.unlocked })),
+    };
+  },
+  setGold: (g: number) => { progress.gold = Math.max(0, Math.floor(g)); saveProgress(progress); refreshGoldLabel(); },
+  addGold: (d: number) => { progress.gold = Math.max(0, progress.gold + d); saveProgress(progress); refreshGoldLabel(); },
+  unlockAll: () => { progress.unlocked = castles.length - 1; saveProgress(progress); devRefreshMap(); },
+  completeRealm: () => {
+    const cc = currentCountry(progress, castles);
+    for (const id of cc.ids) if (!progress.completed.includes(id)) progress.completed.push(id);
+    progress.unlocked = Math.min(castles.length - 1, Math.max(progress.unlocked, (cc.ids.length ? Math.max(...cc.ids) : 0) + 1));
+    saveProgress(progress); devRefreshMap();
+  },
+  resetProgress: () => {
+    progress.gold = STARTING_GOLD; progress.completed = []; progress.unlocked = 0;
+    progress.upg = {}; progress.army = { ...STARTING_ARMY }; progress.vet = freshVet();
+    saveProgress(progress); devRefreshMap();
+  },
+  bumpVet: (key: string, dir: number) => { const v = progress.vet[key as ArmyKey]; const r = Math.max(0, Math.min(RANK_XP.length - 1, vetRank(v.xp) + dir)); v.xp = RANK_XP[r]; saveProgress(progress); },
+  maxVet: () => { for (const k of ARMY_KEYS) progress.vet[k].xp = RANK_XP[RANK_XP.length - 1]; saveProgress(progress); },
+  resetVet: () => { progress.vet = freshVet(); saveProgress(progress); },
+  enterCastle: (id: number) => enterCastle(castles[Math.max(0, Math.min(castles.length - 1, id))]),
+  previewConquest: () => devPreviewConquest(),
+};
+const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {
   const now = performance.now();
@@ -758,6 +813,8 @@ perfEl?.addEventListener('click', () => {
   perfTapT = now;
   if (++perfTaps >= 5) { perfTaps = 0; devPanel.open(); }
 });
+// the campaign map's discreet dev affordance: a ⚙ chip that opens the panel directly
+document.getElementById('devMapBtn')?.addEventListener('click', () => devPanel.open());
 let perfAcc = 0, perfFrames = 0, adaptCooldown = 0;
 
 const SIM_DT = 1 / 30; let acc = 0, last = performance.now(), ended = false;

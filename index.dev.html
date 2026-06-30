@@ -369,6 +369,14 @@
     #map.show #mapGold { display: flex; }
     #mapGold .coin { width: 22px; height: 22px; display: block; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4)); }
     #mapGold .coin svg { width: 100%; height: 100%; display: block; }
+    /* discreet dev affordance — only on the map, tucked under the gold chip */
+    #devMapBtn { position: absolute; top: calc(var(--safe-top) + 54px); left: 14px; z-index: 6; display: none;
+      width: 34px; height: 34px; align-items: center; justify-content: center; padding: 0; cursor: pointer;
+      border-radius: 9px; border: 1px solid rgba(120,150,190,0.34); color: rgba(180,200,225,0.62);
+      background: linear-gradient(180deg, rgba(34,42,56,0.78), rgba(16,21,30,0.82)); box-shadow: var(--sh-1); }
+    #map.show #devMapBtn { display: flex; }
+    #devMapBtn svg { width: 19px; height: 19px; display: block; }
+    #devMapBtn:active { transform: translateY(1px); }
     #mapHeader { position: absolute; top: calc(var(--safe-top) + 12px); left: 50%; transform: translateX(-50%);
       background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.94)); border: 1px solid rgba(255,225,160,0.3);
       color: var(--gold-soft); font: 700 14px 'Cinzel', Georgia, serif;
@@ -651,6 +659,7 @@
       <span id="mapGoldVal">0</span>
     </div>
     <div id="mapHeader">CHOOSE YOUR NEXT SIEGE</div>
+    <button id="devMapBtn" aria-label="Developer menu" title="Dev menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <nav id="mapNav">
       <button id="musterMapBtn" class="mapNavBtn m">
         <span class="nIc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/><path d="M9.5 17.5 21 6V3h-3L6.5 14.5"/><path d="m11 19-6-6"/><path d="m8 16-4 4"/><path d="m5 21-2-2"/></svg></span>

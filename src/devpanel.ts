@@ -1,8 +1,13 @@
-// Hidden developer panel: secret-tap the perf bar 5x to open. Gives a live
-// telemetry readout (fps, sim/gfx ms, draw calls, heap, unit counts, …) and a
-// full battle builder so any scenario can be staged on-device — army make-up,
-// difficulty, seed, and every castle-style knob. Pure DOM, no game imports
-// beyond the CastleStyle type, so it stays decoupled from the sim/renderer.
+// Hidden developer panel. Reached from the campaign map (the ⚙ chip) or by
+// secret-tapping the in-battle perf bar 5×. Three decks:
+//   • Live Telemetry  — fps, sim/gfx ms, draw calls, heap, unit/assault counts.
+//   • Campaign god-tools — gold, castle unlocks, per-arm veterancy ranks, save
+//     reset, jump-to-castle, and a conquest-flourish preview.
+//   • Battle Lab      — stage any scenario on-device (army, difficulty, seed,
+//     every castle-style knob) and optionally fold in your real campaign
+//     progression (War Council buffs + veterancy).
+// Pure DOM; all stateful actions are delegated to main.ts through hooks, so the
+// panel stays decoupled from the sim/renderer/campaign save.
 import type { CastleStyle } from './sim';
 
 export interface DevConfig {
@@ -11,13 +16,40 @@ export interface DevConfig {
   seed: number;
   style: CastleStyle;
   autoBegin: boolean;
+  progression: boolean; // apply the player's real War Council buffs + arm veterancy
 }
+
+// A snapshot of campaign state the panel renders, and the levers it can pull.
+export interface DevCampaignState {
+  gold: number;
+  unlocked: number;
+  completed: number;
+  totalCastles: number;
+  realm: string;
+  vet: { key: string; name: string; rank: number; title: string; kills: number }[];
+  castles: { id: number; name: string; done: boolean; locked: boolean }[];
+}
+export interface DevCampaign {
+  state: () => DevCampaignState;
+  setGold: (g: number) => void;
+  addGold: (d: number) => void;
+  unlockAll: () => void;
+  completeRealm: () => void;
+  resetProgress: () => void;
+  bumpVet: (key: string, dir: number) => void;
+  maxVet: () => void;
+  resetVet: () => void;
+  enterCastle: (id: number) => void;
+  previewConquest: () => void;
+}
+
 export interface DevHooks {
   // returns ordered [label, value] telemetry rows, refreshed ~5x/sec while open
   getTelemetry: () => [string, string][];
   launch: (cfg: DevConfig) => void;
   // full diagnostic text for the Copy/Export button (shared with the dev)
   exportText: () => string;
+  campaign?: DevCampaign; // optional — present when the campaign save is available
 }
 
 const css = `
@@ -32,6 +64,7 @@ const css = `
   padding:8px 16px;font:700 14px 'Cinzel',serif;cursor:pointer}
 #devPanel .dpSec{border:1px solid #232c3a;border-radius:10px;padding:11px 12px;margin-bottom:12px;background:#0e131c}
 #devPanel .dpSec h3{margin:0 0 8px;font:700 12px ui-monospace,monospace;letter-spacing:1.5px;color:#6f8aa8;text-transform:uppercase}
+#devPanel .dpSec h3.mt{margin-top:13px}
 #devTel{display:grid;grid-template-columns:1fr 1fr;gap:3px 16px}
 #devTel .k{color:#7f93ab}#devTel .v{color:#bfe9c8;text-align:right;font-weight:700}
 #devTel .v.warn{color:#ffd24a}#devTel .v.bad{color:#ff7a5c}
@@ -40,6 +73,7 @@ const css = `
 #devPanel .row input[type=number]{width:84px}
 #devPanel input[type=number],#devPanel select{background:#070a0f;color:#e6edf5;border:1px solid #2c3647;
   border-radius:7px;padding:8px 9px;font:600 14px ui-monospace,monospace}
+#devPanel select{flex:1;min-width:0}
 #devPanel input[type=range]{flex:1;accent-color:#7fe0a0}
 #devPanel .rngv{flex:0 0 52px;text-align:right;color:#bfe9c8;font-weight:700}
 #devPanel .chips{display:flex;flex-wrap:wrap;gap:7px}
@@ -48,11 +82,22 @@ const css = `
 #devPanel .chip.on{border-color:#7fe0a0;background:#13301f;color:#9ff0bb}
 #devPanel .presets{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:4px}
 #devPanel .preset{border:1px solid #3a4456;background:#161c27;color:#cdd6e2;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700}
+#devPanel .preset.danger{border-color:#7a3030;color:#ffb0a0;background:#241314}
+#devPanel .preset.gold{border-color:#7a5e22;color:#ffd98a;background:#241d0e}
 #devPanel .dpGo{width:100%;margin-top:6px;border:none;border-radius:11px;padding:15px;cursor:pointer;
   font:800 17px 'Cinzel',serif;color:#06210f;background:linear-gradient(180deg,#9ff0a8,#3fbf63);box-shadow:0 4px 0 #2a8044}
 #devPanel .dpGo:active{transform:translateY(2px);box-shadow:0 2px 0 #2a8044}
 #devPanel .dice{border:1px solid #2c3647;background:#0a0e15;color:#bfe9c8;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:700}
-#devPanel .hint{color:#5d6e84;font-size:11px;margin-top:3px}`;
+#devPanel .hint{color:#5d6e84;font-size:11px;margin-top:3px}
+#devPanel .dpInfo{color:#9fb0c6;font-size:12px;margin:4px 0 9px;line-height:1.5}
+#devPanel .dpInfo b{color:#bfe9c8}
+#devPanel .dpBtns{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:6px}
+#devPanel .vetRow{display:flex;align-items:center;gap:9px;margin:6px 0;padding:5px 8px;border:1px solid #1d2530;border-radius:8px;background:#0a0e15}
+#devPanel .vetRow .vn{flex:0 0 84px;color:#cdd6e2;font-weight:700}
+#devPanel .vetRow .vt{flex:1;color:#ffd98a;font-size:12px}
+#devPanel .vetRow .vt .st{color:#c8901f;letter-spacing:1px;margin-right:3px}
+#devPanel .vetRow .vk{flex:0 0 auto;color:#7f93ab;font-size:11px}
+#devPanel .vbtn{border:1px solid #2c3647;background:#11161f;color:#9ff0bb;border-radius:6px;width:30px;height:30px;cursor:pointer;font-weight:800;font-size:16px;line-height:1}`;
 
 const PRESETS: { name: string; army: DevConfig['army']; diff: number }[] = [
   { name: 'Standard 2k', army: { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 }, diff: 1.6 },
@@ -74,6 +119,7 @@ export function initDevPanel(hooks: DevHooks) {
   el.innerHTML = `
     <div class="dpHead"><h2>DEV — Battle Lab</h2><div style="display:flex;gap:8px"><button class="dpClose" id="dpCopy" style="border-color:#7fe0a0;color:#9ff0bb">Copy</button><button class="dpClose" id="dpClose">Close</button></div></div>
     <div class="dpSec"><h3>Live Telemetry <span id="dpCopied" style="color:#7fe0a0;font-weight:400;font-size:11px"></span></h3><div id="devTel"></div></div>
+    <div class="dpSec" id="dpCampaign" style="display:none"></div>
     <div class="dpSec"><h3>Presets</h3><div class="presets" id="dpPresets">${PRESETS.map((p, i) => `<div class="preset" data-i="${i}">${p.name}</div>`).join('')}</div></div>
     <div class="dpSec"><h3>Army</h3>
       ${arm('heavy', 'Heavy Inf', 1500)}${arm('light', 'Light Inf', 1200)}${arm('archer', 'Archers', 1000)}
@@ -95,7 +141,10 @@ export function initDevPanel(hooks: DevHooks) {
       </div>
     </div>
     <div class="dpSec"><h3>Launch</h3>
-      <div class="chips"><div class="chip on" id="dp_autoBegin" data-on="true">Auto-begin assault</div></div>
+      <div class="chips">
+        ${chip('autoBegin', 'Auto-begin assault', true)}
+        ${chip('progression', 'Use my buffs + veterancy', false)}
+      </div>
       <button class="dpGo" id="dpLaunch">Launch Battle</button>
       <div class="hint">Builds a fresh Sim with these exact variables and drops you into it.</div>
     </div>`;
@@ -112,7 +161,7 @@ export function initDevPanel(hooks: DevHooks) {
     inp.addEventListener('input', () => { ($('dpv_' + id) as HTMLElement).textContent = inp.value; });
   }
   // chip toggles
-  for (const id of ['concentric', 'round', 'strongKeep', 'palisade', 'autoBegin'])
+  for (const id of ['concentric', 'round', 'strongKeep', 'palisade', 'autoBegin', 'progression'])
     $('dp_' + id).addEventListener('click', () => setChip(id, !chipOn(id)));
   $('dpDice').addEventListener('click', () => { ($('dp_seed') as HTMLInputElement).value = String((Math.random() * 999999) | 0); });
   // presets
@@ -144,10 +193,44 @@ export function initDevPanel(hooks: DevHooks) {
         concentric: chipOn('concentric'), round: chipOn('round'), strongKeep: chipOn('strongKeep'),
         palisade: chipOn('palisade'), shape: ($('dp_shape') as HTMLSelectElement).value as CastleStyle['shape'],
       },
-      autoBegin: chipOn('autoBegin'),
+      autoBegin: chipOn('autoBegin'), progression: chipOn('progression'),
     });
     close();
   });
+
+  // ---- Campaign god-tools (rendered only when the save is reachable) ----
+  const renderCampaign = () => {
+    const cp = hooks.campaign; if (!cp) return;
+    const s = cp.state();
+    const sec = $('dpCampaign'); sec.style.display = 'block';
+    sec.innerHTML = `<h3>Campaign — God Tools</h3>
+      <div class="row"><label>Gold</label><input type="number" id="dp_gold" value="${s.gold}" min="0" max="9999999">
+        <button class="dice" id="dpGoldSet">set</button><button class="dice" id="dpGold500">+500</button><button class="dice" id="dpGold2k">+2k</button></div>
+      <div class="dpInfo">Realm: <b>${s.realm}</b> · <b>${s.completed}/${s.totalCastles}</b> castles taken · next unlocked <b>#${s.unlocked}</b></div>
+      <div class="dpBtns">
+        <button class="preset gold" id="dpUnlockAll">Unlock all</button>
+        <button class="preset gold" id="dpCompleteRealm">Complete realm</button>
+        <button class="preset gold" id="dpPreviewConq">Preview conquest</button>
+        <button class="preset danger" id="dpResetProg">Reset save</button>
+      </div>
+      <div class="row"><label>Jump to siege</label><select id="dp_jump">${s.castles.map(c => `<option value="${c.id}">${c.done ? '✓ ' : c.locked ? '· ' : '» '}${c.name}</option>`).join('')}</select><button class="dice" id="dpJumpGo">go</button></div>
+      <h3 class="mt">Veterancy</h3>
+      <div class="dpBtns"><button class="preset gold" id="dpMaxVet">Max all</button><button class="preset danger" id="dpResetVet">Reset all</button></div>
+      ${s.vet.map(v => `<div class="vetRow"><span class="vn">${v.name}</span><span class="vt">${v.rank > 0 ? `<span class="st">${'★'.repeat(v.rank)}</span>` : ''}${v.title}</span><span class="vk">${v.kills.toLocaleString()} kills</span><button class="vbtn" data-k="${v.key}" data-d="-1">−</button><button class="vbtn" data-k="${v.key}" data-d="1">+</button></div>`).join('')}`;
+
+    const gold = () => parseInt(($('dp_gold') as HTMLInputElement).value, 10) || 0;
+    $('dpGoldSet').addEventListener('click', () => { cp.setGold(gold()); renderCampaign(); });
+    $('dpGold500').addEventListener('click', () => { cp.addGold(500); renderCampaign(); });
+    $('dpGold2k').addEventListener('click', () => { cp.addGold(2000); renderCampaign(); });
+    $('dpUnlockAll').addEventListener('click', () => { cp.unlockAll(); renderCampaign(); });
+    $('dpCompleteRealm').addEventListener('click', () => { cp.completeRealm(); renderCampaign(); });
+    $('dpResetProg').addEventListener('click', () => { if (confirm('Reset all campaign progress?')) { cp.resetProgress(); renderCampaign(); } });
+    $('dpPreviewConq').addEventListener('click', () => { close(); cp.previewConquest(); });
+    $('dpJumpGo').addEventListener('click', () => { close(); cp.enterCastle(parseInt(($('dp_jump') as HTMLSelectElement).value, 10) || 0); });
+    $('dpMaxVet').addEventListener('click', () => { cp.maxVet(); renderCampaign(); });
+    $('dpResetVet').addEventListener('click', () => { cp.resetVet(); renderCampaign(); });
+    sec.querySelectorAll<HTMLButtonElement>('.vbtn').forEach(b => b.addEventListener('click', () => { cp.bumpVet(b.dataset.k!, parseInt(b.dataset.d!, 10)); renderCampaign(); }));
+  };
 
   const tel = $('devTel');
   let raf = 0;
@@ -161,6 +244,6 @@ export function initDevPanel(hooks: DevHooks) {
     raf = requestAnimationFrame(tick);
   };
 
-  const open = () => { el.classList.add('show'); if (!raf) tick(); };
+  const open = () => { el.classList.add('show'); if (hooks.campaign) renderCampaign(); if (!raf) tick(); };
   return { open, close, toggle: () => (el.classList.contains('show') ? close() : open()) };
 }
