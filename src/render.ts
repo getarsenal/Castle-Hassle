@@ -122,7 +122,6 @@ export class Renderer {
   // shared procedural textures (one GPU upload each; materials clone but keep the map)
   private texStone = stoneTexture();
   private texRoof = roofTexture();
-  private texGrass = grassTexture();
   private texPlaster = plasterTexture();
 
   camTarget = new THREE.Vector3(0, 0, 34);
@@ -255,14 +254,24 @@ export class Renderer {
   }
 
   private buildGround() {
-    const g = new THREE.PlaneGeometry(760, 760, 80, 80); g.rotateX(-Math.PI / 2);
-    // gentle vertex tint variation on top of the ground texture for large-scale richness
-    const base = new THREE.Color(this.biomeCfg.ground); const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
-    for (let i = 0; i < pos.count; i++) { const n = 0.9 + ((Math.sin(pos.getX(i) * 0.07) * Math.cos(pos.getZ(i) * 0.06) + 1) / 2) * 0.2; c.copy(base).multiplyScalar(n); colors.push(c.r, c.g, c.b); }
+    const g = new THREE.PlaneGeometry(760, 760, 96, 96); g.rotateX(-Math.PI / 2);
+    // NEUTRAL large-scale brightness modulation — soft sunlit/shaded meadow patches that
+    // hide the texture tiling, with a faint warm cast. (NOT a second green multiply; that
+    // double-darkening is what made the grass read dim and fake.)
+    const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      let n = 1.02 + 0.1 * (Math.sin(x * 0.016) * Math.cos(z * 0.019)) + 0.05 * (Math.sin(x * 0.051 + 1.3) * Math.cos(z * 0.044));
+      n = Math.max(0.88, Math.min(1.2, n));
+      c.setRGB(n, n * 0.995, n * 0.95); // warm sunlight cast
+      colors.push(c.r, c.g, c.b);
+    }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    // grass for green biomes; the packed-earth texture (warm) reads as sand for desert
-    const groundTex = (this.biomeCfg.sand ? dirtTexture('#cdb583') : this.texGrass).clone();
-    groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping; groundTex.repeat.set(60, 60); groundTex.needsUpdate = true;
+    // biome grass, brightened & freshened for a summer-day feel; larger tiles so the
+    // repeat reads as meadow rather than a checkerboard
+    const warmGround = new THREE.Color(this.biomeCfg.ground).multiplyScalar(1.34).lerp(new THREE.Color('#cfe39a'), this.biomeCfg.sand ? 0 : 0.18);
+    const groundTex = this.biomeCfg.sand ? dirtTexture('#d3ba88') : grassTexture('#' + warmGround.getHexString());
+    groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping; groundTex.repeat.set(40, 40); groundTex.needsUpdate = true;
     const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: groundTex, vertexColors: true }));
     ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
 
@@ -278,10 +287,22 @@ export class Renderer {
     apron.position.set(0, 0.005, 0); apron.receiveShadow = true; this.scene.add(apron);
     // a worn approach road from the attacker camp up to the gate — textured ruts, and a
     // soft feathered head/edge (vertex alpha-ish via a darker centre) instead of a hard slab.
-    const roadTex = earth.clone(); roadTex.repeat.set(2.2, 16); roadTex.needsUpdate = true;
-    const roadGeo = new THREE.PlaneGeometry(17, 156, 1, 10).rotateX(-Math.PI / 2);
-    const road = new THREE.Mesh(roadGeo, new THREE.MeshLambertMaterial({ map: roadTex, color: '#9c8158' }));
-    road.position.set(LAYOUT.gate.x, 0.012, LAYOUT.D + 72); road.receiveShadow = true; this.scene.add(road);
+    const roadTex = earth.clone(); roadTex.repeat.set(2.0, 18); roadTex.needsUpdate = true;
+    const RL = 156, roadGeo = new THREE.PlaneGeometry(1, RL, 2, 28).rotateX(-Math.PI / 2);
+    // sculpt a worn dirt TRAIL: gently tapering, wavy edges and feathered ends that fade
+    // into the grass via per-vertex alpha — no rigid rectangular slab
+    const rp = roadGeo.attributes.position, rcol: number[] = []; const dirt = new THREE.Color('#9c8158');
+    for (let i = 0; i < rp.count; i++) {
+      const zL = rp.getZ(i) / RL + 0.5;                 // 0..1 along the path
+      const edge = Math.sign(rp.getX(i));               // -1 / 0 / +1 (3 columns)
+      const halfW = 8.4 - 1.4 * zL + Math.sin(zL * 7 + 0.6) * 1.2;
+      rp.setX(i, edge * halfW + Math.sin(zL * 13 + (edge > 0 ? 0 : 2.1)) * 1.0);
+      const a = (0.34 + 0.62 * (1 - Math.abs(edge))) * Math.min(1, Math.min(zL, 1 - zL) * 5); // fade sides + both ends
+      rcol.push(dirt.r, dirt.g, dirt.b, a);
+    }
+    roadGeo.setAttribute('color', new THREE.Float32BufferAttribute(rcol, 4));
+    const road = new THREE.Mesh(roadGeo, new THREE.MeshLambertMaterial({ map: roadTex, vertexColors: true, transparent: true, depthWrite: false }));
+    road.position.set(LAYOUT.gate.x, 0.012, LAYOUT.D + 72); road.renderOrder = 1; this.scene.add(road);
   }
 
   // A smooth, continuous ring of rolling hills / mountains / dunes around the field

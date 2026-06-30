@@ -86,25 +86,32 @@ export function roofTexture(base = '#b9532d'): THREE.CanvasTexture {
 }
 
 // ---- grass: speckled green with faint blades (tileable) ----
-export function grassTexture(base = '#86ab4d'): THREE.CanvasTexture {
+export function grassTexture(base = '#9ec25c'): THREE.CanvasTexture {
   const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
   const ctx = c.getContext('2d')!;
   const bc = new THREE.Color(base);
   ctx.fillStyle = `#${bc.getHexString()}`; ctx.fillRect(0, 0, S, S);
-  // mottled patches
-  for (let i = 0; i < 900; i++) {
-    const x = Math.random() * S, y = Math.random() * S, rad = 4 + Math.random() * 16;
-    const v = 0.78 + Math.random() * 0.4;
-    ctx.fillStyle = `rgba(${Math.round(bc.r * 255 * v)},${Math.round(bc.g * 255 * v)},${Math.round(bc.b * 255 * v * 0.95)},0.5)`;
+  // soft, low-contrast meadow mottling — big gentle clumps with a warm sun-bias, so
+  // it reads like a summer lawn rather than a noisy dark carpet
+  for (let i = 0; i < 620; i++) {
+    const x = Math.random() * S, y = Math.random() * S, rad = 10 + Math.random() * 34;
+    const v = 0.92 + Math.random() * 0.2, warm = Math.random() > 0.5;
+    const r = bc.r * 255 * v * (warm ? 1.05 : 0.98), g = bc.g * 255 * v, b = bc.b * 255 * v * (warm ? 0.88 : 1.0);
+    ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},0.3)`;
     ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
   }
-  // tiny blades
+  // fine blades — mostly light/mid, only a few dark, so the carpet stays bright
   ctx.lineWidth = 1;
-  for (let i = 0; i < 1400; i++) {
-    const x = Math.random() * S, y = Math.random() * S, h = 2 + Math.random() * 4;
-    const dark = Math.random() > 0.5;
-    ctx.strokeStyle = dark ? 'rgba(40,70,25,0.5)' : 'rgba(190,220,150,0.5)';
+  for (let i = 0; i < 1000; i++) {
+    const x = Math.random() * S, y = Math.random() * S, h = 2 + Math.random() * 4, t = Math.random();
+    ctx.strokeStyle = t < 0.16 ? 'rgba(78,108,46,0.34)' : t < 0.68 ? 'rgba(156,190,100,0.4)' : 'rgba(210,232,158,0.46)';
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random() - 0.5) * 2, y - h); ctx.stroke();
+  }
+  // a sprinkle of tiny wildflowers — white daisies & soft-yellow buttercups (cozy)
+  for (let i = 0; i < 24; i++) {
+    const x = Math.random() * S, y = Math.random() * S, yellow = Math.random() > 0.5;
+    ctx.fillStyle = yellow ? 'rgba(246,222,118,0.85)' : 'rgba(240,242,230,0.85)';
+    ctx.beginPath(); ctx.arc(x, y, 1.0 + Math.random() * 0.8, 0, 7); ctx.fill();
   }
   return tex(c);
 }
