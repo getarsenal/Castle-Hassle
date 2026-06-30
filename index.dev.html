@@ -188,8 +188,11 @@
       justify-content: safe center; padding: 2px 12px; scrollbar-width: none;
     }
     #cards::-webkit-scrollbar { display: none; }
+    .card .cardTop { display: flex; align-items: center; gap: 7px; }
+    .card .cardIc { width: 34px; height: 34px; border-radius: 8px; flex: 0 0 auto; display: block; border: 1px solid rgba(255,225,160,0.3); box-shadow: 0 1px 3px rgba(0,0,0,0.45); }
+    .card .cardTxt { min-width: 0; text-align: left; }
     .card {
-      flex: 0 0 auto; min-width: 76px; padding: 8px 10px 9px; border-radius: var(--r-md);
+      flex: 0 0 auto; min-width: 96px; padding: 8px 10px 9px; border-radius: var(--r-md);
       background: linear-gradient(180deg, rgba(92,67,37,0.95), rgba(38,27,14,0.95)); border: 1px solid rgba(255,225,160,0.24); border-top: 2px solid rgba(255,225,160,0.3);
       box-shadow: 0 4px 0 rgba(0,0,0,0.36), 0 7px 14px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,235,190,0.16);
       text-align: center; cursor: pointer; transition: transform .08s, border-color .08s, box-shadow .08s;

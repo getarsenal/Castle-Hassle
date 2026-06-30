@@ -138,13 +138,15 @@ function newGame() {
 }
 
 // ---------------- Cards (one per arm/division; commands fan out to its companies) ----------------
+const UTYPE_KEY = ['heavy', 'light', 'archer', 'cavalry', 'siege'] as const; // UType → ArmyKey for the card art
 function buildCards() {
   cardsEl.innerHTML = '';
   for (const div of sim.playerDivs()) {
     const a = sim.divAgg(div);
     const card = document.createElement('div'); card.className = 'card'; card.dataset.div = String(div);
     const ranged = a.type === UType.Archer || a.type === UType.Siege;
-    card.innerHTML = `<div class="name">${TYPE_NAME[a.type]}</div><div class="count">${a.alive}</div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
+    const art = UNIT_ART[UTYPE_KEY[a.type]];
+    card.innerHTML = `<div class="cardTop"><img class="cardIc" src="${art}" alt=""><div class="cardTxt"><div class="name">${TYPE_NAME[a.type]}</div><div class="count">${a.alive}</div></div></div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
     card.addEventListener('click', () => { selected = selected === div ? -1 : div; attackArm = -1; refreshCards(); updateHint(); updateTools(); });
     cardsEl.appendChild(card);
   }

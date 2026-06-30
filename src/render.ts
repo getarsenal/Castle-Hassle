@@ -15,7 +15,7 @@ interface BiomeCfg {
 const BIOMES: Record<Biome, BiomeCfg> = {
   britain: { bg: '#bcd6ef', skyTop: '#bcd9f0', skyBot: '#ece6d2', fog: '#cfe0df', fogNear: 380, fogFar: 980, hemiSky: '#fff4da', hemiGround: '#6d7b3e', sun: '#ffe1ad', sunInt: 2.0, amb: '#fff0d6', ground: '#9bbb5c', sand: false, hill: '#5d7a3e', hillTop: '#86a35a', snow: false, hillH: 62, dune: false, tree: '#3f5a2a' },
   france:  { bg: '#c2dbef', skyTop: '#c1dcf0', skyBot: '#eee8d4', fog: '#d6e2dc', fogNear: 400, fogFar: 1000, hemiSky: '#fff6e0', hemiGround: '#76833f', sun: '#ffe6b6', sunInt: 2.0, amb: '#fff2da', ground: '#a4c062', sand: false, hill: '#6c8a44', hillTop: '#90ab5e', snow: false, hillH: 40, dune: false, tree: '#46622e' },
-  alpine:  { bg: '#c4daf0', skyTop: '#bcd6f2', skyBot: '#e6eef2', fog: '#dbe6ee', fogNear: 420, fogFar: 1040, hemiSky: '#f4f8ff', hemiGround: '#5e6f3f', sun: '#ffe9c2', sunInt: 1.95, amb: '#eef2ff', ground: '#8fae58', sand: false, hill: '#586b42', hillTop: '#c9d2cf', snow: true, hillH: 150, dune: false, tree: '#33502a' },
+  alpine:  { bg: '#c4daf0', skyTop: '#bcd6f2', skyBot: '#e6eef2', fog: '#dbe6ee', fogNear: 420, fogFar: 1040, hemiSky: '#f4f8ff', hemiGround: '#5e6f3f', sun: '#ffe9c2', sunInt: 1.95, amb: '#eef2ff', ground: '#8fae58', sand: false, hill: '#586b42', hillTop: '#c9d2cf', snow: true, hillH: 205, dune: false, tree: '#33502a' },
   med:     { bg: '#cdd9dd', skyTop: '#bcd2dc', skyBot: '#efe6c8', fog: '#e4ddc4', fogNear: 360, fogFar: 960, hemiSky: '#fff3cf', hemiGround: '#8a8048', sun: '#ffe0a0', sunInt: 2.1, amb: '#fff0cc', ground: '#a9a866', sand: false, hill: '#8a7d4a', hillTop: '#a99a60', snow: false, hillH: 58, dune: false, tree: '#5a6a35' },
   desert:  { bg: '#e0d6bd', skyTop: '#cdd4cf', skyBot: '#f1e4c2', fog: '#e9dcbe', fogNear: 380, fogFar: 980, hemiSky: '#fff0c8', hemiGround: '#b09255', sun: '#ffe2a4', sunInt: 2.15, amb: '#fff0cf', ground: '#cdb27f', sand: true, hill: '#c9b07f', hillTop: '#dcc699', snow: false, hillH: 42, dune: true, tree: '#7a7e40' },
 };
@@ -271,48 +271,52 @@ export class Renderer {
     road.position.set(LAYOUT.gate.x, 0.012, LAYOUT.D + 72); road.receiveShadow = true; this.scene.add(road);
   }
 
-  // A ring of procedural hills / mountains / dunes around the playable field, so the
-  // map edge is real scenery instead of a wall of fog. A coastal castle gets an ocean
-  // flank (behind it, to the north) in place of the hills there.
+  // A smooth, continuous ring of rolling hills / mountains / dunes around the field
+  // so the map edge is real scenery, not fog. Built as one annulus mesh with gentle
+  // low-frequency height variation and smooth shading (no jagged faceting), its far
+  // rim dissolving into the horizon haze. Coastal castles get an ocean flank (north).
   private buildHorizon() {
     const B = this.biomeCfg;
-    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), tmp = new THREE.Color();
-    const geos: THREE.BufferGeometry[] = [];
-    const seaDir = Math.PI;                       // ocean sits to the NORTH, behind the castle
-    const seaHalf = this.coastal ? 1.0 : -1;      // ~57° gap each side of north for the sea
+    const RINGS = 16, SEG = 120, r0 = 250, r1 = 560;
+    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), tmp = new THREE.Color();
+    const seaDir = Math.PI, seaHalf = this.coastal ? 1.0 : -1;        // ~57° sea gap to the north
     const arc = (a: number) => { let d = Math.abs(a - seaDir); if (d > Math.PI) d = 2 * Math.PI - d; return d; };
-    const N = 72;
-    for (let i = 0; i < N; i++) {
-      const ang = (i / N) * Math.PI * 2 + (jit(i, 13) - 0.5) * 0.05;
-      if (this.coastal && arc(ang) < seaHalf) continue;
-      const rad = 290 + jit(i, 7) * 165;
-      const x = Math.sin(ang) * rad, z = Math.cos(ang) * rad;
-      const w = (B.dune ? 96 : 74) * (0.7 + jit(i, 3) * 0.9);
-      const h = B.hillH * (0.42 + jit(i, 5) * (B.snow ? 1.25 : 0.85));
-      const dome = new THREE.IcosahedronGeometry(1, B.dune ? 1 : 2);
-      const p = dome.attributes.position as THREE.BufferAttribute;
-      for (let v = 0; v < p.count; v++) {
-        if (p.getY(v) < 0) p.setY(v, p.getY(v) * 0.12);                 // flatten the buried base
-        else if (!B.dune) {                                            // crinkle the upper relief
-          const n = (jit(i * 9 + v, 9) - 0.5) * 0.55;
-          p.setX(v, p.getX(v) * (1 + n)); p.setZ(v, p.getZ(v) * (1 + n)); p.setY(v, p.getY(v) * (1 + (jit(i * 5 + v, 11) - 0.5) * 0.5));
-        }
+    const smooth = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+    // rolling height as a function of angle and radial position (sum of low-freq
+    // sines → soft ridgelines, never spiky)
+    const hAt = (ang: number, t: number) => {
+      const rise = smooth(0, 0.34, t);                                // low at the field edge, full hills beyond
+      let n = Math.sin(ang * 2.7 + 1.3) * 0.5 + Math.sin(ang * 5.1 + 4.1) * 0.28 + Math.sin(ang * 9.3 + 2.0) * 0.16;
+      n = 0.5 + 0.5 * (n * 0.5 + 0.5);                                // [0.5,1]
+      n *= 0.82 + 0.32 * Math.sin(ang * 1.7 + t * 3.2);               // slow swell so ridge depth varies
+      // snow peaks get a sharper, taller profile so the range towers; rolling hills stay gentle
+      if (B.snow) n = Math.pow(n, 0.55) * (0.9 + 0.5 * Math.max(0, Math.sin(ang * 4.3 + 0.7)));
+      let h = B.hillH * rise * n * (B.dune ? 0.62 : 1);
+      if (this.coastal) h *= smooth(seaHalf - 0.05, seaHalf + 0.45, arc(ang)); // drop to sea level on the coast flank
+      return h;
+    };
+    const pos: number[] = [], col: number[] = [], idx: number[] = [];
+    for (let ri = 0; ri <= RINGS; ri++) {
+      const t = ri / RINGS, rad = r0 + (r1 - r0) * t;
+      for (let si = 0; si <= SEG; si++) {
+        const ang = (si / SEG) * Math.PI * 2, y = hAt(ang, t);
+        pos.push(Math.sin(ang) * rad, y, Math.cos(ang) * rad);
+        const frac = Math.max(0, Math.min(1, y / (B.hillH * 0.8)));
+        tmp.copy(cBase).lerp(cTop, frac * 0.85);
+        if (B.snow && frac > 0.42) tmp.lerp(snow, smooth(0.42, 0.9, frac));
+        tmp.lerp(fog, Math.pow(t, 2.4) * (B.snow ? 0.55 : 0.9));      // far rim melts into the haze (peaks keep their snow)
+        col.push(tmp.r, tmp.g, tmp.b);
       }
-      dome.scale(w, h, w * (0.75 + jit(i, 4) * 0.5));
-      dome.rotateY(jit(i, 6) * 6.283);
-      dome.translate(x, -h * 0.16, z);
-      const pp = dome.attributes.position; const cols: number[] = [];
-      for (let v = 0; v < pp.count; v++) {
-        const frac = Math.max(0, Math.min(1, (pp.getY(v) + h * 0.16) / h));
-        tmp.copy(cBase).lerp(cTop, frac * 0.9);
-        if (B.snow && frac > 0.6) tmp.lerp(snow, Math.min(1, (frac - 0.6) / 0.4));
-        cols.push(tmp.r, tmp.g, tmp.b);
-      }
-      dome.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-      dome.deleteAttribute('uv'); dome.deleteAttribute('normal');
-      geos.push(dome);
     }
-    if (geos.length) this.scene.add(new THREE.Mesh(mergeGeometries(geos, false)!, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })));
+    for (let ri = 0; ri < RINGS; ri++) for (let si = 0; si < SEG; si++) {
+      const a = ri * (SEG + 1) + si, b = a + 1, c = a + (SEG + 1), d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx); g.computeVertexNormals();
+    this.scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true })));
     if (this.coastal) this.buildOcean();
   }
 
