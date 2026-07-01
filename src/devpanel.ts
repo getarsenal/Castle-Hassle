@@ -43,6 +43,10 @@ export interface DevCampaign {
   previewConquest: () => void;
 }
 
+export interface DevBalance {
+  host: () => { men: number; engines: number; note: string };
+  rows: () => { id: number; name: string; garrison: number; ratio: number; band: string; done: boolean; unlocked: boolean }[];
+}
 export interface DevHooks {
   // returns ordered [label, value] telemetry rows, refreshed ~5x/sec while open
   getTelemetry: () => [string, string][];
@@ -50,6 +54,7 @@ export interface DevHooks {
   // full diagnostic text for the Copy/Export button (shared with the dev)
   exportText: () => string;
   campaign?: DevCampaign; // optional — present when the campaign save is available
+  balance?: DevBalance;   // optional — the force-ratio curve across the campaign
 }
 
 const css = `
@@ -97,7 +102,16 @@ const css = `
 #devPanel .vetRow .vt{flex:1;color:#ffd98a;font-size:12px}
 #devPanel .vetRow .vt .st{color:#c8901f;letter-spacing:1px;margin-right:3px}
 #devPanel .vetRow .vk{flex:0 0 auto;color:#7f93ab;font-size:11px}
-#devPanel .vbtn{border:1px solid #2c3647;background:#11161f;color:#9ff0bb;border-radius:6px;width:30px;height:30px;cursor:pointer;font-weight:800;font-size:16px;line-height:1}`;
+#devPanel .vbtn{border:1px solid #2c3647;background:#11161f;color:#9ff0bb;border-radius:6px;width:30px;height:30px;cursor:pointer;font-weight:800;font-size:16px;line-height:1}
+  #devPanel .balRows{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+  #devPanel .balRow{display:flex;align-items:center;gap:7px;font-size:11.5px;padding:2px 1px}
+  #devPanel .balRow.done{opacity:.45}
+  #devPanel .balRow .bi{flex:0 0 20px;color:#5d6e84;text-align:right;font-variant-numeric:tabular-nums}
+  #devPanel .balRow .bn{flex:1;min-width:0;color:#cdd6e2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #devPanel .balRow .bg{flex:0 0 42px;text-align:right;color:#9fb0c6;font-variant-numeric:tabular-nums}
+  #devPanel .balRow .bbar{flex:0 0 56px;height:7px;border-radius:4px;background:#0a0e15;overflow:hidden}
+  #devPanel .balRow .bbar>i{display:block;height:100%;border-radius:4px}
+  #devPanel .balRow .bv{flex:0 0 92px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}`;
 
 const PRESETS: { name: string; army: DevConfig['army']; diff: number }[] = [
   { name: 'Standard 2k', army: { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 }, diff: 1.6 },
@@ -120,6 +134,7 @@ export function initDevPanel(hooks: DevHooks) {
     <div class="dpHead"><h2>DEV — Battle Lab</h2><div style="display:flex;gap:8px"><button class="dpClose" id="dpCopy" style="border-color:#7fe0a0;color:#9ff0bb">Copy</button><button class="dpClose" id="dpClose">Close</button></div></div>
     <div class="dpSec"><h3>Live Telemetry <span id="dpCopied" style="color:#7fe0a0;font-weight:400;font-size:11px"></span></h3><div id="devTel"></div></div>
     <div class="dpSec" id="dpCampaign" style="display:none"></div>
+    <div class="dpSec" id="dpBalance" style="display:none"></div>
     <div class="dpSec"><h3>Presets</h3><div class="presets" id="dpPresets">${PRESETS.map((p, i) => `<div class="preset" data-i="${i}">${p.name}</div>`).join('')}</div></div>
     <div class="dpSec"><h3>Army</h3>
       ${arm('heavy', 'Heavy Inf', 1500)}${arm('light', 'Light Inf', 1200)}${arm('archer', 'Archers', 1000)}
@@ -232,6 +247,23 @@ export function initDevPanel(hooks: DevHooks) {
     sec.querySelectorAll<HTMLButtonElement>('.vbtn').forEach(b => b.addEventListener('click', () => { cp.bumpVet(b.dataset.k!, parseInt(b.dataset.d!, 10)); renderCampaign(); }));
   };
 
+  // ---- Balance readout: the force-ratio curve across the whole campaign ----
+  const BAND_COLOR: Record<string, string> = { Rout: '#7fe0a0', Strong: '#8fd0c0', Even: '#e6c84a', Costly: '#e89a4a', Grim: '#ff7a5c' };
+  const renderBalance = () => {
+    const b = hooks.balance; if (!b) return;
+    const rows = b.rows(), h = b.host(), sec = $('dpBalance'); sec.style.display = 'block';
+    const tally: Record<string, number> = {}; for (const r of rows) tally[r.band] = (tally[r.band] || 0) + 1;
+    const sum = ['Grim', 'Costly', 'Even', 'Strong', 'Rout'].filter(k => tally[k]).map(k => `<b style="color:${BAND_COLOR[k]}">${tally[k]} ${k}</b>`).join(' · ');
+    sec.innerHTML = `<h3>Balance Readout <span style="color:#5d6e84;font-weight:400;font-size:10px;letter-spacing:0">your host vs each castle</span></h3>`
+      + `<div class="dpInfo">${h.note}</div><div class="dpInfo">${sum}</div>`
+      + `<div class="balRows">${rows.map(r => {
+        const pct = Math.max(4, Math.min(100, r.ratio / 3 * 100)), col = BAND_COLOR[r.band] || '#8899aa';
+        return `<div class="balRow${r.done ? ' done' : ''}"><span class="bi">${r.id}</span><span class="bn">${r.name}</span>`
+          + `<span class="bg">${r.garrison.toLocaleString()}</span><span class="bbar"><i style="width:${pct.toFixed(0)}%;background:${col}"></i></span>`
+          + `<span class="bv" style="color:${col}">${r.ratio.toFixed(2)}× ${r.band}</span></div>`;
+      }).join('')}</div>`;
+  };
+
   const tel = $('devTel');
   let raf = 0;
   const tick = () => {
@@ -244,6 +276,6 @@ export function initDevPanel(hooks: DevHooks) {
     raf = requestAnimationFrame(tick);
   };
 
-  const open = () => { el.classList.add('show'); if (hooks.campaign) renderCampaign(); if (!raf) tick(); };
+  const open = () => { el.classList.add('show'); if (hooks.campaign) renderCampaign(); if (hooks.balance) renderBalance(); if (!raf) tick(); };
   return { open, close, toggle: () => (el.classList.contains('show') ? close() : open()) };
 }

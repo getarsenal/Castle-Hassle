@@ -5,6 +5,7 @@ import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, 
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
 import { surveyCastle } from './sim';
+import { assessBattle } from './balance';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
@@ -807,9 +808,34 @@ const devCampaign = {
   enterCastle: (id: number) => enterCastle(castles[Math.max(0, Math.min(castles.length - 1, id))]),
   previewConquest: () => devPreviewConquest(),
 };
+// ---- balance readout: your CURRENT host's force-ratio vs every castle's real
+// garrison, so the whole difficulty curve reads at a glance (a tuning lens). ----
+const devBalance = {
+  host: () => {
+    const men = progress.army.heavy + Math.max(progress.army.light, 0) + LEVY_LIGHT + progress.army.archer + progress.army.cavalry;
+    const engines = progress.army.siege + warBuffs().trebs;
+    return { men, engines, note: `${men.toLocaleString()} men (incl. ${LEVY_LIGHT} levy) · ${engines} engines` };
+  },
+  rows: () => {
+    const w = warBuffs(), vm = vetMulArray();
+    const host = {
+      arms: { heavy: progress.army.heavy, light: progress.army.light + LEVY_LIGHT, archer: progress.army.archer, cavalry: progress.army.cavalry, siege: progress.army.siege + w.trebs },
+      vetMul: vm, hpBuff: w.atk.hp, meleeBuff: w.atk.melee, archerBuff: w.atk.archer, siegeBuff: w.atk.siege,
+    };
+    return castles.map(c => {
+      const s = surveyCastle(c.seed, c.style, 1 + c.tier * 0.8), pl = s.plan;
+      const a = assessBattle(host, {
+        garrison: pl.garrison, reserves: pl.reserves, archers: pl.wallArchers.length + pl.towerArchers + pl.citArchers.length,
+        citGuard: pl.citGuard, total: s.total, concentric: s.concentric, citadel: s.citadel, towers: s.towers,
+      });
+      return { id: c.id, name: c.name, garrison: s.total, ratio: a.ratio, band: a.band, done: progress.completed.includes(c.id), unlocked: c.id <= progress.unlocked };
+    });
+  },
+};
 (window as any).__nextQuality = nextQuality; // QA hook for the adaptive-resolution decision
 (window as any).__surveyCastle = surveyCastle; (window as any).__castles = castles; // QA: card garrison vs real siege
-const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign });
+(window as any).__balance = devBalance; // QA: campaign force-ratio curve
+const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign, balance: devBalance });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {
   const now = performance.now();
