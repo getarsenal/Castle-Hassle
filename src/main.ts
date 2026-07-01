@@ -17,8 +17,13 @@ import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
 import { startTutorial, startCampaignTour } from './tutorial';
 import { initDevPanel, DevConfig } from './devpanel';
+import { LOGO } from './logodata';
 import * as THREE from 'three';
 declare const __BUILD__: string; // injected at build time (commit + timestamp)
+
+// Swap the commissioned CASTLE HASSLE logo into the title-screen art (inlined, so
+// it shows instantly and offline instead of fetching a remote title.png).
+{ const ti = document.getElementById('titleIcon') as HTMLImageElement | null; if (ti) ti.src = LOGO; }
 
 (window as any).__started = true;
 (window as any).__audio = battleAudio; // console access for tuning / preview render

@@ -585,7 +585,7 @@ export class Renderer {
   // sit the attacker's tents and cook-fires; nearer the walls, gabions and sharpened
   // stakes of the siege works. Everything static & merged by material (no frame cost).
   private buildSiegeCamp() {
-    const W = LAYOUT.W, gx = LAYOUT.gate.x, F = LAYOUT.front;
+    const gx = LAYOUT.gate.x, F = LAYOUT.front;
     const maxZ = WORLD.maxZ - 10, minX = WORLD.minX + 12, maxX = WORLD.maxX - 12;
     const rnd = (a: number, b: number) => a + Math.random() * (b - a);
     const chance = (p: number) => Math.random() < p;
@@ -595,7 +595,8 @@ export class Renderer {
       stakes: THREE.BufferGeometry[] = [], planks: THREE.BufferGeometry[] = [], earth: THREE.BufferGeometry[] = [],
       crates: THREE.BufferGeometry[] = [], barrels: THREE.BufferGeometry[] = [], sacks: THREE.BufferGeometry[] = [],
       hay: THREE.BufferGeometry[] = [], cart: THREE.BufferGeometry[] = [], banner: THREE.BufferGeometry[] = [],
-      flag: THREE.BufferGeometry[] = [];
+      flag: THREE.BufferGeometry[] = [], rock: THREE.BufferGeometry[] = [], trenchG: THREE.BufferGeometry[] = [],
+      rubbleG: THREE.BufferGeometry[] = [];
 
     // ----- primitives -----
     const tent = (cx: number, cz: number, big = false) => {
@@ -634,55 +635,93 @@ export class Renderer {
         cart.push(new THREE.CylinderGeometry(0.72, 0.72, 0.24, 9).rotateZ(1.5708).rotateY(ry).translate(wx, 0.72, wz));
       }
     };
+    // a flat ground decal (dirt patch), laid on the meadow and oriented by ry
+    const flat = (w: number, d: number, x: number, z: number, ry: number, y = 0.035) =>
+      new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).rotateY(ry).translate(x, y, z);
 
-    // ---- FORWARD SIEGE LINE: an earth rampart faced with gabions, mantlets and stakes ----
-    // A besiegers' line thrown up between the host and the wall, with a road gap.
-    const lineZ = F + 20, half = W * 1.45 + 34;
-    const bN = Math.round(half * 2 / 7);
-    for (let k = 0; k <= bN; k++) {
-      const x = -half + (half * 2) * k / bN;
-      if (Math.abs(x - gx) < 18) continue;                                    // assault road gap
-      // rampart: a low, wide earth berm (two stacked boxes, jittered) tinted soil
-      const bh = rnd(1.3, 1.9), bz = lineZ + rnd(-1.5, 1.5);
-      earth.push(this.boxG(10.4, bh, 6.4, x, bh / 2, bz, rnd(-0.15, 0.15)));
-      earth.push(this.boxG(7.2, bh * 0.55, 4.2, x, bh + bh * 0.26, bz, rnd(-0.2, 0.2)));
-      if (chance(0.62)) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.9, 8).translate(x + rnd(-2, 2), bh + 0.95, bz - 1.2)); // gabion on the crest
-      if (chance(0.4)) { // a leaning mantlet (pavise plank shield) facing the castle
-        planks.push(new THREE.BoxGeometry(3.4, 2.6, 0.3).rotateX(-0.28).rotateY(rnd(-0.2, 0.2)).translate(x + rnd(-2, 2), 1.4, bz - 2.6));
-      }
-      for (let s = 0; s < 3; s++) stakes.push(new THREE.CylinderGeometry(0.09, 0.02, 2.5, 4).rotateX(-0.5).translate(x + rnd(-3, 3), 0.8, bz - 3.2 + rnd(-0.6, 0.6)));
+    // ---- THE INVESTMENT: a ring of siege lines encircling the whole castle ----
+    // A trench with a spoil rampart behind it, gabions lining the near lip and a
+    // picket of stakes leaning at the wall — repeated around a ring (circumvallation),
+    // with a single gap on the gate side for the assault. Between ring and wall lies
+    // churned earth, spoil and rubble from the digging and the bombardment.
+    let bx0 = 1e9, bx1 = -1e9, bz0 = 1e9, bz1 = -1e9;
+    for (const b of CASTLE) { if (b.kind === 'building') continue; bx0 = Math.min(bx0, b.x0); bx1 = Math.max(bx1, b.x1); bz0 = Math.min(bz0, b.z0); bz1 = Math.max(bz1, b.z1); }
+    const ccx = (bx0 + bx1) / 2, ccz = (bz0 + bz1) / 2, castleR = Math.max(bx1 - bx0, bz1 - bz0) / 2;
+    const Rmax = Math.min(maxX - ccx, ccx - minX, maxZ - ccz, ccz - (WORLD.minZ + 12)) - 6;
+    const R = Math.min(castleR + 38, Rmax);
+    const ga = Math.atan2(gx - ccx, F - ccz);                                  // bearing to the gate (assault gap)
+    const steps = Math.max(30, Math.round(2 * Math.PI * R / 11));
+    for (let i = 0; i < steps; i++) {
+      const th = i / steps * Math.PI * 2;
+      const adist = Math.abs(((th - ga + Math.PI * 3) % (Math.PI * 2)) - Math.PI); // angular gap to the gate
+      const cs = Math.cos(th), sn = Math.sin(th), inx = -cs, inz = -sn;         // radial: outward (cs,sn), inward = toward castle
+      const tvx = -sn, tvz = cs, ry = Math.atan2(tvx, tvz);                     // tangent (along the line) + box heading
+      const px = ccx + R * cs, pz = ccz + R * sn;
+      rubbleG.push(flat(rnd(9, 12), 9, px + inx * 5, pz + inz * 5, ry, 0.03));  // churned earth under the line only
+      if (adist < 0.52) continue;                                               // leave the assault avenue open
+      // spoil rampart (outer bank)
+      const bh = rnd(1.5, 2.1);
+      earth.push(this.boxG(12, bh, 5.0, px, bh / 2, pz, ry));
+      earth.push(this.boxG(9, bh * 0.55, 3.2, px + inx * 0.6, bh + bh * 0.26, pz + inz * 0.6, ry));
+      // the ditch: a dark sunken strip just inside the bank, with a shadowed near lip
+      const dx = px + inx * 4.6, dz = pz + inz * 4.6;
+      trenchG.push(flat(12, 4.8, dx, dz, ry, 0.05));
+      earth.push(this.boxG(12, 0.55, 0.8, dx + inx * 2.3, 0.24, dz + inz * 2.3, ry));
+      // gabions (earth-filled baskets) lining the ditch's inner lip
+      const gbx = dx + inx * 3.0, gbz = dz + inz * 3.0;
+      for (let g = -1; g <= 1; g++) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.95, 8).translate(gbx + tvx * g * 3.6, 0.98, gbz + tvz * g * 3.6));
+      // a picket of sharpened stakes leaning toward the wall
+      const shead = Math.atan2(inx, inz);
+      for (let s = -1; s <= 1; s++) stakes.push(new THREE.CylinderGeometry(0.12, 0.02, 2.7, 4).rotateX(-0.6).rotateY(shead).translate(gbx + inx * 2.6 + tvx * s * 2.4, 0.85, gbz + inz * 2.6 + tvz * s * 2.4));
+      if (chance(0.22)) planks.push(new THREE.BoxGeometry(3.2, 2.4, 0.3).rotateX(-0.26).rotateY(ry).translate(px + inx * 6, 1.35, pz + inz * 6)); // occasional mantlet
     }
-    // an advanced sap: a couple of forward gabion nests nearer the wall, flanking the road
-    for (const sx of [-W * 0.7, W * 0.7]) for (let g = 0; g < 4; g++)
-      wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.9, 8).translate(sx + rnd(-4, 4), 0.95, F + 4 + rnd(-3, 3)));
 
-    // ---- ENCAMPMENT: rows of tents, pavilions, banners, fires, supply, wagons, horse-lines ----
-    const campZ0 = Math.min(maxZ - 52, F + 150);
+    // ---- SPOIL & RUBBLE: churned dirt, dug spoil-heaps and shattered stone between ring and wall ----
+    const nRub = Math.round(steps * 0.4);
+    for (let i = 0; i < nRub; i++) {
+      const a = Math.random() * Math.PI * 2, rr = castleR + rnd(9, Math.max(11, R - castleR - 8));
+      const rx = ccx + Math.cos(a) * rr, rz = ccz + Math.sin(a) * rr;
+      rubbleG.push(flat(rnd(4, 7), rnd(4, 7), rx, rz, Math.random() * 3.14, 0.04));
+      for (let k = 0; k < 2 + Math.floor(Math.random() * 3); k++) {
+        const s = rnd(0.5, 1.5), ox = rnd(-3.5, 3.5), oz = rnd(-3.5, 3.5);
+        (chance(0.5) ? rock : earth).push(this.boxG(s, s * rnd(0.5, 0.9), s * rnd(0.8, 1.2), rx + ox, s * 0.3, rz + oz, Math.random() * 3.14));
+      }
+    }
+
+    // ---- ENCAMPMENTS: the besiegers' tents ringed OUTSIDE the line (main camp to the rear) ----
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+    const cluster = (ang: number, n: number, withFire = true) => {
+      const rr = R + rnd(16, 30), cxp = clamp(ccx + Math.cos(ang) * rr, minX + 6, maxX - 6), czp = clamp(ccz + Math.sin(ang) * rr, WORLD.minZ + 14, maxZ - 6);
+      for (let k = 0; k < n; k++) tent(clamp(cxp + rnd(-16, 16), minX + 4, maxX - 4), clamp(czp + rnd(-13, 13), WORLD.minZ + 12, maxZ - 4), chance(0.16));
+      if (withFire) cookfire(cxp + rnd(-8, 8), czp + rnd(-8, 8), chance(0.5));
+      for (let s = 0; s < 1 + Math.floor(Math.random() * 2); s++) dump(cxp + rnd(-12, 12), czp + rnd(-12, 12));
+      if (chance(0.7)) { banner.push(new THREE.CylinderGeometry(0.08, 0.08, 8, 5).translate(cxp, 4, czp)); flag.push(this.boxG(2.4, 1.2, 0.12, cxp + 1.2, 6.2, czp)); }
+    };
+    // main camp: several dense rows on the assault (gate) side, behind the host
+    const campZ0 = Math.min(maxZ - 52, ccz + R + 34);
     for (let r = 0; r < 3; r++) {
       const cz = Math.min(maxZ - 8, campZ0 + r * 22);
-      const span = Math.min((maxX - minX) * 0.92, W * 2.4 + 90), count = Math.round(span / 15);
+      const span = Math.min((maxX - minX) * 0.9, castleR * 3 + 80), count = Math.round(span / 15);
       for (let k = 0; k < count; k++) {
         const cx = -span / 2 + span * (k + rnd(-0.18, 0.18)) / (count - 1 || 1);
-        if (Math.abs(cx - gx) < 11 && r === 0) continue;                      // road mouth
-        tent(cx, cz + rnd(-4, 4), r === 1 && chance(0.12));                   // occasional command pavilion mid-camp
+        if (Math.abs(cx - gx) < 11 && r === 0) continue;                        // road mouth
+        tent(clamp(cx, minX + 4, maxX - 4), cz + rnd(-4, 4), r === 1 && chance(0.12));
       }
-      for (let f = 0; f < 3; f++) cookfire(rnd(-span / 2.3, span / 2.3), cz + rnd(-7, 7), r < 2); // ~9 fires, smoke on nearer rows
+      for (let f = 0; f < 3; f++) cookfire(rnd(-span / 2.3, span / 2.3), cz + rnd(-7, 7), r < 1);
       for (let s = 0; s < 4; s++) dump(rnd(-span / 2.2, span / 2.2), cz + rnd(-10, 10));
       if (r === 0) for (let b = 0; b < 4; b++) { const bx = rnd(-span / 2.4, span / 2.4); banner.push(new THREE.CylinderGeometry(0.08, 0.08, 8, 5).translate(bx, 4, cz + rnd(-6, 6))); flag.push(this.boxG(2.4, 1.2, 0.12, bx + 1.2, 6.2, cz + rnd(-6, 6))); }
     }
-    for (let w = 0; w < 4; w++) wagon(rnd(-W - 20, W + 20), campZ0 + rnd(-6, 30), rnd(0, 3.14));
-    // horse-line: a rope of posts behind the camp
-    { const hz = maxZ - 6, x0 = -W * 0.6, x1 = W * 0.6; for (let p = 0; p <= 10; p++) poles.push(new THREE.CylinderGeometry(0.11, 0.11, 2.2, 5).translate(x0 + (x1 - x0) * p / 10, 1.1, hz)); }
-
-    // ---- FLANKING PICKETS: the siege surrounds — tents, fires and gabions off each flank ----
-    for (const side of [-1, 1]) {
-      const fx0 = side * (W + 42);
-      for (let r = 0; r < 3; r++) { const fz = F * 0.2 + r * 26; tent(fx0 + rnd(-8, 8), fz + rnd(-6, 6), chance(0.15)); if (chance(0.6)) cookfire(fx0 + rnd(-10, 10), fz + rnd(-8, 8), r === 0); }
-      for (let g = 0; g < 5; g++) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.9, 8).translate(fx0 + rnd(-6, 6) - side * 14, 0.95, F * 0.1 + rnd(-10, 40)));
-      for (let s = 0; s < 2; s++) dump(fx0 + rnd(-8, 8), F * 0.3 + rnd(0, 40));
-    }
+    for (let w = 0; w < 4; w++) wagon(clamp(rnd(-castleR - 20, castleR + 20), minX + 6, maxX - 6), campZ0 + rnd(-6, 30), rnd(0, 3.14));
+    { const hz = maxZ - 6, x0 = -castleR * 0.6, x1 = castleR * 0.6; for (let p = 0; p <= 10; p++) poles.push(new THREE.CylinderGeometry(0.11, 0.11, 2.2, 5).translate(x0 + (x1 - x0) * p / 10, 1.1, hz)); } // horse-line
+    // flanking & rear camps so the siege reads as a full investment
+    const back = ga + Math.PI;
+    cluster(ga - 1.25, 3); cluster(ga + 1.25, 3); cluster(back - 0.6, 3); cluster(back + 0.6, 3); cluster(back, 2);
 
     const add = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.castShadow = m.receiveShadow = true; this.scene.add(m); } };
+    const dirt = (hex: string, col: string) => { const t = dirtTexture(hex); t.wrapS = t.wrapT = THREE.RepeatWrapping; return new THREE.MeshLambertMaterial({ map: t, color: col }); };
+    const decal = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.receiveShadow = true; m.renderOrder = 1; this.scene.add(m); } };
+    decal(rubbleG, dirt('#9a835c', '#b39a6e'));  // churned spoil / dug earth
+    decal(trenchG, dirt('#48381f', '#6a5636'));  // the dark ditch floor
     add(cloth, this.stone('#cbb894'));      // weathered linen tents
     add(pavilion, this.stone('#8a4436'));   // lords' command pavilions (dyed cloth)
     add(poles, this.stone('#6a4a2a'));
@@ -690,7 +729,8 @@ export class Renderer {
     add(flag, this.stone('#b23b2f'));       // red crusader pennants
     add(ring, this.stone('#4a4038'));       // fire-ring stones
     add(logs, this.stone('#2a1c10'));       // charred logs
-    add(earth, this.stone('#4a3826'));      // rampart earthworks
+    add(earth, this.stone('#5a4632'));      // spoil ramparts / earth heaps
+    add(rock, this.stone('#8a8072'));       // shattered stone rubble
     add(wicker, this.stone('#6a5230'));     // gabions (woven earth-baskets)
     add(planks, this.stone('#7a5a34'));     // mantlets / pavise shields
     add(stakes, this.stone('#6e5330'));     // sharpened stakes

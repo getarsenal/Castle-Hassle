@@ -331,9 +331,9 @@
     /* --- content column --- */
     .tsContent { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; width: 100%;
       padding: calc(var(--safe-top) + 7vh) 18px 0; }
-    .tsArt { position: relative; width: min(70vw, 340px); animation: tsFloat 5.5s ease-in-out infinite; }
-    #titleIcon { width: 100%; height: auto; display: block; border-radius: 11%;
-      box-shadow: 0 22px 55px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,216,107,0.55), 0 0 64px rgba(244,176,92,0.28); }
+    .tsArt { position: relative; width: min(88vw, 460px); animation: tsFloat 5.5s ease-in-out infinite; }
+    #titleIcon { width: 100%; height: auto; display: block;
+      filter: drop-shadow(0 14px 26px rgba(0,0,0,0.6)) drop-shadow(0 0 40px rgba(244,176,92,0.22)); }
     .tsArt::after { content: ''; position: absolute; left: 50%; bottom: -20px; transform: translateX(-50%);
       width: 72%; height: 30px; background: radial-gradient(closest-side, rgba(0,0,0,0.55), transparent 76%); filter: blur(5px); }
     .tsTag { margin-top: 24px; color: #f1ddb2; font: 600 15px 'EB Garamond', Georgia, serif; letter-spacing: 0.5px;

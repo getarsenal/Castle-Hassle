@@ -3,6 +3,7 @@
 // upgrades.ts), driven by callbacks into main.ts.
 import { CampaignCastle, slotSummary, deleteSlot, NUM_SLOTS } from './campaign';
 import { Profile, ACHIEVEMENTS, DIFFICULTY, Difficulty } from './profile';
+import { LOGO } from './logodata';
 
 let styled = false;
 function injectStyles() {
@@ -13,6 +14,7 @@ function injectStyles() {
     color:#f2e6cf;font-family:'EB Garamond',Georgia,serif;padding:calc(var(--safe-top) + 20px) 18px calc(var(--safe-bottom) + 24px);
     background:radial-gradient(125% 75% at 50% -8%,rgba(150,104,48,0.4),transparent 60%),linear-gradient(180deg,#241a0f,#120c07)}
   .menuScreen h1{margin:4px 0 2px;font:800 30px 'Cinzel',Georgia,serif;letter-spacing:1px;color:#ffe1a0;text-align:center;text-shadow:0 3px 12px rgba(0,0,0,.5)}
+  .menuScreen .menuLogo{width:min(88vw,420px);height:auto;display:block;margin:6px auto 2px;filter:drop-shadow(0 8px 20px rgba(0,0,0,.6))}
   .menuScreen .msub{font-size:13px;font-style:italic;color:#c7a86e;margin-bottom:20px;text-align:center}
   .menuWrap{width:min(94vw,440px);display:flex;flex-direction:column;gap:12px}
   .slotCard{border:1px solid var(--leather-edge,#7a5e2e);border-radius:14px;padding:15px 16px;
@@ -73,7 +75,7 @@ export function openMainMenu(opts: {
   const render = () => {
     const slots = Array.from({ length: NUM_SLOTS }, (_, n) => slotSummary(n, opts.castles));
     const L = opts.profile.lifetime;
-    root.innerHTML = `<h1>Castle Hassle</h1><div class="msub">Choose your crusade</div><div class="menuWrap">`
+    root.innerHTML = `<img class="menuLogo" src="${LOGO}" alt="Castle Hassle"><div class="msub">Choose your crusade</div><div class="menuWrap">`
       + slots.map((s, n) => {
         if (!s) return `<div class="slotCard empty"><div class="st"><span class="sn">Campaign ${n + 1}</span></div>`
           + `<div class="sd">An empty banner, awaiting a lord.</div>`
