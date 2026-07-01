@@ -100,6 +100,8 @@ export class Renderer {
   private sun!: THREE.DirectionalLight;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
+  private smokeMesh!: THREE.InstancedMesh; private smoke: { x: number; y: number; z: number; s: number; life: number; max: number }[] = []; private smokeHead = 0;
+  private smokeSources: { x: number; y: number; z: number; s: number; rate: number; dark: number; t: number }[] = []; // castle fires + camp fires
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
   private shadowDirtyT = -1; // >0: a collapse is settling; refresh the shadow map ONCE when it elapses
   private selRing: THREE.Mesh;
@@ -184,6 +186,8 @@ export class Renderer {
     this.buildProps();
     this.buildInterior();
     this.buildTrees();
+    this.buildSiegeCamp();
+    this.buildSmoke();
     this.buildSoldiers();
     this.buildShadows();
     this.buildProjectiles();
@@ -259,11 +263,25 @@ export class Renderer {
     // hide the texture tiling, with a faint warm cast. (NOT a second green multiply; that
     // double-darkening is what made the grass read dim and fake.)
     const c = new THREE.Color(); const colors: number[] = []; const pos = g.attributes.position;
+    const gxg = LAYOUT.gate.x, Wg = LAYOUT.W, Dg = LAYOUT.D;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
       let n = 1.02 + 0.1 * (Math.sin(x * 0.016) * Math.cos(z * 0.019)) + 0.05 * (Math.sin(x * 0.051 + 1.3) * Math.cos(z * 0.044));
       n = Math.max(0.88, Math.min(1.2, n));
-      c.setRGB(n, n * 0.995, n * 0.95); // warm sunlight cast
+      // DRYNESS: broad soft patches drift between lush green and sun-dried tan, so the
+      // field reads as real meadow, not one flat green — greener in the hollows, drier
+      // (warmer, yellower) on the sunlit rises.
+      const dry = 0.5 + 0.4 * Math.sin(x * 0.021 + 2.0) * Math.cos(z * 0.017 - 1.1) + 0.18 * Math.sin(x * 0.06 - 0.4) * Math.sin(z * 0.048 + 1.7);
+      const d = Math.max(0, Math.min(1, dry));
+      let r = n * (0.9 + 0.26 * d), gch = n * (1.04 - 0.12 * d), b = n * (0.92 - 0.26 * d);
+      // CHURN: a siege tears up the earth — a muddy scar hugs the walls and runs up the
+      // gate lane where the host masses. Darken + brown the grass there (trampled ground).
+      const distWall = Math.max(Math.abs(x) - Wg, Math.abs(z) - Dg);
+      const ring = Math.max(0, 1 - Math.max(0, distWall) / 30);
+      const lane = (z > Dg - 4 && z < Dg + 96 && Math.abs(x - gxg) < 46) ? Math.max(0, 1 - (z - Dg) / 96) * Math.max(0, 1 - Math.abs(x - gxg) / 46) : 0;
+      const churn = Math.min(0.8, Math.max(ring, lane) * (0.5 + 0.5 * Math.sin(x * 0.3) * Math.sin(z * 0.27)) + Math.max(ring, lane) * 0.35);
+      r = r * (1 - churn) + 0.66 * churn; gch = gch * (1 - churn) + 0.5 * churn; b = b * (1 - churn) + 0.34 * churn;
+      c.setRGB(r, gch, b);
       colors.push(c.r, c.g, c.b);
     }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -380,9 +398,18 @@ export class Renderer {
   }
 
   private buildCastle() {
+    // Per-castle STONE + ROOF palette, chosen deterministically from the layout so no
+    // two neighbouring strongholds read the same: grey granite, warm sandstone, pale
+    // limestone, reddish stone — with slate / terracotta / lead roofs to match.
+    const ph = Math.abs((LAYOUT.W * 131 + LAYOUT.D * 71 + LAYOUT.towers.length * 997 + Math.round(LAYOUT.gate.x * 37)) | 0);
+    const STONE_TINT = ['#ffffff', '#cdd4d0', '#f2e2bc', '#e6c6a0', '#ece7d8', '#d6ccb4', '#c8ccc6'];
+    const ROOFS = ['#c8643f', '#7f838a', '#9a5638', '#8c9488', '#b8602f', '#6d5340'];
+    const stoneTint = new THREE.Color(STONE_TINT[ph % STONE_TINT.length]);
+    const roofHex = LAYOUT.palisade ? '#7a4a26' : ROOFS[(ph >> 3) % ROOFS.length];
     const coneRoofTex = this.texRoof.clone(); coneRoofTex.wrapS = coneRoofTex.wrapT = THREE.RepeatWrapping; coneRoofTex.repeat.set(5, 3); coneRoofTex.needsUpdate = true;
-    const roofMat = this.stone('#d06a40'); roofMat.map = coneRoofTex;
+    const roofMat = this.stone(roofHex); roofMat.map = coneRoofTex;
     const timber = this.stone('#7a4f2c');
+    const tintStone = (m: THREE.MeshLambertMaterial) => { if (!LAYOUT.palisade) m.color.multiply(stoneTint); return m; };
     const stoneCol = (hex: string) => new THREE.Color(hex);
     // STATIC batches (buildings + keep never crumble) — merged into a few meshes
     const bodyGeos: THREE.BufferGeometry[] = [], houseRoofGeos: THREE.BufferGeometry[] = [];
@@ -411,7 +438,7 @@ export class Renderer {
         const wood = LAYOUT.palisade; // a town's walls are timber, not dressed stone
         // the gatehouse mass is dressed stone (or a timber frame in a palisade town);
         // the actual planked gate is added as detailed doors below.
-        const mat = !wood ? this.stone(b.kind === 'gate' ? '#cdb892' : '#e6d6af') : this.stone(b.kind === 'gate' ? '#6e4a28' : '#8a5a31');
+        const mat = !wood ? tintStone(this.stone(b.kind === 'gate' ? '#cdb892' : '#e6d6af')) : this.stone(b.kind === 'gate' ? '#6e4a28' : '#8a5a31');
         if (!wood) mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
@@ -431,7 +458,7 @@ export class Renderer {
           for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const)
             parts.push(this.boxG(ew, 1.3, ed, ex, b.h + 0.6, ez));
         }
-        const mat = this.stone('#dfcca2'); mat.map = this.texStone;
+        const mat = tintStone(this.stone('#dfcca2')); mat.map = this.texStone;
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         // roof + pole + flag stay separate (different materials) and hide on crumble
@@ -488,7 +515,7 @@ export class Renderer {
       m.castShadow = true; this.scene.add(m);
     }
     if (doorGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(doorGeos, false), timber));
-    if (keepStoneGeos.length) { const km = this.stone('#d6c499'); km.map = this.texStone; const m = new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
+    if (keepStoneGeos.length) { const km = tintStone(this.stone('#d6c499')); km.map = this.texStone; const m = new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
     if (keepTimberGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(keepTimberGeos, false), timber));
   }
 
@@ -535,6 +562,82 @@ export class Renderer {
     this.dummy.scale.set(1, 1, 1); this.dummy.rotation.set(0, 0, 0);
     if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
     this.scene.add(trunk); this.scene.add(canopy);
+  }
+
+  // The besieging camp: this is a SIEGE, not an empty lawn. Behind the deploy line
+  // sit the attacker's tents and cook-fires; nearer the walls, gabions and sharpened
+  // stakes of the siege works. Everything static & merged by material (no frame cost).
+  private buildSiegeCamp() {
+    const W = LAYOUT.W, D = LAYOUT.D, gx = LAYOUT.gate.x, F = LAYOUT.front;
+    const maxZ = WORLD.maxZ - 12;
+    const cloth: THREE.BufferGeometry[] = [], poles: THREE.BufferGeometry[] = [], ring: THREE.BufferGeometry[] = [],
+      logs: THREE.BufferGeometry[] = [], wicker: THREE.BufferGeometry[] = [], stakes: THREE.BufferGeometry[] = [], crates: THREE.BufferGeometry[] = [];
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    // ---- the encampment: rows of conical tents with cook-fires, well south of the army ----
+    const campZ0 = Math.min(maxZ - 34, F + 96);
+    const rows = 2;
+    for (let r = 0; r < rows; r++) {
+      const cz = Math.min(maxZ, campZ0 + r * 26);
+      const span = W * 1.5 + 40, count = Math.round(span / 20);
+      for (let k = 0; k < count; k++) {
+        const cx = -span / 2 + span * (k + rnd(-0.2, 0.2)) / (count - 1 || 1);
+        if (Math.abs(cx - gx) < 12 && r === 0) continue; // leave the road mouth open
+        const h = rnd(3.2, 4.2), rad = rnd(2.4, 3.2);
+        cloth.push(new THREE.ConeGeometry(rad, h, 7).translate(cx, h / 2, cz));
+        poles.push(new THREE.CylinderGeometry(0.08, 0.08, h + 1.1, 5).translate(cx, (h + 1.1) / 2, cz));
+      }
+      // a couple of cook-fires per row → smoke sources
+      for (let f = 0; f < 2; f++) {
+        const fx = rnd(-span / 2.4, span / 2.4), fz = cz + rnd(-8, 8);
+        for (let s = 0; s < 6; s++) { const a = s / 6 * 6.28; ring.push(new THREE.BoxGeometry(0.7, 0.5, 0.7).translate(fx + Math.cos(a) * 1.3, 0.24, fz + Math.sin(a) * 1.3)); }
+        logs.push(new THREE.CylinderGeometry(0.16, 0.16, 2.0, 5).rotateZ(1.2).translate(fx, 0.4, fz), new THREE.CylinderGeometry(0.16, 0.16, 2.0, 5).rotateZ(-1.1).rotateY(1).translate(fx, 0.4, fz));
+        this.smokeSources.push({ x: fx, y: 0.6, z: fz, s: 2.4, rate: 0.55, dark: 0.4, t: Math.random() * 0.55 });
+      }
+      // supply crates + barrels stacked by the tents
+      for (let s = 0; s < 3; s++) { const bx = rnd(-span / 2.2, span / 2.2), bz = cz + rnd(-9, 9); crates.push(this.boxG(rnd(1, 1.5), rnd(0.9, 1.3), rnd(1, 1.5), bx, 0.55, bz, rnd(0, 0.6))); }
+    }
+    // ---- siege works: gabions (wicker earth-baskets) and stake lines short of the walls ----
+    const lineZ = D + 34;
+    const gN = Math.round((W * 2 + 30) / 9);
+    for (let k = 0; k < gN; k++) {
+      const gxp = -W - 15 + (W * 2 + 30) * k / (gN - 1 || 1);
+      if (Math.abs(gxp - gx) < 16) continue; // gap for the assault road
+      wicker.push(new THREE.CylinderGeometry(1.05, 1.15, 1.7, 8).translate(gxp, 0.85, lineZ + rnd(-2, 2)));
+      // a few sharpened stakes leaning toward the castle
+      for (let s = 0; s < 2; s++) stakes.push(new THREE.CylinderGeometry(0.09, 0.02, 2.4, 4).rotateX(-0.5).translate(gxp + rnd(-1.5, 1.5), 0.8, lineZ + 2.4));
+    }
+    const add = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.castShadow = m.receiveShadow = true; this.scene.add(m); } };
+    add(cloth, this.stone('#cbb894'));      // weathered linen tents
+    add(poles, this.stone('#6a4a2a'));
+    add(ring, this.stone('#4a4038'));       // fire-ring stones
+    add(logs, this.stone('#2a1c10'));       // charred logs
+    add(wicker, this.stone('#6a5230'));     // gabions (woven earth-baskets)
+    add(stakes, this.stone('#6e5330'));
+    add(crates, this.stone('#7a5a34'));
+  }
+
+  // A soft round smoke puff (white → transparent), tinted per-instance to grey/haze.
+  private smokeTex(): THREE.CanvasTexture {
+    const S = 96, cv = document.createElement('canvas'); cv.width = cv.height = S; const ctx = cv.getContext('2d')!;
+    const lobe = (x: number, y: number, r: number, a: number) => { const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r); g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); };
+    lobe(48, 52, 34, 0.5); lobe(36, 44, 22, 0.4); lobe(60, 46, 24, 0.4); lobe(48, 38, 20, 0.35);
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+  }
+  // Smoke: a besieged castle burns (columns from inside the walls) and the camp
+  // cook-fires smoulder. A pooled billboard system fed by registered fire sources.
+  private buildSmoke() {
+    // castle fires — a few interior buildings ablaze
+    const burn = CASTLE.filter(b => b.kind === 'building' || b.kind === 'keep');
+    for (let i = 0; i < Math.min(3, burn.length); i++) {
+      const b = burn[(i * 5 + 1) % burn.length];
+      this.smokeSources.push({ x: (b.x0 + b.x1) / 2, y: b.h + 3, z: (b.z0 + b.z1) / 2, s: 9, rate: 0.16, dark: 0.62, t: Math.random() * 0.16 });
+    }
+    const N = 170;
+    this.smokeMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: this.smokeTex(), transparent: true, opacity: 0.72, depthWrite: false }), N);
+    this.smokeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.smokeMesh.frustumCulled = false; this.scene.add(this.smokeMesh);
+    const dark = new THREE.Color('#3a352e');
+    for (let i = 0; i < N; i++) { this.smoke.push({ x: 0, y: -1000, z: 0, s: 1, life: 0, max: 1 }); this.smokeMesh.setColorAt(i, dark); }
+    if (this.smokeMesh.instanceColor) this.smokeMesh.instanceColor.needsUpdate = true;
   }
 
   // Dress the bailey so the inside reads as a lived-in castle, not an empty yard:
@@ -1027,6 +1130,40 @@ export class Renderer {
       this.dustMesh.setMatrixAt(i, this.dummy.matrix);
     }
     this.dustMesh.instanceMatrix.needsUpdate = true;
+    this.stepSmoke(dt);
+  }
+
+  // Smoke: fire sources emit puffs that rise, drift on the wind, swell, and dissolve
+  // into the haze (colour lerps from soot toward the sky, faking an alpha fade).
+  private _sootCol = new THREE.Color('#2a2620');
+  private _smokeCol = new THREE.Color();
+  private stepSmoke(dt: number) {
+    if (!this.smokeMesh) return;
+    const fog = new THREE.Color(this.biomeCfg.fog), wind = 1.6;
+    for (const src of this.smokeSources) {
+      src.t -= dt;
+      if (src.t <= 0) {
+        src.t += src.rate;
+        const p = this.smoke[this.smokeHead]; this.smokeHead = (this.smokeHead + 1) % this.smoke.length;
+        p.x = src.x + (Math.random() - 0.5) * src.s * 0.35; p.z = src.z + (Math.random() - 0.5) * src.s * 0.35; p.y = src.y;
+        p.s = src.s * (0.6 + Math.random() * 0.5); p.max = 4 + Math.random() * 3; p.life = p.max;
+      }
+    }
+    let anyColor = false;
+    for (let i = 0; i < this.smoke.length; i++) {
+      const p = this.smoke[i];
+      if (p.life <= 0) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.smokeMesh.setMatrixAt(i, this.dummy.matrix); continue; }
+      p.life -= dt;
+      const t = 1 - p.life / p.max;
+      p.y += dt * (2.0 + t * 2.4); p.x += dt * wind * (0.5 + t); // rise + drift, faster with age
+      const grow = 0.55 + t * 2.8, fade = t > 0.7 ? (1 - t) / 0.3 : Math.min(1, 0.55 + t * 4); // visible dark base from birth
+      const sc = p.s * grow * Math.max(0.02, fade);
+      this._smokeCol.copy(this._sootCol).lerp(fog, Math.min(0.66, t * 0.5)); this.smokeMesh.setColorAt(i, this._smokeCol); anyColor = true;
+      this.dummy.position.set(p.x, p.y, p.z); this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(sc, sc, sc); this.dummy.updateMatrix();
+      this.smokeMesh.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.smokeMesh.instanceMatrix.needsUpdate = true;
+    if (anyColor && this.smokeMesh.instanceColor) this.smokeMesh.instanceColor.needsUpdate = true;
   }
 
   render(dt = 0.016) {
