@@ -786,7 +786,9 @@ export class Sim {
     u.facing = facing;
     // trebuchets draw up in a tidy battery of ranks (a near-square block), not one
     // long line strung across the field
-    u.cols = u.type === UType.Siege ? siegeCols(u.count) : Math.max(3, Math.min(u.count, Math.round(cols)));
+    // honour the ordered formation width for every arm, trebuchets included, so a
+    // battery fans out or ranks up with the drag (min 1 file for siege, 3 for foot)
+    u.cols = u.type === UType.Siege ? Math.max(1, Math.min(u.count, Math.round(cols))) : Math.max(3, Math.min(u.count, Math.round(cols)));
     u.hold = false;
     let cell = cellOf(u.ax, u.az);
     if (BLOCKED[cell]) cell = cellOf(u.ax, u.az + 5); // nudge the flow goal off walls
@@ -859,8 +861,9 @@ export class Sim {
       z0 = Math.max(z0, line); z1 = Math.max(z1, line);
     }
     let dx = x1 - x0, dz = z1 - z0, w = Math.hypot(dx, dz);
+    const isTap = w < 4;
     let facing: number, ox = x0, oz = z0;
-    if (w < 4) { // a tap: build a line centred on the point, facing the castle
+    if (isTap) { // a tap: build a line centred on the point, facing the castle
       facing = Math.atan2(0 - x1, 0 - z1);
       const across0 = Math.max(1, Math.round(Math.sqrt(n))), lineW = across0 * 15;
       const rx = Math.cos(facing), rz = -Math.sin(facing);
@@ -869,6 +872,16 @@ export class Sim {
       let fx = -dz / w, fz = dx / w; const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
       if (fx * (0 - mx) + fz * (0 - mz) < 0) { fx = -fx; fz = -fz; }
       facing = Math.atan2(fx, fz);
+    }
+    // Trebuchets are one battery, not a grid of companies — lay them across the whole
+    // drawn line: a long drag → a wide firing line, a short drag → deep ranks, a tap →
+    // a tidy near-square block. (Spreading "companies" wouldn't help — siege is one.)
+    if (comps[0].type === UType.Siege) {
+      const total = comps.reduce((s, u) => s + u.count, 0);
+      const cols = isTap ? siegeCols(total) : Math.max(1, Math.min(total, Math.round(w / SPACING[UType.Siege]) + 1));
+      const mx = ox + dx * 0.5, mz = oz + dz * 0.5;
+      for (const u of comps) { u.assault = false; u.objKind = 'hold'; u.objSeg = -1; this.setAnchor(u, mx, mz, facing, cols); }
+      return;
     }
     const fx = Math.sin(facing), fz = Math.cos(facing);
     const across = Math.max(1, Math.min(n, Math.round(w / 16)));
