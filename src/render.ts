@@ -36,6 +36,7 @@ const SHADOW_R = [0.9, 0.78, 0.8, 1.5];
 const SOLDIER_VERT = `
   float w = sin(uTime + iPhase);
   vec3 wp;
+  vFlip = 1.0;
   if (iState > 1.5) {
     float sc = iScale * 0.95;
     float cyaw = cos(iYaw), syaw = sin(iYaw);
@@ -47,6 +48,12 @@ const SOLDIER_VERT = `
     float bob = moving * w * 0.17 * iScale;
     float roll = moving * w * 0.13;
     float cr = cos(roll), sr = sin(roll);
+    // Face the objective regardless of camera side: the baked art faces local +x
+    // (screen-right). When the objective (attackers -> castle, defenders -> field,
+    // via iFace) lies to screen-left, flag a horizontal mirror — done in the FRAGMENT
+    // by flipping the texture U, so the quad winding (and FrontSide culling) is intact.
+    vec2 toObj = uObj.xz - iPos.xz;
+    vFlip = (dot(toObj, uRight.xz) * iFace >= 0.0) ? 1.0 : 0.0;
     vec2 q = position.xy * iScale;
     vec2 qr = vec2(q.x * cr - q.y * sr, q.x * sr + q.y * cr);
     qr.y *= stretch;
@@ -63,7 +70,8 @@ const COL_DEFEND = new THREE.Color('#3f86d8');
 // instance colour's brightness also darkens the whole body, so the corpse grey-out
 // still works.
 const SOLDIER_FRAG = `
-  vec4 texColor = texture2D( map, vMapUv );
+  vec2 sUv = vec2(vFlip > 0.5 ? vMapUv.x : 1.0 - vMapUv.x, vMapUv.y); // mirror to face the objective
+  vec4 texColor = texture2D( map, sUv );
   // Heraldry is a canonical pure-green key (r=b=0): green-dominance is unambiguous,
   // so a low threshold keys every arm's colours cleanly while sepia stays untouched.
   float keyAmt = smoothstep(0.05, 0.20, texColor.g - max(texColor.r, texColor.b));
@@ -92,6 +100,7 @@ export class Renderer {
   private posDirty = [false, false, false, false];
   private uTime = { value: 0 };                       // shared shader clock (= time * 9)
   private uRight = { value: new THREE.Vector3(1, 0, 0) }; // billboard right vector (camera yaw)
+  private uObj = { value: new THREE.Vector3(0, 0, 0) };   // siege objective (castle centre) sprites face toward
   private shadowMesh!: THREE.InstancedMesh;
   private shadowsOn = true; // per-soldier ground blobs; off for very large musters
   private projMesh!: THREE.InstancedMesh;
@@ -764,6 +773,7 @@ export class Renderer {
 
   private buildSoldiers() {
     const col = new THREE.Color(), idn = new THREE.Matrix4();
+    this.uObj.value.set(LAYOUT.gate.x, 0, 0); // the castle centre sprites orient toward
     for (let t = 0; t < 4; t++) {
       const total = Math.max(1, this.sim.typeCount[t]);
       const tex = makeSoldierTexture(KIND[t]);
@@ -775,12 +785,12 @@ export class Renderer {
       const mat = new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide, toneMapped: false });
       const halfH = SPRITE_H[t] * 0.5;
       mat.onBeforeCompile = (shader) => {
-        shader.uniforms.uTime = this.uTime; shader.uniforms.uRight = this.uRight; shader.uniforms.uHalfH = { value: halfH };
-        shader.vertexShader = 'attribute vec3 iPos;\nattribute float iScale;\nattribute float iPhase;\nattribute float iState;\nattribute float iYaw;\n'
-          + 'uniform float uTime;\nuniform vec3 uRight;\nuniform float uHalfH;\n'
+        shader.uniforms.uTime = this.uTime; shader.uniforms.uRight = this.uRight; shader.uniforms.uHalfH = { value: halfH }; shader.uniforms.uObj = this.uObj;
+        shader.vertexShader = 'attribute vec3 iPos;\nattribute float iScale;\nattribute float iPhase;\nattribute float iState;\nattribute float iYaw;\nattribute float iFace;\n'
+          + 'uniform float uTime;\nuniform vec3 uRight;\nuniform float uHalfH;\nuniform vec3 uObj;\nvarying float vFlip;\n'
           + shader.vertexShader.replace('#include <begin_vertex>', SOLDIER_VERT);
         // tint only the heraldry (green key) with the faction colour; keep the rest baked
-        shader.fragmentShader = shader.fragmentShader
+        shader.fragmentShader = ('varying float vFlip;\n' + shader.fragmentShader)
           .replace('#include <color_fragment>', '')
           .replace('#include <map_fragment>', SOLDIER_FRAG);
       };
@@ -799,8 +809,9 @@ export class Renderer {
       const iPhase = new THREE.InstancedBufferAttribute(new Float32Array(total), 1);
       const iState = new THREE.InstancedBufferAttribute(new Float32Array(total), 1).setUsage(THREE.DynamicDrawUsage);
       const iYaw = new THREE.InstancedBufferAttribute(new Float32Array(total), 1).setUsage(THREE.DynamicDrawUsage);
+      const iFace = new THREE.InstancedBufferAttribute(new Float32Array(total), 1); // +1 attacker faces castle, -1 defender faces field
       geo.setAttribute('iPos', iPos); geo.setAttribute('iScale', iScale); geo.setAttribute('iPhase', iPhase);
-      geo.setAttribute('iState', iState); geo.setAttribute('iYaw', iYaw);
+      geo.setAttribute('iState', iState); geo.setAttribute('iYaw', iYaw); geo.setAttribute('iFace', iFace);
       for (let i = 0; i < this.sim.n; i++) {
         if (this.sim.typ[i] !== t) continue;
         const slot = this.sim.slot[i];
@@ -809,6 +820,7 @@ export class Renderer {
         col.setRGB(bse.r * br * (0.95 + jit(i, 3) * 0.1), bse.g * br, bse.b * br * (0.95 + jit(i, 4) * 0.1));
         mesh.setColorAt(slot, col);
         iScale.array[slot] = this.sscale[i]; iPhase.array[slot] = i * 1.7;
+        iFace.array[slot] = this.sim.fac[i] === Faction.Attacker ? 1 : -1;
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       this.iPosA[t] = iPos; this.iStateA[t] = iState; this.iYawA[t] = iYaw;
