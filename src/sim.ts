@@ -489,6 +489,7 @@ export interface Unit {
   // break in at a specific wall/gate section, then push on to the keep.
   objKind: 'hold' | 'storm' | 'breach';
   objSeg: number;      // the wall/gate section a 'breach' order targets (-1 otherwise)
+  plug: number;        // defender: the breached section this company has been sent to plug (-1 = none)
   // signature stance/ability per arm: Heavy 'shield' (slow, armoured, steady),
   // Light 'sprint' (fast, exposed), Archer 'volley' (longer, harder, slower).
   stance: 'normal' | 'shield' | 'sprint' | 'volley';
@@ -644,7 +645,7 @@ export class Sim {
       cx: ax, cz: az, siegeTargetSeg: -1,
       ammo: AMMO[type] * count, ammoMax: AMMO[type] * count,
       focusX: 0, focusZ: 0, hasFocus: false, fireArrows: !!opts.fireArrows,
-      holdFire: false, assault: false, objKind: 'hold', objSeg: -1,
+      holdFire: false, assault: false, objKind: 'hold', objSeg: -1, plug: -1,
       stance: 'normal', chargeT: 0, chargeCd: 0,
       name: opts.name ?? TYPE_NAME[type],
     };
@@ -1760,14 +1761,16 @@ export class Sim {
         this.moveXZ(i, horiz ? along : wallPerp, horiz ? wallPerp : along, 2.0 * dt);
         return;
       }
-      // battlement clear of defenders nearby → descend a tower into the city
-      const tw = this.nearestTowerPos(this.px[i], this.pz[i]);
-      if (!tw) { this.climbState[i] = 3; return; } // no tower left → drop where we are
-      const l = this.moveXZ(i, tw.x, tw.z, 4.0 * dt);
-      if (l < tw.r + 1.0) this.climbState[i] = 3;
-    } else if (st === 3) {                // descend the tower stairs toward the interior we're assaulting
-      this.moveXZ(i, u.ax, u.az, 3.2 * dt);
-      this.py[i] = Math.max(0, this.py[i] - 4 * dt);
+      // lip clear → climb straight DOWN the inner face where we crested. (We used to
+      // traverse the wall-top to the nearest tower, which sent men "flying" in a line
+      // at wall height across open ground when the tower lay past a breach.)
+      this.climbState[i] = 3;
+    } else if (st === 3) {                // climb down the inner face into the bailey
+      // step inward toward the keep as we descend, so we land just INSIDE the wall
+      // (never drifting back outside), then fight on the ground from there.
+      const kdx = this.keepX - this.px[i], kdz = this.keepZ - this.pz[i], kl = Math.hypot(kdx, kdz) || 1;
+      this.moveXZ(i, this.px[i] + kdx / kl * 4, this.pz[i] + kdz / kl * 4, 2.4 * dt);
+      this.py[i] = Math.max(0, this.py[i] - 5.5 * dt);
       if (this.py[i] <= 0.05) { this.climbState[i] = 0; this.py[i] = 0; }
     } else {                              // st 4: defender holds the wall-top — intercept climbers
       const seg = CASTLE[this.climbSeg[i]];
@@ -1864,6 +1867,29 @@ export class Sim {
       if (!this.alive[i] || this.py[i] < 1) continue;
       if (this.px[i] >= seg.x0 - 1.5 && this.px[i] <= seg.x1 + 1.5 && this.pz[i] >= seg.z0 - 1.5 && this.pz[i] <= seg.z1 + 1.5)
         this.kill(i, this.units[this.unit[i]]);
+    }
+    this.plugBreach(segIdx); // the defenders throw their reserves into the gap
+  }
+
+  // When a section falls, the nearest free reserve companies re-form IN the gap (just
+  // inside it, toward the keep) so the breach is contested, not walked through. A town
+  // militia has no reserve to spare, so a palisade raid stays a straight fight.
+  private plugBreach(segIdx: number) {
+    if (LAYOUT.palisade) return;
+    const g = CASTLE[segIdx];
+    const gcx = (g.x0 + g.x1) / 2, gcz = (g.z0 + g.z1) / 2;
+    const kx = this.keepX - gcx, kz = this.keepZ - gcz, kl = Math.hypot(kx, kz) || 1;
+    const tx = gcx + kx / kl * 4, tz = gcz + kz / kl * 4;             // muster point just inside the gap
+    // free reserves = defender ground foot, holding, not routing, not already plugging a live breach
+    const free = this.units.filter(u => u.faction === Faction.Defender && u.alive > 0 && u.hold && !u.routing
+      && (u.type === UType.Light || u.type === UType.Heavy)
+      && ((u.cx - tx) ** 2 + (u.cz - tz) ** 2) < 95 * 95        // only reserves near enough to reach it
+      && (u.plug < 0 || !CASTLE[u.plug] || !CASTLE[u.plug].dead));
+    free.sort((a, b) => ((a.cx - tx) ** 2 + (a.cz - tz) ** 2) - ((b.cx - tx) ** 2 + (b.cz - tz) ** 2));
+    const facing = Math.atan2(gcx - this.keepX, gcz - this.keepZ);    // face outward, toward the incomers
+    for (let k = 0; k < Math.min(2, free.length); k++) {             // two companies to a breach
+      const u = free[k]; u.plug = segIdx;
+      this.setAnchor(u, tx, tz + (k ? 5 : 0), facing, Math.max(4, Math.round(Math.sqrt(u.alive) * 1.6)));
     }
   }
 

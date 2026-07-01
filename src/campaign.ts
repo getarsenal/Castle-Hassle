@@ -262,15 +262,17 @@ export interface Raid { id: number; name: string; blurb: string; difficulty: num
 // meaningful block of troops.
 export function generateRaids(): Raid[] {
   return [
-    { id: 0, name: 'Bandit Stockade', difficulty: 0.55, reward: 140, seedBase: 50101,
+    // A rising ladder: difficulty ASCENDS with the reward, so the listed
+    // resistance always matches the fight the player actually gets.
+    { id: 0, name: 'Bandit Stockade', difficulty: 0.40, reward: 140, seedBase: 50101,
       blurb: 'A village behind a low timber stockade — no stone, no towers, just a brigand militia. Send in your foot and take it. (No siege train needed.)',
       style: { scale: 0.66, aspect: 1.25, concentric: false, round: false, strongKeep: false, town: 0.32, shape: 'rect', palisade: true } },
-    { id: 1, name: "Rival Baron's Keep", difficulty: 0.42, reward: 280, seedBase: 50102,
+    { id: 1, name: "Rival Baron's Keep", difficulty: 0.55, reward: 280, seedBase: 50102,
       blurb: 'A minor lord who will not bend the knee. Break his keep and take his silver.',
       style: { scale: 0.72, aspect: 1.1, concentric: false, round: true, strongKeep: true, town: 0.2, shape: 'rect' } },
-    { id: 2, name: 'Fortified Caravanserai', difficulty: 0.6, reward: 480, seedBase: 50103,
+    { id: 2, name: 'Fortified Caravanserai', difficulty: 0.72, reward: 480, seedBase: 50103,
       blurb: 'A walled trading post heavy with silver — and the hired guards to match.',
       style: { scale: 0.82, aspect: 1.3, concentric: false, round: true, strongKeep: false, town: 0.45, shape: 'twin' } },
   ];
 }
-export function raidResistance(d: number): string { return d < 0.55 ? 'Light' : d < 0.85 ? 'Moderate' : 'Heavy'; }
+export function raidResistance(d: number): string { return d < 0.48 ? 'Light' : d < 0.65 ? 'Moderate' : 'Heavy'; }
