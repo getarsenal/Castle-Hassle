@@ -15,7 +15,7 @@ import { openMuster } from './muster';
 import { UNIT_ART } from './uniticons';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
-import { startTutorial } from './tutorial';
+import { startTutorial, startCampaignTour } from './tutorial';
 import { initDevPanel, DevConfig } from './devpanel';
 import * as THREE from 'three';
 declare const __BUILD__: string; // injected at build time (commit + timestamp)
@@ -560,6 +560,9 @@ function openMap() {
       goldEl, coffer: document.getElementById('mapGold'),
       onCoin: () => feedback.coin(), onLand: () => feedback.reward(),
     });
+  } else {
+    // first time on the map (a fresh crusade): teach the raid → recruit → conquer loop
+    setTimeout(() => startCampaignTour(), 400);
   }
 }
 // Map header doubles as the campaign objective: which realm you're in, how much
