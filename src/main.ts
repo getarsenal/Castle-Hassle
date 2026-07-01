@@ -3,6 +3,7 @@ import './fonts.css';
 import { Renderer } from './render';
 import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP } from './campaign';
 import { playConquest } from './conquest';
+import { nextQuality } from './adaptres';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
@@ -805,6 +806,7 @@ const devCampaign = {
   enterCastle: (id: number) => enterCastle(castles[Math.max(0, Math.min(castles.length - 1, id))]),
   previewConquest: () => devPreviewConquest(),
 };
+(window as any).__nextQuality = nextQuality; // QA hook for the adaptive-resolution decision
 const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {
@@ -863,10 +865,10 @@ function frame(now: number) {
     const q = renderer.quality;
     telFps = fps; telSimMs = simMs / perfFrames; telGfxMs = gfxMs / perfFrames;
     if (perfEl) perfEl.textContent = `${fps.toFixed(0)}fps · ${sim.n}u · ${Math.round(q * 100)}%`;
-    // adaptive resolution: ease down when struggling, back up when there's room
+    // Adaptive resolution — only sheds pixels when RENDER is the bottleneck, and
+    // restores quality when the SIM is what's capping fps (see adaptres.ts).
     if (adaptCooldown > 0) adaptCooldown--;
-    else if (fps < 30 && q > 0.45) { renderer.setQuality(q - 0.12); adaptCooldown = 3; }
-    else if (fps > 54 && q < 1) { renderer.setQuality(q + 0.1); adaptCooldown = 3; }
+    else { const nq = nextQuality(q, fps, telSimMs, telGfxMs); if (nq !== q) { renderer.setQuality(nq); adaptCooldown = 3; } }
     perfAcc = 0; perfFrames = 0; simMs = 0; gfxMs = 0;
   }
 
