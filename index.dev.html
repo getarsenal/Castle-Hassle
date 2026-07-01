@@ -377,6 +377,13 @@
     #map.show #devMapBtn { display: flex; }
     #devMapBtn svg { width: 19px; height: 19px; display: block; }
     #devMapBtn:active { transform: translateY(1px); }
+    #mapMenuBtn { position: absolute; top: calc(var(--safe-top) + 10px); right: 52px; z-index: 6; display: none;
+      width: 38px; height: 38px; align-items: center; justify-content: center; padding: 0; cursor: pointer;
+      border-radius: var(--r-pill); border: 1px solid rgba(255,225,160,0.32); color: var(--gold-soft);
+      background: linear-gradient(180deg, rgba(64,46,24,0.95), rgba(30,21,11,0.95)); box-shadow: var(--sh-1); }
+    #map.show #mapMenuBtn { display: flex; }
+    #mapMenuBtn svg { width: 20px; height: 20px; display: block; }
+    #mapMenuBtn:active { transform: translateY(1px); }
     #mapHeader { position: absolute; top: calc(var(--safe-top) + 12px); left: 50%; transform: translateX(-50%);
       background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.94)); border: 1px solid rgba(255,225,160,0.3);
       color: var(--gold-soft); font: 700 14px 'Cinzel', Georgia, serif;
@@ -654,6 +661,7 @@
 
   <div id="map">
     <canvas id="mapCanvas"></canvas>
+    <button id="mapMenuBtn" aria-label="Menu" title="Menu &amp; settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     <div id="mapGold" aria-label="Gold">
       <span class="coin"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.3" fill="#ffdf73" stroke="#b9851c" stroke-width="1.6"/><circle cx="12" cy="12" r="5.8" fill="none" stroke="#c9921f" stroke-width="1.3"/></svg></span>
       <span id="mapGoldVal">0</span>

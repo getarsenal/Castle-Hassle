@@ -1,7 +1,9 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars } from './campaign';
+import { loadProfile, saveProfile, recordBattle, DIFFICULTY, ACHIEVEMENTS } from './profile';
+import { openMainMenu, openSettings, openAchievements } from './menu';
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
 import { surveyCastle } from './sim';
@@ -286,6 +288,7 @@ function showEnd() {
   let brought = 0, fell = 0;
   const rows: string[] = [];
   const promotions: string[] = []; // arms that earned a higher rank this battle
+  let tookCastle = false, battleSpoils = 0; // for the lifetime record
   for (let i = 0; i < ARMY_KEYS.length; i++) {
     const k = ARMY_KEYS[i];
     const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
@@ -320,7 +323,7 @@ function showEnd() {
   if (win && activeRaid) {
     bannerTitle.textContent = 'RAID SUCCESSFUL';
     bannerTitle.style.color = '#5fd16a';
-    progress.gold += activeRaid.reward;
+    progress.gold += activeRaid.reward; battleSpoils = activeRaid.reward;
     bannerText.textContent = `You sack ${activeRaid.name} and ride off with the spoils.  +${activeRaid.reward} gold.`;
   } else if (win) {
     bannerTitle.textContent = 'CASTLE TAKEN';
@@ -345,6 +348,7 @@ function showEnd() {
         }
         bannerTitle.style.color = '#ffd24a';
       }
+      if (firstTake) { tookCastle = true; battleSpoils = goldGained; }
       // queue the grand conquest flourish to play once we're back on the campaign map
       if (firstTake) pendingConquest = { id: activeCastle.id, name: activeCastle.name, goldBefore, goldGained, realm: realm && realm.key !== 'The Holy Land' ? realm.name : realm ? 'Jerusalem' : null };
     }
@@ -358,6 +362,20 @@ function showEnd() {
     bannerText.textContent = activeRaid ? 'They drove your raiders off empty-handed.' : 'Your assault was thrown back from the walls.';
   }
   bannerText.textContent += casualtyLine;
+  // ---- lifetime record + achievements (every battle, campaign or not) ----
+  const campaignWon = win && !!activeCastle && progress.completed.length >= castles.length;
+  const totalKills = kills.reduce((a, b) => a + b, 0);
+  const newAch = recordBattle(profile, {
+    won: win, castleTaken: tookCastle, raidWon: win && !!activeRaid, kills: totalKills,
+    gold: battleSpoils, menLost: fell, campaignWon,
+  });
+  saveProfile(profile);
+  if (newAch.length) { // announce freshly-earned honours under the Butcher's Bill
+    const names = newAch.map(id => ACHIEVEMENTS.find(a => a.id === id)?.name).filter(Boolean);
+    const html = bannerLosses.innerHTML + `<div class="lhead hon">Honour${names.length > 1 ? 's' : ''} Earned</div>`
+      + names.map(n => `<div class="hrow"><span class="hn">★ ${n}</span><span class="hv"></span></div>`).join('');
+    bannerLosses.innerHTML = html; bannerLosses.classList.add('show');
+  }
   if (inCampaign) saveProgress(progress);
   restartBtn.textContent = inCampaign ? (activeCastle && win ? 'March On' : 'Back to the Map') : 'Fight Again';
   document.getElementById('hud')?.classList.add('over'); // hide the live HUD behind the end card
@@ -474,6 +492,34 @@ function handleTap(cx: number, cy: number) {
 const castles = generateCastles();
 const raids = generateRaids();
 let progress: Progress = loadProgress();
+let profile = loadProfile();
+// The main menu: pick a save slot (or start fresh), reachable from the title.
+function showMainMenu() {
+  openMainMenu({
+    castles, profile,
+    onPlay: (slot, isNew) => {
+      setActiveSlot(slot);
+      progress = isNew ? freshProgress() : loadProgress();
+      if (isNew) { progress.started = Date.now(); saveProgress(progress); }
+      openMap();
+    },
+    onSettings: () => openSettings(profile, applySettings, () => {}),
+    onAchievements: () => openAchievements(profile, () => {}),
+  });
+}
+// apply live settings (volume / mute / difficulty) and persist the profile
+function applySettings() {
+  audioMuted = profile.settings.muted;
+  battleAudio.setMuted(audioMuted);
+  battleAudio.setVolume?.(profile.settings.volume);
+  if (titleMusic) { titleMusic.muted = audioMuted; }
+  document.getElementById('muteBtn')?.classList.toggle('off', audioMuted);
+  const d = DIFFICULTY[profile.settings.difficulty];
+  setDifficultyScalars(d.garrison, d.reward);
+  saveProfile(profile);
+}
+// fold the saved difficulty mode into the campaign scalars right away
+setDifficultyScalars(DIFFICULTY[profile.settings.difficulty].garrison, DIFFICULTY[profile.settings.difficulty].reward);
 let activeCastle: CampaignCastle | null = null;
 let activeRaid: Raid | null = null;
 let map: WorldMap3D | null = null;
@@ -528,6 +574,7 @@ function updateMapHeader() {
       `<div style="font:600 10px 'EB Garamond',serif;letter-spacing:.3px;opacity:.82;margin-top:3px;white-space:normal;color:#e7d3a6">${cc.twist}</div>` +
       `<div class="mapProg"><i style="width:${cc.total ? Math.round(cc.taken / cc.total * 100) : 0}%"></i></div>`;
 }
+document.getElementById('mapMenuBtn')?.addEventListener('click', () => { feedback.open(); if (map) map.destroy(); map = null; show('map', false); showMainMenu(); });
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => { feedback.open(); openUpgrades(progress, refreshGoldLabel); });
 document.getElementById('raidsBtn')?.addEventListener('click', () => { feedback.open(); openRaids(progress, raids, enterRaid, refreshGoldLabel); });
 document.getElementById('musterMapBtn')?.addEventListener('click', () => { feedback.open(); openMuster(progress, computeBuffs(progress.upg).recruitDiscount, warBuffs().atk, refreshGoldLabel); });
@@ -617,17 +664,17 @@ function stopMenuMusic() { if (titleMusic && !titleMusic.paused) rampVolume(titl
 
 // ---- master mute (persistent, always reachable) ----
 // We force audio on at the gate, so a one-tap mute is a hard requirement, not a nicety.
-let audioMuted = (() => { try { return localStorage.getItem('ch.muted') === '1'; } catch { return false; } })();
+let audioMuted = profile.settings.muted; // mute now lives in the profile
 function applyMute() {
   battleAudio.setMuted(audioMuted);
+  battleAudio.setVolume?.(profile.settings.volume);
   if (titleMusic) titleMusic.muted = audioMuted;
   document.getElementById('muteBtn')?.classList.toggle('off', audioMuted);
 }
 function initMuteControl() {
   applyMute();
   document.getElementById('muteBtn')?.addEventListener('click', () => {
-    audioMuted = !audioMuted;
-    try { localStorage.setItem('ch.muted', audioMuted ? '1' : '0'); } catch { /* ignore */ }
+    audioMuted = !audioMuted; profile.settings.muted = audioMuted; saveProfile(profile);
     battleAudio.unlock?.(); applyMute(); // the toggle can double as the first audio-unlock gesture
   });
 }
@@ -636,7 +683,7 @@ function initMuteControl() {
 // loads silent (web audio can't start without a gesture), and "March to War" is
 // the gate — that tap unlocks audio, plays the studio sting WITH sound as a brief
 // "Scheidel Interactive presents" transition, then drops into the campaign.
-$('startGameBtn')?.addEventListener('click', () => playStudioSting(() => openMap()), { once: true });
+$('startGameBtn')?.addEventListener('click', () => playStudioSting(() => showMainMenu()), { once: true });
 function playStudioSting(then: () => void) {
   battleAudio.unlock?.();
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;

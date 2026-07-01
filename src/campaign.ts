@@ -117,21 +117,45 @@ export function battleXP(opts: { engaged: boolean; kills: number; survivalRate: 
   return Math.round(10 + opts.kills + (opts.won ? 25 : 0) + opts.survivalRate * 15);
 }
 
-export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; }
-const KEY = 'castlehassle.campaign.v1';
-export function loadProgress(): Progress {
-  try {
-    const p = JSON.parse(localStorage.getItem(KEY) || '');
-    if (p && typeof p.unlocked === 'number') {
-      const army: Army = { ...STARTING_ARMY, ...(p.army || {}) };           // migrate old saves → a fresh army
-      const gold = typeof p.gold === 'number' ? p.gold : STARTING_GOLD;
-      const vet: VetRoll = { ...freshVet(), ...(p.vet || {}) };             // older saves start their corps green
-      return { unlocked: p.unlocked, completed: p.completed || [], gold, upg: p.upg || {}, army, vet };
-    }
-  } catch { /* ignore */ }
-  return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY }, vet: freshVet() };
+export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; started?: number; }
+
+// ---- save slots: several independent campaigns, plus the single lifetime profile ----
+export const NUM_SLOTS = 3;
+const SLOT_KEY = (n: number) => `castlehassle.slot${n}.v1`;
+const LEGACY_KEY = 'castlehassle.campaign.v1';
+let activeSlot = 0;
+export function setActiveSlot(n: number) { activeSlot = Math.max(0, Math.min(NUM_SLOTS - 1, n | 0)); }
+export function getActiveSlot() { return activeSlot; }
+
+export function freshProgress(): Progress { return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY }, vet: freshVet() }; }
+// bring any saved blob up to the current shape (army/vet added over the campaign)
+function normalize(p: any): Progress | null {
+  if (!p || typeof p.unlocked !== 'number') return null;
+  return {
+    unlocked: p.unlocked, completed: p.completed || [], gold: typeof p.gold === 'number' ? p.gold : STARTING_GOLD,
+    upg: p.upg || {}, army: { ...STARTING_ARMY, ...(p.army || {}) }, vet: { ...freshVet(), ...(p.vet || {}) }, started: p.started,
+  };
 }
-export function saveProgress(p: Progress) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+function rawSlot(n: number): Progress | null {
+  try { const s = localStorage.getItem(SLOT_KEY(n)); if (s) return normalize(JSON.parse(s)); } catch { /* ignore */ }
+  // one-time migration: the old single save becomes slot 0
+  if (n === 0) { try { const s = localStorage.getItem(LEGACY_KEY); if (s) { localStorage.setItem(SLOT_KEY(0), s); return normalize(JSON.parse(s)); } } catch { /* ignore */ } }
+  return null;
+}
+// load the ACTIVE slot (used throughout the game); empty slot → a fresh campaign
+export function loadProgress(): Progress { return rawSlot(activeSlot) || freshProgress(); }
+export function saveProgress(p: Progress) { try { localStorage.setItem(SLOT_KEY(activeSlot), JSON.stringify(p)); } catch { /* ignore */ } }
+export function slotExists(n: number): boolean { return !!rawSlot(n); }
+export function deleteSlot(n: number) { try { localStorage.removeItem(SLOT_KEY(n)); if (n === 0) localStorage.removeItem(LEGACY_KEY); } catch { /* ignore */ } }
+// a compact summary for the slot-select menu (null if the slot is empty)
+export interface SlotSummary { slot: number; realm: string; taken: number; total: number; gold: number; men: number; won: boolean; }
+export function slotSummary(n: number, castles: CampaignCastle[]): SlotSummary | null {
+  const p = rawSlot(n); if (!p) return null;
+  const cc = currentCountry(p, castles);
+  const men = p.army.heavy + p.army.light + p.army.archer + p.army.cavalry;
+  const won = p.completed.length >= castles.length;
+  return { slot: n, realm: won ? 'Crusade won' : cc.name, taken: p.completed.length, total: castles.length, gold: p.gold, men, won };
+}
 // recruitment price, with the Quartermaster discount applied
 export function recruitPrice(key: ArmyKey, n: number, discount: number): number { return Math.ceil(RECRUIT_COST[key] * n * discount); }
 
@@ -144,10 +168,13 @@ export function recruitPrice(key: ArmyKey, n: number, discount: number): number 
 // the crusader fortresses many times larger — so the campaign is about GROWING the
 // host, not steamrolling with your starting army. Drives garrison size, archer
 // damage and keep guard in the sim (and the map card / balance readout).
-export function castleDifficulty(tier: number): number { return 0.45 + tier * 1.75; }
+// global difficulty-mode scalars (Squire/Knight/Warlord), set from the profile
+let diffGarrison = 1, diffReward = 1;
+export function setDifficultyScalars(garrison: number, reward: number) { diffGarrison = garrison; diffReward = reward; }
+export function castleDifficulty(tier: number): number { return (0.45 + tier * 1.75) * diffGarrison; }
 
-// Gold awarded for taking a castle — scales with how late/hard it is.
-export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }
+// Gold awarded for taking a castle — scales with how late/hard it is (and the mode).
+export function goldReward(tier: number): number { return Math.round((160 + 560 * tier) * diffReward); }
 
 // ---- Siege scenery: which biome surrounds the battlefield, and is it on a coast ----
 // Drives the battle map's horizon (hills/mountains/dunes), ground tint and sky so a
