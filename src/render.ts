@@ -26,6 +26,8 @@ const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
 // figure (narrow), cavalry a horse+rider (wide). Feet are anchored to the ground.
 const SPRITE_H = [2.9, 2.6, 2.7, 3.1];
 const SPRITE_W = KIND.map((k, i) => SPRITE_H[i] * spriteAspect(k));
+// Mirror sprites whose art faces the "wrong" way so the whole host faces one way.
+const FLIP = [true, false, false, false]; // heavy is drawn facing left; the rest face right
 const SHADOW_R = [0.9, 0.78, 0.8, 1.5];
 // GPU billboarding: the vertex shader turns a per-instance position (+scale/phase/
 // state/yaw) into a camera-facing, bobbing sprite — so the CPU only writes 3 floats
@@ -784,6 +786,10 @@ export class Renderer {
       };
       mat.customProgramCacheKey = () => 'castleSoldier';
       const geo = new THREE.PlaneGeometry(SPRITE_W[t], SPRITE_H[t]);
+      // The commissioned art doesn't all face the same way (heavy is drawn facing
+      // left, the rest right). Mirror the odd ones by flipping their U so the whole
+      // host reads as one formation facing the same direction.
+      if (FLIP[t]) { const uv = geo.attributes.uv as THREE.BufferAttribute; for (let k = 0; k < uv.count; k++) uv.setX(k, 1 - uv.getX(k)); uv.needsUpdate = true; }
       const mesh = new THREE.InstancedMesh(geo, mat, total);
       mesh.frustumCulled = false;
       for (let k = 0; k < total; k++) mesh.setMatrixAt(k, idn); // identity -> shader supplies the transform
