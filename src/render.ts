@@ -584,6 +584,43 @@ export class Renderer {
   // The besieging camp: this is a SIEGE, not an empty lawn. Behind the deploy line
   // sit the attacker's tents and cook-fires; nearer the walls, gabions and sharpened
   // stakes of the siege works. Everything static & merged by material (no frame cost).
+  // Evenly-spaced points around an OFFSET of the castle footprint: a rounded
+  // rectangle (edges pushed out by `g`, quarter-circle corners of radius `g`),
+  // then perturbed outward by a smooth wobble so the siege line reads as an
+  // irregular, hand-dug work that follows the walls at a constant gap. Each node
+  // carries its outward normal (nx,nz) and bearing-from-centre (ang).
+  private siegeRingNodes(ccx: number, ccz: number, hx: number, hz: number, g: number): { x: number; z: number; nx: number; nz: number; ang: number }[] {
+    type Piece = { straight: boolean; x0: number; z0: number; x1: number; z1: number; nx: number; nz: number; cx: number; cz: number; a0: number; a1: number; len: number };
+    const S = (x0: number, z0: number, x1: number, z1: number, nx: number, nz: number): Piece =>
+      ({ straight: true, x0, z0, x1, z1, nx, nz, cx: 0, cz: 0, a0: 0, a1: 0, len: Math.hypot(x1 - x0, z1 - z0) });
+    const A = (cx: number, cz: number, a0: number, a1: number): Piece =>
+      ({ straight: false, x0: 0, z0: 0, x1: 0, z1: 0, nx: 0, nz: 0, cx, cz, a0, a1, len: Math.abs(a1 - a0) * g });
+    const pieces: Piece[] = [
+      S(-hx, -(hz + g), hx, -(hz + g), 0, -1),          // top edge
+      A(hx, -hz, -Math.PI / 2, 0),                       // TR corner
+      S(hx + g, -hz, hx + g, hz, 1, 0),                  // right edge
+      A(hx, hz, 0, Math.PI / 2),                         // BR corner
+      S(hx, hz + g, -hx, hz + g, 0, 1),                  // bottom edge
+      A(-hx, hz, Math.PI / 2, Math.PI),                  // BL corner
+      S(-(hx + g), hz, -(hx + g), -hz, -1, 0),           // left edge
+      A(-hx, -hz, Math.PI, Math.PI * 1.5),               // TL corner
+    ];
+    let P = 0; for (const p of pieces) P += p.len;
+    const N = Math.max(28, Math.round(P / 9));
+    const out: { x: number; z: number; nx: number; nz: number; ang: number }[] = [];
+    for (let k = 0; k < N; k++) {
+      let sp = k * P / N, pi = 0;
+      while (pi < pieces.length - 1 && sp > pieces[pi].len) { sp -= pieces[pi].len; pi++; }
+      const p = pieces[pi]; let x: number, z: number, nx: number, nz: number;
+      if (p.straight) { const f = p.len ? sp / p.len : 0; x = p.x0 + (p.x1 - p.x0) * f; z = p.z0 + (p.z1 - p.z0) * f; nx = p.nx; nz = p.nz; }
+      else { const a = p.a0 + (p.a1 - p.a0) * (p.len ? sp / p.len : 0); nx = Math.cos(a); nz = Math.sin(a); x = p.cx + nx * g; z = p.cz + nz * g; }
+      const j = Math.sin(k * 0.6) * 4 + Math.sin(k * 0.17 + 1.3) * 3 + (Math.random() - 0.5) * 3; // smooth irregular wobble
+      x += nx * j; z += nz * j;
+      out.push({ x: ccx + x, z: ccz + z, nx, nz, ang: Math.atan2(x, z) });
+    }
+    return out;
+  }
+
   private buildSiegeCamp() {
     const gx = LAYOUT.gate.x, F = LAYOUT.front;
     const maxZ = WORLD.maxZ - 10, minX = WORLD.minX + 12, maxX = WORLD.maxX - 12;
@@ -639,26 +676,24 @@ export class Renderer {
     const flat = (w: number, d: number, x: number, z: number, ry: number, y = 0.035) =>
       new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).rotateY(ry).translate(x, y, z);
 
-    // ---- THE INVESTMENT: a ring of siege lines encircling the whole castle ----
-    // A trench with a spoil rampart behind it, gabions lining the near lip and a
-    // picket of stakes leaning at the wall — repeated around a ring (circumvallation),
-    // with a single gap on the gate side for the assault. Between ring and wall lies
-    // churned earth, spoil and rubble from the digging and the bombardment.
+    // ---- THE INVESTMENT: siege lines encircling the WHOLE castle ----
+    // The line traces an offset of the castle's own footprint (a jittered rounded
+    // rectangle), so it follows the shape and keeps a constant gap all the way
+    // around — gabions front the wall, a zig-zag fire trench runs behind them, and
+    // churned earth/rubble fills the gap. One break on the gate side for the assault.
     let bx0 = 1e9, bx1 = -1e9, bz0 = 1e9, bz1 = -1e9;
     for (const b of CASTLE) { if (b.kind === 'building') continue; bx0 = Math.min(bx0, b.x0); bx1 = Math.max(bx1, b.x1); bz0 = Math.min(bz0, b.z0); bz1 = Math.max(bz1, b.z1); }
-    const ccx = (bx0 + bx1) / 2, ccz = (bz0 + bz1) / 2, castleR = Math.max(bx1 - bx0, bz1 - bz0) / 2;
-    const Rmax = Math.min(maxX - ccx, ccx - minX, maxZ - ccz, ccz - (WORLD.minZ + 12)) - 6;
-    const R = Math.min(castleR + 38, Rmax);
+    const ccx = (bx0 + bx1) / 2, ccz = (bz0 + bz1) / 2;
+    const hx = (bx1 - bx0) / 2, hz = (bz1 - bz0) / 2, castleR = Math.max(hx, hz);
+    const gap = 30;                                                            // clear gap from the wall to the works
+    const nodes = this.siegeRingNodes(ccx, ccz, hx, hz, gap);
     const ga = Math.atan2(gx - ccx, F - ccz);                                  // bearing to the gate (assault gap)
-    const steps = Math.max(30, Math.round(2 * Math.PI * R / 11));
-    for (let i = 0; i < steps; i++) {
-      const th = i / steps * Math.PI * 2;
-      const adist = Math.abs(((th - ga + Math.PI * 3) % (Math.PI * 2)) - Math.PI); // angular gap to the gate
-      const cs = Math.cos(th), sn = Math.sin(th), inx = -cs, inz = -sn;         // radial: outward (cs,sn), inward = toward castle
-      const tvx = -sn, tvz = cs, ry = Math.atan2(tvx, tvz);                     // tangent (along the line) + box heading
-      const px = ccx + R * cs, pz = ccz + R * sn;
+    const gateOpen = (a: number) => Math.abs(((a - ga + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.5;
+    for (const nd of nodes) {
+      const inx = -nd.nx, inz = -nd.nz, tvx = -nd.nz, tvz = nd.nx, ry = Math.atan2(tvx, tvz); // inward toward castle + tangent
+      const px = nd.x, pz = nd.z;
       rubbleG.push(flat(rnd(9, 12), 9, px + inx * 5, pz + inz * 5, ry, 0.03));  // churned earth under the line
-      if (adist < 0.52) continue;                                               // leave the assault avenue open
+      if (gateOpen(nd.ang)) continue;                                          // leave the assault avenue open
       // gabions (earth-filled baskets) — the front cover facing the wall
       const gbx = px + inx * 6, gbz = pz + inz * 6;
       for (let g = -1; g <= 1; g++) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.95, 8).translate(gbx + tvx * g * 3.6, 0.98, gbz + tvz * g * 3.6));
@@ -668,32 +703,30 @@ export class Renderer {
       if (chance(0.2)) planks.push(new THREE.BoxGeometry(3.2, 2.4, 0.3).rotateX(-0.26).rotateY(ry).translate(gbx, 1.35, gbz)); // occasional mantlet by the gabions
     }
     // ---- THE FIRE TRENCH: a loose zig-zag ditch dug behind the gabions ----
-    // Alternating traverses (a cremaillère trace) that follows the ring, the dark
-    // ditch floor flanked by aprons of dug earth and clumps of spoil on both lips.
-    const Rt = R + 1, zig = 4.5;
+    const zig = 4.5;
     let prev: { x: number; z: number } | null = null;
-    for (let i = 0; i <= steps; i++) {
-      const th = (i % steps) / steps * Math.PI * 2;
-      const adist = Math.abs(((th - ga + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-      if (adist < 0.55) { prev = null; continue; }                             // break the trench at the assault gap
-      const rr = Rt + ((Math.floor(i / 2) % 2) ? zig : -zig);                  // 2-step runs => a loose zig-zag
-      const nx = ccx + Math.cos(th) * rr, nz = ccz + Math.sin(th) * rr;
+    for (let i = 0; i <= nodes.length; i++) {
+      const nd = nodes[i % nodes.length];
+      if (gateOpen(nd.ang)) { prev = null; continue; }                          // break the trench at the assault gap
+      const off = 2 + ((Math.floor(i / 2) % 2) ? zig : -zig);                   // 2-node runs, offset OUT behind the gabions
+      const cx2 = nd.x + nd.nx * off, cz2 = nd.z + nd.nz * off;
       if (prev) {
-        const mx = (prev.x + nx) / 2, mz = (prev.z + nz) / 2, ddx = nx - prev.x, ddz = nz - prev.z;
+        const mx = (prev.x + cx2) / 2, mz = (prev.z + cz2) / 2, ddx = cx2 - prev.x, ddz = cz2 - prev.z;
         const len = Math.hypot(ddx, ddz), hd = Math.atan2(ddx, ddz);
         rubbleG.push(flat(8, len + 2.5, mx, mz, hd, 0.03));                    // dug-earth apron around the cut
         trenchG.push(flat(3.0, len + 1.2, mx, mz, hd, 0.055));                 // the dark ditch floor
         const perpX = Math.cos(hd), perpZ = -Math.sin(hd);                     // spoil heaped on both lips
-        for (let k = 0; k < 3; k++) { const side = k % 2 ? 1 : -1, off = rnd(2.2, 3.4) * side, s = rnd(0.45, 1.05); earth.push(this.boxG(s, s * rnd(0.4, 0.8), s * rnd(0.8, 1.2), mx + perpX * off + rnd(-2, 2), s * 0.3, mz + perpZ * off + rnd(-2, 2), Math.random() * 3.14)); }
+        for (let k = 0; k < 3; k++) { const side = k % 2 ? 1 : -1, o2 = rnd(2.2, 3.4) * side, s = rnd(0.45, 1.05); earth.push(this.boxG(s, s * rnd(0.4, 0.8), s * rnd(0.8, 1.2), mx + perpX * o2 + rnd(-2, 2), s * 0.3, mz + perpZ * o2 + rnd(-2, 2), Math.random() * 3.14)); }
       }
-      prev = { x: nx, z: nz };
+      prev = { x: cx2, z: cz2 };
     }
 
-    // ---- SPOIL & RUBBLE: churned dirt, dug spoil-heaps and shattered stone between ring and wall ----
-    const nRub = Math.round(steps * 0.4);
+    // ---- SPOIL & RUBBLE: churned dirt, dug spoil-heaps and shattered stone in the gap ----
+    const nRub = Math.round(nodes.length * 0.5);
     for (let i = 0; i < nRub; i++) {
-      const a = Math.random() * Math.PI * 2, rr = castleR + rnd(9, Math.max(11, R - castleR - 8));
-      const rx = ccx + Math.cos(a) * rr, rz = ccz + Math.sin(a) * rr;
+      const nd = nodes[Math.floor(Math.random() * nodes.length)];
+      const d = rnd(4, gap - 6);                                               // between the works and the wall
+      const rx = nd.x - nd.nx * d, rz = nd.z - nd.nz * d;
       rubbleG.push(flat(rnd(4, 7), rnd(4, 7), rx, rz, Math.random() * 3.14, 0.04));
       for (let k = 0; k < 2 + Math.floor(Math.random() * 3); k++) {
         const s = rnd(0.5, 1.5), ox = rnd(-3.5, 3.5), oz = rnd(-3.5, 3.5);
@@ -704,14 +737,14 @@ export class Renderer {
     // ---- ENCAMPMENTS: the besiegers' tents ringed OUTSIDE the line (main camp to the rear) ----
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
     const cluster = (ang: number, n: number, withFire = true) => {
-      const rr = R + rnd(16, 30), cxp = clamp(ccx + Math.cos(ang) * rr, minX + 6, maxX - 6), czp = clamp(ccz + Math.sin(ang) * rr, WORLD.minZ + 14, maxZ - 6);
+      const rr = castleR + gap + rnd(16, 30), cxp = clamp(ccx + Math.cos(ang) * rr, minX + 6, maxX - 6), czp = clamp(ccz + Math.sin(ang) * rr, WORLD.minZ + 14, maxZ - 6);
       for (let k = 0; k < n; k++) tent(clamp(cxp + rnd(-16, 16), minX + 4, maxX - 4), clamp(czp + rnd(-13, 13), WORLD.minZ + 12, maxZ - 4), chance(0.16));
       if (withFire) cookfire(cxp + rnd(-8, 8), czp + rnd(-8, 8), chance(0.5));
       for (let s = 0; s < 1 + Math.floor(Math.random() * 2); s++) dump(cxp + rnd(-12, 12), czp + rnd(-12, 12));
       if (chance(0.7)) { banner.push(new THREE.CylinderGeometry(0.08, 0.08, 8, 5).translate(cxp, 4, czp)); flag.push(this.boxG(2.4, 1.2, 0.12, cxp + 1.2, 6.2, czp)); }
     };
     // main camp: several dense rows on the assault (gate) side, behind the host
-    const campZ0 = Math.min(maxZ - 52, ccz + R + 34);
+    const campZ0 = Math.min(maxZ - 52, ccz + hz + gap + 40);
     for (let r = 0; r < 3; r++) {
       const cz = Math.min(maxZ - 8, campZ0 + r * 22);
       const span = Math.min((maxX - minX) * 0.9, castleR * 3 + 80), count = Math.round(span / 15);
