@@ -132,16 +132,9 @@ export function saveProgress(p: Progress) { try { localStorage.setItem(KEY, JSON
 // recruitment price, with the Quartermaster discount applied
 export function recruitPrice(key: ArmyKey, n: number, discount: number): number { return Math.ceil(RECRUIT_COST[key] * n * discount); }
 
-// Defender strength shown on the castle panel — mirrors the sim's garrison
-// formula (garrison + reserves + a citadel guard + wall/tower archers) using the
-// castle's size from its style, so the number tracks what you'll actually face.
-export function garrisonStrength(style: CastleStyle, difficulty: number): number {
-  const W = Math.max(40, Math.min(90, 59 * style.scale * Math.sqrt(style.aspect)));
-  const D = Math.max(36, Math.min(78, 52 * style.scale / Math.sqrt(style.aspect)));
-  const garr = Math.max(280, Math.min(560, W * D / 14)) * difficulty;
-  const citadel = style.concentric || style.strongKeep || W * D > 3200;
-  return Math.round(garr * 1.6 + (citadel ? 220 * difficulty : 0) + 260);
-}
+// (The castle info card's garrison count now comes from sim.surveyCastle(), which
+// shares the exact order-of-battle the siege spawns — so the card can't drift from
+// the real fight the way the old style-only estimate did.)
 
 // Gold awarded for taking a castle — scales with how late/hard it is.
 export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }

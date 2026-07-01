@@ -4,6 +4,7 @@ import { Renderer } from './render';
 import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP } from './campaign';
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
+import { surveyCastle } from './sim';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
 import { openRaids } from './raids';
@@ -807,6 +808,7 @@ const devCampaign = {
   previewConquest: () => devPreviewConquest(),
 };
 (window as any).__nextQuality = nextQuality; // QA hook for the adaptive-resolution decision
+(window as any).__surveyCastle = surveyCastle; (window as any).__castles = castles; // QA: card garrison vs real siege
 const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {

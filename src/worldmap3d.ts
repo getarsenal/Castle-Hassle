@@ -3,12 +3,53 @@
 // settlement markers. Built from the baked land/coast grid + mountain ranges.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CampaignCastle, Progress, garrisonStrength } from './campaign';
+import { CampaignCastle, Progress } from './campaign';
+import { surveyCastle, CastleSurvey } from './sim';
 import { RANGES, FORESTS, REALMS, BORDERS } from './mapfeatures';
 import mapData from './worldmapdata.json';
 
 const mercYdeg = (lat: number) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * 180 / Math.PI;
 const hash = (x: number, z: number) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
+
+// A top-down ink schematic of a castle, drawn straight from its real layout so every
+// stronghold looks like itself — its curtain walls (broken at the gate), its towers,
+// its inner citadel/keep. Attacker approaches from the bottom (the gate faces south).
+function castleSchematicSVG(s: CastleSurvey): string {
+  const L = s.layout, pad = 8;
+  const xmin = -L.W - pad, xmax = L.W + pad, zmin = -L.D - pad, zmax = L.D + pad;
+  const wSpan = xmax - xmin, hSpan = zmax - zmin;
+  const VW = 250, VH = Math.max(120, Math.min(210, Math.round(VW * hSpan / wSpan)));
+  const X = (x: number) => ((x - xmin) / wSpan * VW), Y = (z: number) => ((z - zmin) / hSpan * VH);
+  const nn = (v: number) => v.toFixed(1);
+  const seg = (x1: number, y1: number, x2: number, y2: number, sw = 2.2) => `<line x1="${nn(x1)}" y1="${nn(y1)}" x2="${nn(x2)}" y2="${nn(y2)}" stroke="#e9cf92" stroke-width="${sw}" stroke-linecap="round"/>`;
+  const p: string[] = [];
+  // faint town buildings inside the bailey, for a lived-in feel
+  for (const b of L.buildings) p.push(`<rect x="${nn(X(b.x - b.w / 2))}" y="${nn(Y(b.z - b.d / 2))}" width="${nn(b.w / wSpan * VW)}" height="${nn(b.d / hSpan * VH)}" fill="rgba(233,207,146,0.14)"/>`);
+  // curtain walls, broken at any gate gap
+  for (const ln of L.wallLines) {
+    const gap = ln.gapH > 0 && Math.abs(ln.gapC) < 1e8;
+    if (ln.horiz) {
+      const z = ln.z0;
+      if (gap) { p.push(seg(X(ln.x0), Y(z), X(ln.gapC - ln.gapH), Y(z))); p.push(seg(X(ln.gapC + ln.gapH), Y(z), X(ln.x1), Y(z))); }
+      else p.push(seg(X(ln.x0), Y(z), X(ln.x1), Y(z)));
+    } else {
+      const x = ln.x0;
+      if (gap) { p.push(seg(X(x), Y(ln.z0), X(x), Y(ln.gapC - ln.gapH))); p.push(seg(X(x), Y(ln.gapC + ln.gapH), X(x), Y(ln.z1))); }
+      else p.push(seg(X(x), Y(ln.z0), X(x), Y(ln.z1)));
+    }
+  }
+  // inner citadel ward
+  if (L.citadel) { const c = L.citadel; p.push(`<rect x="${nn(X(c.x0))}" y="${nn(Y(c.z0))}" width="${nn((c.x1 - c.x0) / wSpan * VW)}" height="${nn((c.z1 - c.z0) / hSpan * VH)}" fill="rgba(233,207,146,0.05)" stroke="#e9cf92" stroke-width="1.5"/>`); }
+  // the keep — a solid gold block at the heart
+  const k = s.keep || (L.citadel ? { x0: L.citadel.cx - 3, x1: L.citadel.cx + 3, z0: L.citadel.cz - 3, z1: L.citadel.cz + 3 } : null);
+  if (k) p.push(`<rect x="${nn(X(k.x0))}" y="${nn(Y(k.z0))}" width="${nn((k.x1 - k.x0) / wSpan * VW)}" height="${nn((k.z1 - k.z0) / hSpan * VH)}" rx="1.5" fill="#ffe0a4"/>`);
+  // towers as ringed dots (great towers larger)
+  for (const t of L.towers) p.push(`<circle cx="${nn(X(t.x))}" cy="${nn(Y(t.z))}" r="${t.big ? 3.7 : 2.5}" fill="#2a2013" stroke="#ffe6a6" stroke-width="1.4"/>`);
+  // a little approach chevron below the south gate, so the way in reads at a glance
+  const gx = X(Math.max(-L.W, Math.min(L.W, L.gate.x))), gy = Y(L.D + pad * 0.5);
+  p.push(`<path d="M${nn(gx - 5)} ${nn(gy + 6)} L${nn(gx)} ${nn(gy)} L${nn(gx + 5)} ${nn(gy + 6)}" fill="none" stroke="#b5402f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`);
+  return `<svg viewBox="0 0 ${VW} ${VH}" class="csvg" preserveAspectRatio="xMidYMid meet">${p.join('')}</svg>`;
+}
 
 interface BB { w: number; e: number; s: number; n: number; }
 
@@ -455,7 +496,13 @@ export class WorldMap3D {
     @keyframes cpIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
     .castlePanel h3{margin:0 0 4px;font-size:23px;color:#ffe6a6;letter-spacing:.4px;line-height:1.1}
     .castlePanel .reg{font-size:11px;color:#c7a86e;margin-bottom:13px;text-transform:uppercase;letter-spacing:2.5px}
-    .castlePanel .blurb{font-size:13.5px;line-height:1.5;color:#e3d4ba;margin:0 auto 16px;max-width:330px}
+    .castlePanel{max-height:min(84vh,680px);overflow-y:auto}
+    .castlePanel .reg{margin-bottom:9px}
+    .castlePanel .cmap{margin:2px auto 12px;width:min(74%,215px);padding:11px 12px 8px;border-radius:11px;
+      background:radial-gradient(125% 120% at 50% -5%,rgba(70,52,24,0.55),rgba(18,12,7,0.4));border:1px solid #5a4626;box-shadow:inset 0 1px 0 rgba(255,225,160,0.1)}
+    .castlePanel .csvg{width:100%;height:auto;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.55))}
+    .castlePanel .blurb{font-size:13.5px;line-height:1.5;color:#e3d4ba;margin:0 auto 10px;max-width:330px}
+    .castlePanel .obreak{font-size:11.5px;color:#d8b878;margin:0 auto 15px;max-width:320px;line-height:1.45;font-style:italic}
     .castlePanel .stats{margin:0 auto 18px;text-align:left;max-width:340px}
     .castlePanel .stat{font-size:13.5px;display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:8px 2px;border-bottom:1px solid #3a2c19}
     .castlePanel .stat:last-child{border-bottom:none}
@@ -501,21 +548,52 @@ export class WorldMap3D {
     'Windsor': "A royal fortress-palace since the Conqueror, its round tower rising over the Thames.",
     'Salzburg': "The Hohensalzburg towers over the Salzach, one of the largest medieval castles to survive intact.",
   };
-  private describe(node: CampaignCastle): { blurb: string; stats: [string, string][]; canSiege: boolean } {
+  // Threat score per castle, cached — the exact garrison it will field, hardened for
+  // concentric rings and an inner citadel. Used to spread difficulty stars across the
+  // whole campaign so early holds read as 1-2★ and crusader fortresses as 5★.
+  private threat?: Map<number, number>;
+  private threatOf(n: CampaignCastle): number {
+    const s = surveyCastle(n.seed, n.style, 1 + n.tier * 0.8);
+    return s.total * (s.concentric ? 1.25 : 1) * (s.citadel ? 1.12 : 1);
+  }
+  private starsFor(node: CampaignCastle): number {
+    if (!this.threat) { this.threat = new Map(); for (const n of this.nodes) this.threat.set(n.id, this.threatOf(n)); }
+    const sorted = [...this.threat.values()].sort((a, b) => a - b);
+    const v = this.threat.get(node.id) ?? this.threatOf(node);
+    const rank = sorted.filter(x => x <= v).length - 1; // 0-based position among all castles
+    return Math.max(1, Math.min(5, 1 + Math.floor(rank / Math.max(1, sorted.length) * 5)));
+  }
+  private describe(node: CampaignCastle): { blurb: string; stats: [string, string][]; schematic: string; total: number; breakdown: string; canSiege: boolean } {
     const st = node.style; const done = this.prog.completed.includes(node.id); const current = node.id === this.prog.unlocked;
-    const defenders = garrisonStrength(st, 1 + node.tier * 0.8);
-    const stars = Math.max(1, Math.min(5, 1 + Math.round(node.tier * 4)));
-    const def = st.concentric ? 'Concentric double walls' : st.strongKeep ? 'Mighty central keep' : st.round ? 'Round drum towers' : 'Curtain wall & towers';
-    const blurb = WorldMap3D.BLURBS[node.name] || `A ${st.concentric ? 'concentric' : st.round ? 'drum-towered' : 'stout'} stronghold of ${node.region}, ${node.tier > 0.6 ? 'strongly held and richly garrisoned' : 'guarding the road east'}.`;
+    const stars = this.starsFor(node);                 // (runs the campaign-wide threat pass, may mutate globals)
+    const s = surveyCastle(node.seed, node.style, 1 + node.tier * 0.8); // re-survey the clicked castle for its schematic + numbers
+    const pl = s.plan;
+    const menAtArms = pl.garrison + pl.citGuard, archers = pl.wallArchers.length + pl.towerArchers + pl.citArchers.length;
+    const breakdown = `${menAtArms.toLocaleString()} men-at-arms · ${archers.toLocaleString()} archers · ${pl.reserves.toLocaleString()} in reserve`;
+    const walls = s.palisade ? 'Timber palisade' : s.concentric ? 'Concentric double ring' : 'Stone curtain wall';
+    const hold = s.citadel ? 'Walled inner citadel' : s.keep ? 'Great central keep' : 'Open bailey';
+    const towers = s.towers > 0 ? `${s.towers}${s.bigTowers ? ` · ${s.bigTowers} great` : ''}` : '—';
+    const blurb = WorldMap3D.BLURBS[node.name] || `A ${s.concentric ? 'concentric' : s.round ? 'drum-towered' : 'stout'} stronghold of ${node.region}, ${node.tier > 0.6 ? 'strongly held and richly garrisoned' : 'guarding the road east'}.`;
     return {
-      blurb,
-      stats: [['Region', node.region], ['Garrison', `~${defenders} men`], ['Defenses', def], ['Difficulty', '★'.repeat(stars) + '☆'.repeat(5 - stars)], ['Status', done ? 'Conquered' : current ? 'Your objective' : 'Awaiting']],
+      blurb, total: s.total, breakdown, schematic: castleSchematicSVG(s),
+      stats: [
+        ['Garrison', `${s.total.toLocaleString()} strong`],
+        ['Walls', walls],
+        ['Towers', towers],
+        ['Stronghold', hold],
+        ['Ground', `${s.footprintW} × ${s.footprintD} paces`],
+        ['Difficulty', '★'.repeat(stars) + '☆'.repeat(5 - stars)],
+        ['Status', done ? 'Conquered' : current ? 'Your objective' : 'Awaiting'],
+      ],
       canSiege: current,
     };
   }
   private showPanel(node: CampaignCastle) {
     const p = this.panelEl; if (!p) return; const d = this.describe(node);
-    p.innerHTML = `<h3>${node.name}</h3><div class="reg">${node.region}</div><div class="blurb">${d.blurb}</div>`
+    p.innerHTML = `<h3>${node.name}</h3><div class="reg">${node.region}</div>`
+      + `<div class="cmap">${d.schematic}</div>`
+      + `<div class="blurb">${d.blurb}</div>`
+      + `<div class="obreak">${d.breakdown}</div>`
       + `<div class="stats">${d.stats.map(s => `<div class="stat"><span>${s[0]}</span><b>${s[1]}</b></div>`).join('')}</div>`
       + `<div class="row">${d.canSiege ? '<button class="go">March &amp; Lay Siege</button>' : ''}<button class="close">Close</button></div>`;
     p.classList.add('show');

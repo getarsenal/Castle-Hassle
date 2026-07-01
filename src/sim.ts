@@ -243,6 +243,61 @@ export function generateCastle(seed: number, style?: CastleStyle) {
   rebuildBlocked();
 }
 
+// ---- Defender order-of-battle: the SINGLE source of truth for who holds a castle.
+// Both the live siege (Sim.setup) and the campaign-map survey draw from this, so the
+// garrison on the info card is exactly the garrison you fight. ----
+// archers lined along a set of wall-lines (two ranks, inset from corners & the gate)
+function wallArcherPoints(lines: WallLine[], spacing: number, inset: number, wallTop: number): [number, number, number][] {
+  const pts: [number, number, number][] = [];
+  for (const ln of lines) {
+    const a0 = (ln.horiz ? ln.x0 : ln.z0) + inset, a1 = (ln.horiz ? ln.x1 : ln.z1) - inset;
+    for (let a = a0; a <= a1; a += spacing) {
+      if (Math.abs(a - ln.gapC) < ln.gapH + 1) continue; // leave the gate clear
+      for (let rk = 0; rk < 2; rk++) { const off = -ln.outer * rk * 1.3; pts.push(ln.horiz ? [a, ln.z0 + off, wallTop] : [ln.x0 + off, a, wallTop]); }
+    }
+  }
+  return pts;
+}
+export interface DefenderPlan {
+  wallArchers: [number, number, number][]; towerArchers: number;
+  garrison: number; reserves: number; citGuard: number; citArchers: [number, number, number][];
+  total: number;
+}
+export function defenderPlan(L: CastleLayout, difficulty: number): DefenderPlan {
+  const pal = L.palisade, W = L.W, D = L.D;
+  const wallArchers = wallArcherPoints(L.wallLines, pal ? 16 : 2.6, 6, pal ? 5 : WH);
+  const towerArchers = L.towers.length * 4;
+  const garrison = Math.round((pal ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(900, Math.round(W * D / 11)))) * difficulty);
+  const reserves = Math.round(garrison * (pal ? 0.35 : 0.6));
+  const citGuard = L.citadel ? Math.round(220 * difficulty) : 0;
+  const citArchers = L.citadel ? wallArcherPoints(L.citadel.wallLines, 2.4, 4, WH) : [];
+  const total = wallArchers.length + towerArchers + garrison + reserves + citGuard + citArchers.length;
+  return { wallArchers, towerArchers, garrison, reserves, citGuard, citArchers, total };
+}
+
+// A full survey of a castle from its seed+style — exact garrison order-of-battle plus
+// the structural facts (towers, rings, citadel, footprint) and the layout to draw a
+// schematic. Deterministic; used by the campaign map's info card.
+export interface CastleSurvey {
+  plan: DefenderPlan; total: number;
+  towers: number; bigTowers: number; wallRings: number; gates: number;
+  concentric: boolean; citadel: boolean; round: boolean; palisade: boolean;
+  footprintW: number; footprintD: number; layout: CastleLayout;
+  keep: { x0: number; x1: number; z0: number; z1: number } | null;
+}
+export function surveyCastle(seed: number, style: CastleStyle, difficulty: number): CastleSurvey {
+  generateCastle(seed, style);
+  const L = LAYOUT, plan = defenderPlan(L, difficulty);
+  const gates = L.wallLines.filter(ln => ln.gapH > 0 && Math.abs(ln.gapC) < 1e8).length + (L.citadel ? 1 : 0);
+  const kp = CASTLE.find(b => b.kind === 'keep');
+  return {
+    plan, total: plan.total, towers: L.towers.length, bigTowers: L.towers.filter(t => t.big).length,
+    wallRings: L.concentric ? 2 : 1, gates, concentric: !!L.concentric, citadel: !!L.citadel,
+    round: !!L.round, palisade: !!L.palisade, footprintW: Math.round(L.W * 2), footprintD: Math.round(L.D * 2), layout: L,
+    keep: kp ? { x0: kp.x0, x1: kp.x1, z0: kp.z0, z1: kp.z1 } : null,
+  };
+}
+
 function blockedAt(x: number, z: number): boolean {
   for (let i = 0; i < CASTLE.length; i++) {
     const b = CASTLE[i];
@@ -622,22 +677,7 @@ export class Sim {
     const L = LAYOUT, W = L.W, D = L.D;
     const C = this.comp; const cols = (n: number) => Math.max(8, Math.round(Math.sqrt(n) * 1.7));
 
-    // ---------------- DEFENDERS (generated from the layout) ----------------
-    // archers lined along a set of wall-lines (two ranks, inset from corners/gate)
-    const archersOnLines = (lines: WallLine[], spacing: number, inset: number, wallTop = WH): [number, number, number][] => {
-      const pts: [number, number, number][] = [];
-      for (const ln of lines) {
-        const a0 = (ln.horiz ? ln.x0 : ln.z0) + inset, a1 = (ln.horiz ? ln.x1 : ln.z1) - inset;
-        for (let a = a0; a <= a1; a += spacing) {
-          if (Math.abs(a - ln.gapC) < ln.gapH + 1) continue; // leave the gate clear
-          for (let rk = 0; rk < 2; rk++) {
-            const off = -ln.outer * rk * 1.3;
-            pts.push(ln.horiz ? [a, ln.z0 + off, wallTop] : [ln.x0 + off, a, wallTop]);
-          }
-        }
-      }
-      return pts;
-    };
+    // ---------------- DEFENDERS (from the shared order-of-battle plan) ----------------
     const cit = L.citadel;
     const openBailey = (): [number, number, number] => {
       let x = 0, z = 0;
@@ -662,12 +702,9 @@ export class Sim {
     // it can't hide behind unreachable archers), and the militia fights on the
     // ground where your infantry can cut it down — a raid you win by routing the
     // defenders, not by a grinding siege.
-    const wallPts = archersOnLines(L.wallLines, L.palisade ? 16 : 2.6, 6, L.palisade ? 5 : WH);
-    const NT = TOWERS.length;
-    const garr = Math.round((L.palisade ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(900, Math.round(W * D / 11)))) * this.difficulty);
-    const reserves = Math.round(garr * (L.palisade ? 0.35 : 0.6));
-    const citGuard = cit ? Math.round(220 * this.difficulty) : 0;
-    const cPts = cit ? archersOnLines(cit.wallLines, 2.4, 4) : [];
+    const plan = defenderPlan(L, this.difficulty);
+    const wallPts = plan.wallArchers, NT = TOWERS.length, garr = plan.garrison;
+    const reserves = plan.reserves, citGuard = plan.citGuard, cPts = plan.citArchers;
     const attReq = C.heavy + C.light + C.archer + C.cavalry;
     const defReq = wallPts.length + NT * 4 + garr + reserves + citGuard + cPts.length;
     // Safety valve only: keep the combined host just under the array ceiling so
