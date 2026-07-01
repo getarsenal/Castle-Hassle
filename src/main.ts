@@ -1,7 +1,7 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty } from './campaign';
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
 import { surveyCastle } from './sim';
@@ -539,7 +539,7 @@ function bringable(key: ArmyKey): number {
 function enterCastle(c: CampaignCastle) {
   activeCastle = c; activeRaid = null; currentNoArtillery = false; currentVet = null;
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
-  currentSeed = c.seed; currentDifficulty = 1 + c.tier * 0.8; currentStyle = c.style;
+  currentSeed = c.seed; currentDifficulty = castleDifficulty(c.tier); currentStyle = c.style;
   currentBiome = biomeFor(c.region); currentCoastal = isCoastal(c.name);
   // default: bring your whole army
   for (const k of ARMY_KEYS) (comp as any)[k] = bringable(k);
@@ -824,7 +824,7 @@ const devBalance = {
       vetMul: vm, hpBuff: w.atk.hp, meleeBuff: w.atk.melee, archerBuff: w.atk.archer, siegeBuff: w.atk.siege,
     };
     return castles.map(c => {
-      const s = surveyCastle(c.seed, c.style, 1 + c.tier * 0.8), pl = s.plan;
+      const s = surveyCastle(c.seed, c.style, castleDifficulty(c.tier)), pl = s.plan;
       const a = assessBattle(host, {
         garrison: pl.garrison, reserves: pl.reserves, archers: pl.wallArchers.length + pl.towerArchers + pl.citArchers.length,
         citGuard: pl.citGuard, total: s.total, concentric: s.concentric, citadel: s.citadel, towers: s.towers,
@@ -836,6 +836,7 @@ const devBalance = {
 (window as any).__nextQuality = nextQuality; // QA hook for the adaptive-resolution decision
 (window as any).__surveyCastle = surveyCastle; (window as any).__castles = castles; // QA: card garrison vs real siege
 (window as any).__balance = devBalance; // QA: campaign force-ratio curve
+(window as any).__raids = raids; // QA: raid economy analysis
 const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign, balance: devBalance });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {

@@ -3,7 +3,7 @@
 // settlement markers. Built from the baked land/coast grid + mountain ranges.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CampaignCastle, Progress } from './campaign';
+import { CampaignCastle, Progress, castleDifficulty } from './campaign';
 import { surveyCastle, CastleSurvey } from './sim';
 import { RANGES, FORESTS, REALMS, BORDERS } from './mapfeatures';
 import mapData from './worldmapdata.json';
@@ -553,7 +553,7 @@ export class WorldMap3D {
   // whole campaign so early holds read as 1-2★ and crusader fortresses as 5★.
   private threat?: Map<number, number>;
   private threatOf(n: CampaignCastle): number {
-    const s = surveyCastle(n.seed, n.style, 1 + n.tier * 0.8);
+    const s = surveyCastle(n.seed, n.style, castleDifficulty(n.tier));
     return s.total * (s.concentric ? 1.25 : 1) * (s.citadel ? 1.12 : 1);
   }
   private starsFor(node: CampaignCastle): number {
@@ -566,7 +566,7 @@ export class WorldMap3D {
   private describe(node: CampaignCastle): { blurb: string; stats: [string, string][]; schematic: string; total: number; breakdown: string; canSiege: boolean } {
     const st = node.style; const done = this.prog.completed.includes(node.id); const current = node.id === this.prog.unlocked;
     const stars = this.starsFor(node);                 // (runs the campaign-wide threat pass, may mutate globals)
-    const s = surveyCastle(node.seed, node.style, 1 + node.tier * 0.8); // re-survey the clicked castle for its schematic + numbers
+    const s = surveyCastle(node.seed, node.style, castleDifficulty(node.tier)); // re-survey the clicked castle for its schematic + numbers
     const pl = s.plan;
     const menAtArms = pl.garrison + pl.citGuard, archers = pl.wallArchers.length + pl.towerArchers + pl.citArchers.length;
     const breakdown = `${menAtArms.toLocaleString()} men-at-arms · ${archers.toLocaleString()} archers · ${pl.reserves.toLocaleString()} in reserve`;

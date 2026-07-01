@@ -73,8 +73,11 @@ export function generateCastles(): CampaignCastle[] {
 export interface Army { heavy: number; light: number; archer: number; cavalry: number; siege: number; }
 export type ArmyKey = keyof Army;
 export const ARMY_KEYS: ArmyKey[] = ['heavy', 'light', 'archer', 'cavalry', 'siege'];
-export const STARTING_ARMY: Army = { heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8 };
-export const STARTING_GOLD = 250;
+// You start as a minor lord with a small founding warband — enough to raid with,
+// not to storm a great castle. The campaign is about BUILDING the host: raid for
+// coin, recruit, and watch your banner swell. (Tuned against the dev balance readout.)
+export const STARTING_ARMY: Army = { heavy: 300, light: 220, archer: 260, cavalry: 100, siege: 4 };
+export const STARTING_GOLD = 300;
 // gold to raise one soldier / engine of each kind. Tiered so a purchase carries
 // weight: light foot are cheap fodder, archers and horse sit in the middle, and
 // the heavy men-at-arms and the great siege engines are the big-ticket buys you
@@ -135,6 +138,13 @@ export function recruitPrice(key: ArmyKey, n: number, discount: number): number 
 // (The castle info card's garrison count now comes from sim.surveyCastle(), which
 // shares the exact order-of-battle the siege spawns — so the card can't drift from
 // the real fight the way the old style-only estimate did.)
+
+// The difficulty multiplier a castle fights at, by campaign position (tier 0→1).
+// A steep ramp: the first holds are small garrisons a founding warband can storm,
+// the crusader fortresses many times larger — so the campaign is about GROWING the
+// host, not steamrolling with your starting army. Drives garrison size, archer
+// damage and keep guard in the sim (and the map card / balance readout).
+export function castleDifficulty(tier: number): number { return 0.45 + tier * 1.75; }
 
 // Gold awarded for taking a castle — scales with how late/hard it is.
 export function goldReward(tier: number): number { return Math.round(160 + 560 * tier); }
@@ -219,17 +229,21 @@ export function countryJustConquered(castleId: number, progress: Progress, castl
 // same permanent casualties as a siege, so they're a risk/reward grind, not a
 // free purse — but a careful raider can fatten the war chest before a hard siege.
 export interface Raid { id: number; name: string; blurb: string; difficulty: number; reward: number; seedBase: number; style: CastleStyle; }
+// A risk/reward ladder that sits BELOW the castles: each raid is a lighter fight
+// than a siege of the same era but pays real silver, so raiding is how a small
+// warband funds its growth. Rewards are generous — a couple of raids should buy a
+// meaningful block of troops.
 export function generateRaids(): Raid[] {
   return [
-    { id: 0, name: 'Bandit Stockade', difficulty: 0.6, reward: 90, seedBase: 50101,
+    { id: 0, name: 'Bandit Stockade', difficulty: 0.55, reward: 140, seedBase: 50101,
       blurb: 'A village behind a low timber stockade — no stone, no towers, just a brigand militia. Send in your foot and take it. (No siege train needed.)',
       style: { scale: 0.66, aspect: 1.25, concentric: false, round: false, strongKeep: false, town: 0.32, shape: 'rect', palisade: true } },
-    { id: 1, name: "Rival Baron's Keep", difficulty: 0.7, reward: 175, seedBase: 50102,
+    { id: 1, name: "Rival Baron's Keep", difficulty: 0.42, reward: 280, seedBase: 50102,
       blurb: 'A minor lord who will not bend the knee. Break his keep and take his silver.',
-      style: { scale: 0.78, aspect: 1.1, concentric: false, round: true, strongKeep: true, town: 0.2, shape: 'rect' } },
-    { id: 2, name: 'Fortified Caravanserai', difficulty: 0.95, reward: 280, seedBase: 50103,
+      style: { scale: 0.72, aspect: 1.1, concentric: false, round: true, strongKeep: true, town: 0.2, shape: 'rect' } },
+    { id: 2, name: 'Fortified Caravanserai', difficulty: 0.6, reward: 480, seedBase: 50103,
       blurb: 'A walled trading post heavy with silver — and the hired guards to match.',
-      style: { scale: 0.92, aspect: 1.3, concentric: false, round: true, strongKeep: false, town: 0.45, shape: 'twin' } },
+      style: { scale: 0.82, aspect: 1.3, concentric: false, round: true, strongKeep: false, town: 0.45, shape: 'twin' } },
   ];
 }
 export function raidResistance(d: number): string { return d < 0.55 ? 'Light' : d < 0.85 ? 'Moderate' : 'Heavy'; }
