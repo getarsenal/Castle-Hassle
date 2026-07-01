@@ -720,23 +720,25 @@ export class Sim {
     const F = L.front; // southern extent (past any barbican) — deploy beyond it
     const division = (total: number, type: UType, cx: number, cz: number, gap: number, name: string) => {
       if (total <= 0) return;
-      const across = Math.max(1, Math.round(Math.sqrt(Math.ceil(total / 40) * 1.6)));
+      // Wider, airier grids: companies stand well apart so a big host reads as a
+      // spread-out army encamped across the field, not a clump of dense columns.
+      const across = Math.max(1, Math.round(Math.sqrt(Math.ceil(total / 40) * 2.0)));
       let left = total, k = 0, idx = 0;
       while (left > 0) {
         const c = Math.min(left, 30 + Math.floor(this.rnd() * 21));
         const col = k % across, row = Math.floor(k / across);
-        const ax = cx + (col - (across - 1) / 2) * 17, az = cz + row * 13;
+        const ax = cx + (col - (across - 1) / 2) * 23, az = cz + row * 19;
         const ccols = Math.max(3, Math.round(Math.sqrt(c) * 1.4));
         this.addUnit(Faction.Attacker, type, c, block(ax, az, ccols, gap), { name: `${name} ${++idx}`, cols: ccols, div: type });
         left -= c; k++;
       }
     };
-    division(S(C.heavy), UType.Heavy, 0, F + 40, 1.6, 'Heavy Inf');
-    division(S(C.light), UType.Light, -W * 0.78, F + 56, 1.4, 'Light Inf');
-    division(S(C.archer), UType.Archer, 0, F + 74, 1.5, 'Archers');
-    division(S(C.cavalry), UType.Cavalry, W * 0.86, F + 56, 2.2, 'Cavalry');
+    division(S(C.heavy), UType.Heavy, 0, F + 46, 2.0, 'Heavy Inf');
+    division(S(C.light), UType.Light, -W * 0.9, F + 66, 1.8, 'Light Inf');
+    division(S(C.archer), UType.Archer, 0, F + 88, 1.9, 'Archers');
+    division(S(C.cavalry), UType.Cavalry, W * 1.0, F + 66, 2.7, 'Cavalry');
     // trebuchets form up in a battery of RANKS (a near-square block), not one long line
-    if (C.siege) { const scols = siegeCols(C.siege); this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 92, scols, 13), { name: 'Trebuchets', cols: scols, div: UType.Siege }); }
+    if (C.siege) { const scols = siegeCols(C.siege); this.addUnit(Faction.Attacker, UType.Siege, C.siege, block(0, F + 112, scols, 14), { name: 'Trebuchets', cols: scols, div: UType.Siege }); }
 
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
