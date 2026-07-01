@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SOLDIER_SPRITE } from './spritedata';
 
 // Procedurally drawn, chunky "toy-soldier" sprites in the house style. Each is
 // drawn mostly in white (so a per-instance faction tint multiplies into a solid
@@ -117,14 +118,20 @@ function drawSoldier(ctx: CanvasRenderingContext2D, kind: SpriteKind) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-export function makeSoldierTexture(kind: SpriteKind): THREE.CanvasTexture {
-  const [c, ctx] = newCanvas();
-  drawSoldier(ctx, kind);
-  const tex = new THREE.CanvasTexture(c);
+// The commissioned sepia sprites (inlined, background already removed). Loaded from a
+// data URI — near-instant — and the green heraldry is colour-keyed to the faction
+// in the soldier fragment shader. spriteAspect() drives the billboard's width:height.
+export function makeSoldierTexture(kind: SpriteKind): THREE.Texture {
+  const tex = new THREE.TextureLoader().load(SOLDIER_SPRITE[kind].png);
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace; tex.needsUpdate = true;
+  tex.anisotropy = 4; tex.needsUpdate = true;
   return tex;
 }
+export const spriteAspect = (kind: SpriteKind): number => SOLDIER_SPRITE[kind].aspect;
+
+// (The old procedural toy-soldier drawing is kept below but unused now that we ship
+// real art; makeArrowTexture still uses the canvas helpers.)
 
 export function makeArrowTexture(): THREE.CanvasTexture {
   const [c, ctx] = newCanvas();

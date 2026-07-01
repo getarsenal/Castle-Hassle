@@ -19,14 +19,15 @@ await page.goto(`http://localhost:${port}/index.html`, { waitUntil: 'load' });
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 const click = (s) => page.evaluate(x => { const e = document.querySelector(x); if (e) e.click(); return !!e; }, s);
 const N = Number(process.argv[2] || 4);
-await wait(2200); await click('#startGameBtn'); await wait(1500);
+await wait(2200); await click('[data-new="0"]'); await wait(1500);
+await page.evaluate(() => { for (const k of ['tutorial.v1','maptour.v1']) localStorage.setItem('castlehassle.'+k,'1'); });
 await page.evaluate(n => window.__battle(n), N); await wait(1600); // jump straight into a campaign castle
 await click('#musterBtn'); await wait(2400);
 await page.evaluate(() => { localStorage.setItem('castlehassle.tutorial.v1','1'); const t=document.getElementById('tutorial'); if(t){t.classList.remove('show');t.innerHTML='';} });
 await wait(400);
 // orbit the camera DOWN to a lower angle so shadows + banners read, and zoom in
 await page.mouse.move(450, 320); await page.mouse.down(); await page.mouse.move(450, 388, {steps: 10}); await page.mouse.up(); await wait(300);
-await page.mouse.move(450, 350); for (let i=0;i<3;i++){ await page.mouse.wheel({deltaY:-120}); await wait(50);} await wait(500);
+await page.mouse.move(450, 350); for (let i=0;i<7;i++){ await page.mouse.wheel({deltaY:-120}); await wait(50);} await wait(500);
 writeFileSync('/tmp/battle.png', await page.screenshot());
 console.log('wrote /tmp/battle.png');
 await browser.close(); server.close();

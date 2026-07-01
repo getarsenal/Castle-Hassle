@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
 import { Biome } from './campaign';
-import { makeSoldierTexture, makeArrowTexture, SpriteKind } from './sprites';
+import { makeSoldierTexture, makeArrowTexture, spriteAspect, SpriteKind } from './sprites';
 import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
 
 // Per-region siege scenery: sky, fog, light, ground and the horizon ring of
@@ -21,9 +21,12 @@ const BIOMES: Record<Biome, BiomeCfg> = {
 };
 
 const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
-const SPRITE_W = [2.0, 1.8, 1.8, 3.0];
-const SPRITE_H = [2.7, 2.4, 2.4, 2.8];
-const SHADOW_R = [0.95, 0.8, 0.8, 1.35];
+// On-screen billboard HEIGHTS (world units). Widths are DERIVED from each sprite's
+// native aspect so the commissioned art is never stretched — heavy is a tall lone
+// figure (narrow), cavalry a horse+rider (wide). Feet are anchored to the ground.
+const SPRITE_H = [2.9, 2.6, 2.7, 3.1];
+const SPRITE_W = KIND.map((k, i) => SPRITE_H[i] * spriteAspect(k));
+const SHADOW_R = [0.9, 0.78, 0.8, 1.5];
 // GPU billboarding: the vertex shader turns a per-instance position (+scale/phase/
 // state/yaw) into a camera-facing, bobbing sprite — so the CPU only writes 3 floats
 // of position per soldier each frame instead of composing a 4x4 matrix. iState:
@@ -59,10 +62,13 @@ const COL_DEFEND = new THREE.Color('#3f86d8');
 // still works.
 const SOLDIER_FRAG = `
   vec4 texColor = texture2D( map, vMapUv );
-  float keyAmt = smoothstep(0.16, 0.32, texColor.g - max(texColor.r, texColor.b));
+  // Heraldry is a canonical pure-green key (r=b=0): green-dominance is unambiguous,
+  // so a low threshold keys every arm's colours cleanly while sepia stays untouched.
+  float keyAmt = smoothstep(0.05, 0.20, texColor.g - max(texColor.r, texColor.b));
   float vlum = max(max(vColor.r, vColor.g), vColor.b);
   vec3 body = texColor.rgb * (0.6 + 0.4 * vlum);
-  vec3 team = vColor.rgb * clamp(texColor.g * 1.45, 0.0, 1.0);
+  // texColor.g carries the cloth shading (folds); lift it so the faction colour reads bright.
+  vec3 team = vColor.rgb * clamp(texColor.g * 1.7 + 0.22, 0.0, 1.0);
   diffuseColor = vec4( mix(body, team, keyAmt), texColor.a );`;
 
 function jit(i: number, s: number): number { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); }
