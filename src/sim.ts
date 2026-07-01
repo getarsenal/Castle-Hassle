@@ -26,8 +26,15 @@ export const DEFAULT_COMP: ArmyComp = { heavy: 600, light: 480, archer: 460, cav
 export function compCost(c: ArmyComp): number { return c.heavy * COST.heavy + c.light * COST.light + c.archer * COST.archer + c.cavalry * COST.cavalry + c.siege * COST.siege; }
 const AMMO = [0, 0, 16, 0, 16]; // arrows per archer / boulders per trebuchet
 
+// COMBAT PACING: every man carries HP_SCALE× the hit points, and every RANGED
+// source (arrows, bolts, anti-personnel boulders) hits HP_SCALE× harder — so the
+// killing-ground/approach plays exactly as before, but MELEE damage is left alone,
+// which means a hand-to-hand fight now takes ~HP_SCALE× longer. Ranks grind and
+// push through each other instead of evaporating, so the storm inside the walls is
+// a real, decision-driven melee rather than an instant wipe.
+const HP_SCALE = 2.5;
 // Per-type stats, indexed by UType. (index 4 = siege engine / trebuchet)
-const HP = [120, 70, 55, 95, 260];
+const HP = [120, 70, 55, 95, 260].map((h) => h * HP_SCALE);
 const SPEED = [7, 11, 8, 17, 3.2];
 const MELEE = [9, 7, 5, 15, 0];
 const ATKCD = [0.8, 0.55, 1.3, 0.75, 6.5]; // trebuchets reload slowly
@@ -35,12 +42,12 @@ const RANGE = [1.8, 1.7, 40, 2.0, 110];   // siege = bombardment range
 const SENSE = [16, 16, 46, 20, 110];
 const SRAD = SENSE.map((s) => Math.max(1, Math.ceil(s / 6))); // hash search radius in buckets (hCell=6)
 const RADIUS = [0.7, 0.6, 0.6, 0.95, 2.0];
-const ARCHER_PROJ_DMG = 12;
+const ARCHER_PROJ_DMG = 12 * HP_SCALE;   // scaled with HP so arrows stay as lethal as before
 const ARCHER_PROJ_SPEED = 32;
-const BOULDER_DMG = 200;       // damage a trebuchet boulder does to a wall section
+const BOULDER_DMG = 200;       // damage a trebuchet boulder does to a wall section (walls are NOT scaled)
 const BOULDER_SPEED = 30;
 const BALLISTA_RANGE = 78;     // defensive ballista reach
-const BALLISTA_DMG = 260;      // a bolt kills any infantryman it strikes
+const BALLISTA_DMG = 260 * HP_SCALE; // a bolt still kills any infantryman it strikes
 const BALLISTA_CD = 3.4;       // reload time
 const BOLT_SPEED = 52;
 const ARTY_SPLASH = 2.6;       // anti-personnel blast radius (very little spill)
@@ -1851,7 +1858,7 @@ export class Sim {
     const d = Math.hypot(tx - sx, tz - sz) || 1;
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction; p.src = this.typ[i];
-    p.dmg = BOULDER_DMG * this.atk.siege * this.vetMul[this.typ[i]]; p.wall = -1; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false;
+    p.dmg = BOULDER_DMG * HP_SCALE * this.atk.siege * this.vetMul[this.typ[i]]; p.wall = -1; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false; // vs men: scaled to still pulp a cluster
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
   }
 
