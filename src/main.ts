@@ -800,6 +800,7 @@ const devCampaign = {
   resetProgress: () => {
     progress.gold = STARTING_GOLD; progress.completed = []; progress.unlocked = 0;
     progress.upg = {}; progress.army = { ...STARTING_ARMY }; progress.vet = freshVet();
+    try { localStorage.removeItem('castlehassle.tutorial.v1'); } catch { /* ignore */ } // true clean slate: see onboarding again
     saveProgress(progress); devRefreshMap();
   },
   bumpVet: (key: string, dir: number) => { const v = progress.vet[key as ArmyKey]; const r = Math.max(0, Math.min(RANK_XP.length - 1, vetRank(v.xp) + dir)); v.xp = RANK_XP[r]; saveProgress(progress); },
