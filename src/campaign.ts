@@ -83,7 +83,7 @@ export const STARTING_GOLD = 300;
 // the heavy men-at-arms and the great siege engines are the big-ticket buys you
 // save up for — so kitting out a wall-breaking battery or a wall of plate feels
 // like a real investment.
-export const RECRUIT_COST: Army = { heavy: 1.4, light: 0.35, archer: 0.7, cavalry: 1.0, siege: 60 };
+export const RECRUIT_COST: Army = { heavy: 1.4, light: 0.35, archer: 0.7, cavalry: 1.0, siege: 200 };
 // you can always field a free peasant levy of this many light foot, so a wiped
 // army never softlocks the campaign — but they're conscript fodder.
 export const LEVY_LIGHT = 250;

@@ -194,7 +194,7 @@ function updateTopbar() {
 function updateHint() {
   const a = selected >= 0 ? sim.divAgg(selected) : null;
   if (attackArm >= 0 && attackArm === selected) hintText.textContent = a && (a.type === UType.Archer) ? 'ATTACK: tap an enemy unit to focus your volleys on it' : 'ATTACK: tap an enemy unit and your arm charges in to fight it';
-  else if (a && a.type === UType.Siege) hintText.textContent = 'Trebuchets: TAP A WALL to aim · drag to reposition the battery';
+  else if (a && a.type === UType.Siege) hintText.textContent = 'Trebuchets: TAP A WALL to batter it · TAP ENEMY TROOPS to bombard them · drag to reposition';
   else if (a && a.type === UType.Archer) hintText.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
   else if (a) hintText.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
   else if (sim.phase === 'deploy') hintText.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
@@ -449,7 +449,13 @@ function handleTap(cx: number, cy: number) {
   if (best >= 0) { selected = best; attackArm = -1; refreshCards(); updateHint(); updateTools(); return; }
   if (selected >= 0 && sim.phase !== 'over') {
     const a = sim.divAgg(selected);
-    if (a.type === UType.Siege) { const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); return; } sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z); }
+    if (a.type === UType.Siege) {
+      // trebuchets: tap a WALL to batter it, tap enemy TROOPS to bombard them, tap open ground to reposition
+      const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); updateHint(); return; }
+      const foe = sim.phase === 'battle' ? sim.enemyPosNear(p.x, p.z, 16) : null;
+      if (foe) { sim.setSiegeBombardDiv(selected, foe.x, foe.z); renderer.pingMove(foe.x, foe.z); updateHint(); return; }
+      sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z);
+    }
     else if (a.type === UType.Archer) { sim.setFocusDiv(selected, p.x, p.z); updateTools(); }
     else if (sim.phase === 'battle' && sim.wallSegAt(p.x, p.z, 9) >= 0) {
       // tapped a standing wall/gate with a melee arm → break in HERE
@@ -907,6 +913,7 @@ function frame(now: number) {
   if (a && a.alive > 0) renderer.setSelection(a.cx, a.cz); else renderer.setSelection(null, null);
   // aim marker + range fan for the selected ranged arm (driven by a representative company)
   if (a && a.type === UType.Siege && rep && rep.siegeTargetSeg >= 0) { const [tx, tz] = sim.segCenter(rep.siegeTargetSeg); renderer.setTargetMarker(tx, tz); }
+  else if (a && a.type === UType.Siege && rep && rep.hasFocus) renderer.setTargetMarker(rep.focusX, rep.focusZ); // bombardment point
   else if (a && a.type === UType.Archer && rep && rep.hasFocus) renderer.setTargetMarker(rep.focusX, rep.focusZ);
   // melee order marker: a 'break in here' target on the wall, or the keep when storming
   else if (a && rep && rep.objKind === 'breach' && rep.objSeg >= 0) { const [tx, tz] = sim.segCenter(rep.objSeg); renderer.setTargetMarker(tx, tz); }

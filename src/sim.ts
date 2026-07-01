@@ -913,7 +913,10 @@ export class Sim {
   }
   // southernmost line you may muster on during deploy (just outside the walls)
   deployLine(): number { return LAYOUT.front + 8; }
-  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.holdFire = false; } }  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
+  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.hasFocus = false; u.holdFire = false; } }  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
+  // Order a trebuchet battery to BOMBARD a ground point (anti-personnel) instead of a
+  // wall — so the player chooses: batter the walls, or rain stone on massed infantry.
+  setSiegeBombardDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = -1; u.hasFocus = true; u.focusX = x; u.focusZ = z; u.holdFire = false; } }
   clearFocusDiv(div: number) { for (const u of this.divCompanies(div)) u.hasFocus = false; }
   toggleHoldFireDiv(div: number): boolean { const cs = this.divCompanies(div); if (!cs.length) return false; const v = !cs[0].holdFire; for (const u of cs) u.holdFire = v; return v; }
   // the player's arms present in this battle, in roster order
@@ -1277,11 +1280,16 @@ export class Sim {
         } else if (seg >= 0) {
           // ordered target still standing — hold fire until it's in range
           if (((CASTLE[seg].x0 + CASTLE[seg].x1) / 2 - this.px[i]) ** 2 + ((CASTLE[seg].z0 + CASTLE[seg].z1) / 2 - this.pz[i]) ** 2 > RANGE[t] * RANGE[t]) seg = -1;
-        } else if (!u.holdFire) {
+        } else if (!u.holdFire && !u.hasFocus) {
           // no specific orders and not stood down → batter the nearest wall on their own
           seg = this.nearestWall(this.px[i], this.pz[i], RANGE[t]);
         }
-        if (seg >= 0 && this.cd[i] <= 0 && this.ammo[i] > 0 && !u.holdFire) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t] * this.atk.reload; this.ammo[i]--; }
+        const canFire = this.cd[i] <= 0 && this.ammo[i] > 0 && !u.holdFire;
+        if (seg >= 0 && canFire) { this.lobBoulder(i, seg); this.cd[i] = ATKCD[t] * this.atk.reload; this.ammo[i]--; }
+        else if (seg < 0 && u.hasFocus && canFire) {
+          // anti-personnel bombardment of the ordered ground point (if it's in range)
+          if ((u.focusX - this.px[i]) ** 2 + (u.focusZ - this.pz[i]) ** 2 <= RANGE[t] * RANGE[t]) { this.lobBoulderAt(i, u.focusX, u.focusZ); this.cd[i] = ATKCD[t] * this.atk.reload; this.ammo[i]--; }
+        }
         if (!u.hold) { this.formMove(u, i); dx = this._dir[0]; dz = this._dir[1]; }
       } else {
         const dist = nearest >= 0 ? Math.sqrt(nd2) : Infinity;
@@ -1826,6 +1834,19 @@ export class Sim {
     const tof = d / BOULDER_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction; p.src = this.typ[i];
     p.dmg = BOULDER_DMG * this.atk.siege * this.vetMul[this.typ[i]]; p.wall = segIdx; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false;
+    p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
+  }
+  // Anti-personnel bombardment: a boulder onto open ground (no wall), scattering and
+  // crushing whatever infantry it lands among (wider scatter than a wall shot).
+  private lobBoulderAt(i: number, gx: number, gz: number) {
+    this.sfx.boulders++;
+    const p = this.getProj();
+    const sx = this.px[i], sz = this.pz[i], sy = 3;
+    const tx = gx + (this.rnd() - 0.5) * 8, tz = gz + (this.rnd() - 0.5) * 8;
+    const d = Math.hypot(tx - sx, tz - sz) || 1;
+    const tof = d / BOULDER_SPEED;
+    p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.fac = this.fac[i] as Faction; p.src = this.typ[i];
+    p.dmg = BOULDER_DMG * this.atk.siege * this.vetMul[this.typ[i]]; p.wall = -1; p.big = true; p.fire = false; p.splash = ARTY_SPLASH; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (0 - sy) / tof + 0.5 * PROJ_G * tof;
   }
 
