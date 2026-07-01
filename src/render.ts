@@ -657,23 +657,36 @@ export class Renderer {
       const cs = Math.cos(th), sn = Math.sin(th), inx = -cs, inz = -sn;         // radial: outward (cs,sn), inward = toward castle
       const tvx = -sn, tvz = cs, ry = Math.atan2(tvx, tvz);                     // tangent (along the line) + box heading
       const px = ccx + R * cs, pz = ccz + R * sn;
-      rubbleG.push(flat(rnd(9, 12), 9, px + inx * 5, pz + inz * 5, ry, 0.03));  // churned earth under the line only
+      rubbleG.push(flat(rnd(9, 12), 9, px + inx * 5, pz + inz * 5, ry, 0.03));  // churned earth under the line
       if (adist < 0.52) continue;                                               // leave the assault avenue open
-      // spoil rampart (outer bank)
-      const bh = rnd(1.5, 2.1);
-      earth.push(this.boxG(12, bh, 5.0, px, bh / 2, pz, ry));
-      earth.push(this.boxG(9, bh * 0.55, 3.2, px + inx * 0.6, bh + bh * 0.26, pz + inz * 0.6, ry));
-      // the ditch: a dark sunken strip just inside the bank, with a shadowed near lip
-      const dx = px + inx * 4.6, dz = pz + inz * 4.6;
-      trenchG.push(flat(12, 4.8, dx, dz, ry, 0.05));
-      earth.push(this.boxG(12, 0.55, 0.8, dx + inx * 2.3, 0.24, dz + inz * 2.3, ry));
-      // gabions (earth-filled baskets) lining the ditch's inner lip
-      const gbx = dx + inx * 3.0, gbz = dz + inz * 3.0;
+      // gabions (earth-filled baskets) — the front cover facing the wall
+      const gbx = px + inx * 6, gbz = pz + inz * 6;
       for (let g = -1; g <= 1; g++) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.95, 8).translate(gbx + tvx * g * 3.6, 0.98, gbz + tvz * g * 3.6));
-      // a picket of sharpened stakes leaning toward the wall
+      // a picket of sharpened stakes planted in front of the gabions (toward the wall)
       const shead = Math.atan2(inx, inz);
-      for (let s = -1; s <= 1; s++) stakes.push(new THREE.CylinderGeometry(0.12, 0.02, 2.7, 4).rotateX(-0.6).rotateY(shead).translate(gbx + inx * 2.6 + tvx * s * 2.4, 0.85, gbz + inz * 2.6 + tvz * s * 2.4));
-      if (chance(0.22)) planks.push(new THREE.BoxGeometry(3.2, 2.4, 0.3).rotateX(-0.26).rotateY(ry).translate(px + inx * 6, 1.35, pz + inz * 6)); // occasional mantlet
+      for (let s = -1; s <= 1; s++) stakes.push(new THREE.CylinderGeometry(0.12, 0.02, 2.7, 4).rotateX(-0.6).rotateY(shead).translate(gbx + inx * 3 + tvx * s * 2.4, 0.85, gbz + inz * 3 + tvz * s * 2.4));
+      if (chance(0.2)) planks.push(new THREE.BoxGeometry(3.2, 2.4, 0.3).rotateX(-0.26).rotateY(ry).translate(gbx, 1.35, gbz)); // occasional mantlet by the gabions
+    }
+    // ---- THE FIRE TRENCH: a loose zig-zag ditch dug behind the gabions ----
+    // Alternating traverses (a cremaillère trace) that follows the ring, the dark
+    // ditch floor flanked by aprons of dug earth and clumps of spoil on both lips.
+    const Rt = R + 1, zig = 4.5;
+    let prev: { x: number; z: number } | null = null;
+    for (let i = 0; i <= steps; i++) {
+      const th = (i % steps) / steps * Math.PI * 2;
+      const adist = Math.abs(((th - ga + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      if (adist < 0.55) { prev = null; continue; }                             // break the trench at the assault gap
+      const rr = Rt + ((Math.floor(i / 2) % 2) ? zig : -zig);                  // 2-step runs => a loose zig-zag
+      const nx = ccx + Math.cos(th) * rr, nz = ccz + Math.sin(th) * rr;
+      if (prev) {
+        const mx = (prev.x + nx) / 2, mz = (prev.z + nz) / 2, ddx = nx - prev.x, ddz = nz - prev.z;
+        const len = Math.hypot(ddx, ddz), hd = Math.atan2(ddx, ddz);
+        rubbleG.push(flat(8, len + 2.5, mx, mz, hd, 0.03));                    // dug-earth apron around the cut
+        trenchG.push(flat(3.0, len + 1.2, mx, mz, hd, 0.055));                 // the dark ditch floor
+        const perpX = Math.cos(hd), perpZ = -Math.sin(hd);                     // spoil heaped on both lips
+        for (let k = 0; k < 3; k++) { const side = k % 2 ? 1 : -1, off = rnd(2.2, 3.4) * side, s = rnd(0.45, 1.05); earth.push(this.boxG(s, s * rnd(0.4, 0.8), s * rnd(0.8, 1.2), mx + perpX * off + rnd(-2, 2), s * 0.3, mz + perpZ * off + rnd(-2, 2), Math.random() * 3.14)); }
+      }
+      prev = { x: nx, z: nz };
     }
 
     // ---- SPOIL & RUBBLE: churned dirt, dug spoil-heaps and shattered stone between ring and wall ----
