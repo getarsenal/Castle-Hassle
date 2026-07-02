@@ -1,0 +1,22 @@
+{
+  "name": "castle-hassle",
+  "version": "0.1.0",
+  "description": "The Horror of the Day: a community-voted, deliberately disgusting (but SFW) daily wallpaper meant to make you not want to look at your phone.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/seed.js",
+    "import:wikimedia": "node src/import-cli.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2"
+  },
+  "license": "MIT"
+}

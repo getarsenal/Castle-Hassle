@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Castle Hassle — The Horror of the Day</title>
+  <meta name="description" content="A community-voted, deliberately disgusting daily wallpaper to make you not want to be on your phone." />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <h1>🏰 Castle Hassle</h1>
+    <p class="tagline">The <strong>Horror of the Day</strong> — voted by the community, set as your wallpaper, so you actively avoid your phone.</p>
+  </header>
+
+  <main>
+    <section id="today" class="today card">
+      <h2>Today's Horror <span id="today-date" class="muted"></span></h2>
+      <div id="today-body" class="today-body">
+        <p class="muted">Summoning today's horror…</p>
+      </div>
+    </section>
+
+    <section class="setup card">
+      <h2>Make it your wallpaper — automatically</h2>
+      <p>Point any daily automation at this URL and it will always serve today's horror:</p>
+      <code id="wallpaper-url" class="wallpaper-url"></code>
+      <button id="copy-url" class="btn btn-ghost">Copy URL</button>
+      <details>
+        <summary>📱 iOS (Shortcuts) — auto-changes every morning</summary>
+        <ol>
+          <li>Open <strong>Shortcuts</strong> → <strong>Automation</strong> → <strong>+</strong> → <strong>Time of Day</strong>, pick a time (e.g. 6:00 AM), Daily, <em>Run Immediately</em>.</li>
+          <li>Add action <strong>Get Contents of URL</strong> → paste the wallpaper URL above.</li>
+          <li>Add action <strong>Set Wallpaper Photo</strong> → use the downloaded image; turn off "Show Preview".</li>
+          <li>Done. Every morning your Home &amp; Lock screen becomes the new horror.</li>
+        </ol>
+      </details>
+      <details>
+        <summary>🤖 Android</summary>
+        <p>Use an app like Tasker or a live-wallpaper client that fetches the URL daily, or the (planned) native Castle Hassle app which sets the wallpaper via <code>WallpaperManager</code> on a daily background job.</p>
+      </details>
+    </section>
+
+    <section class="vote card">
+      <h2>Vote for tomorrow's horror</h2>
+      <p class="muted">The highest-scoring image becomes a future Horror of the Day. Upvote the truly revolting; downvote the merely mildly unpleasant.</p>
+      <div id="candidates" class="grid">
+        <p class="muted">Loading candidates…</p>
+      </div>
+    </section>
+
+    <section class="submit card">
+      <h2>Submit an image</h2>
+      <p class="muted">SFW only — disturbing, gross, unsettling, but nothing sexual or graphically violent. Everything is human-reviewed before it can be voted on.</p>
+      <form id="submit-form">
+        <label>Title <input name="title" required maxlength="120" placeholder="e.g. Botfly larva under the skin" /></label>
+        <label>Image URL (https) <input name="image_url" type="url" required placeholder="https://…/image.jpg" /></label>
+        <label>Source URL (optional) <input name="source_url" type="url" placeholder="https://commons.wikimedia.org/…" /></label>
+        <label>Credit (optional) <input name="credit" maxlength="200" placeholder="Photographer · License" /></label>
+        <button class="btn" type="submit">Submit for review</button>
+        <p id="submit-msg" class="msg"></p>
+      </form>
+    </section>
+
+    <section class="history card">
+      <h2>Hall of horrors <span class="muted">(past days)</span></h2>
+      <div id="history" class="grid grid-small"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p class="muted">Images from Wikimedia Commons &amp; community submissions. Built to be avoided.</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
