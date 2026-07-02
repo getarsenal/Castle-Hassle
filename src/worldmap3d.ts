@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CampaignCastle, Progress, castleDifficulty } from './campaign';
 import { surveyCastle, CastleSurvey } from './sim';
-import { RANGES, FORESTS, REALMS, BORDERS } from './mapfeatures';
+import { RANGES, FORESTS, REALMS, BORDERS, RIVERS, LANDMARKS } from './mapfeatures';
 import mapData from './worldmapdata.json';
 
 const mercYdeg = (lat: number) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * 180 / Math.PI;
@@ -60,13 +60,12 @@ export class WorldMap3D {
   private raf = 0; private pulse = 0;
   private bb!: BB; private GW = 0; private GH = 0; private heights = new Float32Array(0);
   private readonly K = 11; private lonMid = 0; private myMid = 0;
-  private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private pitch = 40 * Math.PI / 180;
+  private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private pitch = 52 * Math.PI / 180;
   private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh }[] = [];
   private flourish?: { grp: THREE.Group; ring: THREE.Mesh; glow: THREE.Sprite; t0: number };
   private labels: THREE.Sprite[] = [];
   private water?: THREE.Mesh; private waterBase?: Float32Array;
   private banners: { mesh: THREE.Mesh; phase: number; base: Float32Array }[] = [];
-  private clouds: { mesh: THREE.Sprite; speed: number }[] = [];
   private birds: { grp: THREE.Group; speed: number; phase: number }[] = [];
   private march?: { t: number; dur: number; last: number; path: { p: THREE.Vector3; water: boolean }[]; army: THREE.Group; boat: THREE.Group; done: () => void; skip: boolean };
   private maskRef!: Uint8Array;
@@ -76,8 +75,10 @@ export class WorldMap3D {
   private ready = false;
 
   constructor(private canvas: HTMLCanvasElement, private nodes: CampaignCastle[], private prog: Progress, private onSelect: (c: CampaignCastle) => void) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    // The map is a light scene (one terrain mesh + props) — render it SHARP:
+    // native-ish pixel ratio + MSAA, unlike the battle which trades res for fps.
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05;
     this.scene.background = new THREE.Color('#c3b49a');
     // ONE warm horizon haze, shared by the fog, the sky-dome base and every map
@@ -123,8 +124,8 @@ export class WorldMap3D {
   }
   // Relief from real ridge lines — deliberately gentle so the map reads flat and
   // map-like, with only the great ranges standing proud.
-  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const d = this.distRidge(lon, lat, r.ridge); h += r.h * 0.42 * Math.exp(-Math.pow(d / 0.62, 2)) + r.h * 0.2 * Math.exp(-Math.pow(d / 2.0, 2)); } return Math.min(h, 15); }
-  private hill(lon: number, lat: number) { return (hash(lon * 1.7, lat * 1.7) * 0.6 + hash(lon * 0.7, lat * 0.7) * 0.4) * 1.2; }
+  private mountain(lon: number, lat: number) { let h = 0; for (const r of RANGES) { const d = this.distRidge(lon, lat, r.ridge); h += r.h * 0.24 * Math.exp(-Math.pow(d / 0.62, 2)) + r.h * 0.11 * Math.exp(-Math.pow(d / 2.0, 2)); } return Math.min(h, 8.5); }
+  private hill(lon: number, lat: number) { return (hash(lon * 1.7, lat * 1.7) * 0.6 + hash(lon * 0.7, lat * 0.7) * 0.4) * 0.8; }
 
   // Box-blur the heightmap to soften peaks and especially coasts. We only clamp
   // land-above-water / sea-below-water on the FINAL pass, so the blur is free to
@@ -160,32 +161,33 @@ export class WorldMap3D {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx;
         if (!mask[i]) { raw[i] = -1.7; continue; }
         const cd = cdist[i], m = this.mountain(lon, lat);
-        raw[i] = 1.0 + Math.min(cd * 1.0, 5) + m + this.hill(lon, lat) * (0.25 + Math.min(1, m * 0.06));
+        raw[i] = 1.0 + Math.min(cd * 0.6, 3) + m + this.hill(lon, lat) * (0.25 + Math.min(1, m * 0.06));
       }
     }
     // 2) smooth (softer mountains + much gentler shores)
     this.heights = this.smoothHeights(raw, mask, 4);
     // 3) geometry
-    const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
+    const pos: number[] = [], col: number[] = [], uv: number[] = [], idx: number[] = []; const c = new THREE.Color();
     const green = new THREE.Color('#5d7842'), tan = new THREE.Color('#b89c5f'), haze = new THREE.Color('#c3b49a');
     for (let gy = 0; gy < GH; gy++) {
       const lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       for (let gx = 0; gx < GW; gx++) {
         const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx; const land = mask[i]; const y = this.heights[i];
-        pos.push(this.wX(lon), y, this.wZ(lat));
+        pos.push(this.wX(lon), y, this.wZ(lat)); uv.push(gx * 0.55, gy * 0.55);
         const latT = (bb.n - lat) / (bb.n - bb.s);
         if (!land || y < 0.05) c.setRGB(0.10, 0.15, 0.26);                   // submerged shelf, deep dusk
-        else if (y < 2.6) c.set('#c7b380');                                  // beach / coastal flats
-        else if (y < 9.5) c.copy(green).lerp(tan, Math.min(1, latT * 1.05)); // lowland farmland
-        else if (y < 14) c.set('#6e6b40');                                   // upland
-        else if (y < 19) c.set('#736452');                                   // bare mountain rock
+        else if (y < 2.0) c.set('#c7b380');                                  // beach / coastal flats
+        else if (y < 6.2) c.copy(green).lerp(tan, Math.min(1, latT * 1.05)); // lowland farmland
+        else if (y < 9.0) c.set('#6e6b40');                                   // upland
+        else if (y < 11.2) c.set('#736452');                                  // bare mountain rock
         else c.set('#d6d0c2');                                               // snow, dusk-lit
         // gentle per-vertex shade jitter so the flat colour bands don't read blocky
         if (land && y >= 0.05) c.offsetHSL((hash(gx * 1.3, gy * 2.7) - 0.5) * 0.012, (hash(gx * 2.1, gy * 0.7) - 0.5) * 0.05, (hash(gx * 1.7, gy * 2.3) - 0.5) * 0.05);
-        // dissolve the map edge into haze along a wavy, noisy border (not a hard rectangle)
+        // dissolve the map edge into haze along a wavy, noisy border — kept to a
+        // NARROW outer rim (a wide band swallowed Ireland/Scotland in fuzzy mush)
         const ex = gx / (GW - 1), ey = gy / (GH - 1);
-        const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(gx * 0.8, gy * 1.1) - 0.5) * 0.07;
-        const fade = Math.max(0, Math.min(1, dEdge / 0.14));
+        const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(gx * 0.8, gy * 1.1) - 0.5) * 0.03;
+        const fade = Math.max(0, Math.min(1, dEdge / 0.045));
         if (fade < 1) c.lerp(haze, (1 - fade) * (1 - fade));
         col.push(c.r, c.g, c.b);
       }
@@ -196,17 +198,22 @@ export class WorldMap3D {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     geo.setIndex(idx); geo.computeVertexNormals();
-    this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true })));
+    // a fine repeating grain over the vertex colours: without it the smooth
+    // gradients read as an out-of-focus photo — this is what makes the map CRISP
+    this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: this.grainTex() })));
 
     this.buildWater(mask);
+    this.buildRivers();
     this.buildTrees(mask);
     this.buildBorders();
     this.buildSettlements();
+    this.buildLandmarks();
     this.buildRoute();
     this.buildRealmLabels();
-    this.buildClouds();
     this.buildBirds();
+    this.buildAmbientShips();
     this.makeCompass();
     this.makePanel();
 
@@ -243,14 +250,14 @@ export class WorldMap3D {
     const near = this.nodes.map(n => Math.hypot(this.wX(n.lon) - this.target.x, this.wZ(n.lat) - this.target.z)).sort((a, b) => a - b);
     const spread = near[Math.min(4, near.length - 1)]; // distance to ~4th nearest
     this.dist = Math.max(115, Math.min(185, spread * 2.2 + 80));
-    this.pitch = 40 * Math.PI / 180;
+    this.pitch = 52 * Math.PI / 180; // higher, more map-like — relief no longer looms across the horizon
   }
 
   // Sea as a gently rippling grid, coloured from deep blue out at sea to bright
   // turquoise shallows along the coasts (so shorelines read soft, not abrupt).
   private buildWater(mask: Uint8Array) {
     const { GW, GH, bb } = this; const WX = 150, WZ = 104;
-    const pos: number[] = [], col: number[] = [], idx: number[] = []; const c = new THREE.Color();
+    const pos: number[] = [], col: number[] = [], wuv: number[] = [], idx: number[] = []; const c = new THREE.Color();
     const deep = new THREE.Color('#142440'), shallow = new THREE.Color('#386b78'), haze = new THREE.Color('#c3b49a');
     const landNear = (lon: number, lat: number) => {
       const gx = (lon - bb.w) / (bb.e - bb.w) * (GW - 1), gy = (lat - bb.s) / (bb.n - bb.s) * (GH - 1);
@@ -263,12 +270,12 @@ export class WorldMap3D {
     };
     for (let j = 0; j < WZ; j++) for (let i = 0; i < WX; i++) {
       const lon = bb.w + (bb.e - bb.w) * (i / (WX - 1)), lat = bb.s + (bb.n - bb.s) * (j / (WZ - 1));
-      pos.push(this.wX(lon), 0.3, this.wZ(lat));
+      pos.push(this.wX(lon), 0.3, this.wZ(lat)); wuv.push(i * 1.1, j * 1.1);
       c.copy(deep).lerp(shallow, Math.min(1, landNear(lon, lat) * 1.15));
       // fade the sea's rectangular rim into haze along the same wavy border
       const ex = i / (WX - 1), ey = j / (WZ - 1);
-      const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(i * 0.7, j * 1.3) - 0.5) * 0.07;
-      const fade = Math.max(0, Math.min(1, dEdge / 0.16));
+      const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(i * 0.7, j * 1.3) - 0.5) * 0.03;
+      const fade = Math.max(0, Math.min(1, dEdge / 0.05));
       if (fade < 1) c.lerp(haze, (1 - fade) * (1 - fade));
       col.push(c.r, c.g, c.b);
     }
@@ -276,9 +283,10 @@ export class WorldMap3D {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(wuv, 2));
     g.setIndex(idx); g.computeVertexNormals();
     this.waterBase = Float32Array.from(pos);
-    this.water = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    this.water = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, map: this.grainTex() }));
     this.scene.add(this.water);
   }
 
@@ -290,7 +298,7 @@ export class WorldMap3D {
     const treeGeo = mergeGeometries([trunk, fol1, fol2], false)!;
     const places: number[] = [];
     for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
-      const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 4.0 || y > 21) continue;
+      const i = gy * GW + gx; if (!mask[i]) continue; const y = this.heights[i]; if (y < 2.6 || y > 10) continue;
       const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)), lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
       let dens = 0.05; for (const f of FORESTS) if (Math.hypot(lon - f[1], lat - f[0]) < f[2]) dens = 0.5;
       if ((bb.n - lat) / (bb.n - bb.s) > 0.7) dens *= 0.3;
@@ -307,28 +315,61 @@ export class WorldMap3D {
   }
 
   private buildSettlements() {
-    const wallM = new THREE.MeshLambertMaterial({ color: '#efe0bb' });
-    const roofM = new THREE.MeshLambertMaterial({ color: '#c8643f' });
     const doneM = new THREE.MeshLambertMaterial({ color: '#cf9b3a' });
     const lockM = new THREE.MeshLambertMaterial({ color: '#9a978f' });
     for (const node of this.nodes) {
       const x = this.wX(node.lon), z = this.wZ(node.lat), y = this.terrainY(node.lon, node.lat);
       const done = this.prog.completed.includes(node.id), current = node.id === this.prog.unlocked, locked = node.id > this.prog.unlocked;
       const g = new THREE.Group();
-      const wm = locked ? lockM : done ? doneM : wallM;
-      const rm = locked ? lockM : roofM;
-      // a little round castle: a crenellated curtain ring, four drum towers with
-      // conical roofs, and a central keep — reads as a castle, not a box pile
-      const curtain = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.7, 1.5, 8), wm); curtain.position.y = 0.75; g.add(curtain);
-      const merlons = new THREE.Mesh(new THREE.TorusGeometry(2.55, 0.16, 4, 8).rotateX(Math.PI / 2), wm); merlons.position.y = 1.5; g.add(merlons);
-      for (let h = 0; h < 4; h++) {
-        const a = h / 4 * 6.28 + Math.PI / 4, tx = Math.cos(a) * 2.5, tz = Math.sin(a) * 2.5;
-        const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.74, 2.7, 8), wm); tw.position.set(tx, 1.35, tz); g.add(tw);
-        const tr = new THREE.Mesh(new THREE.ConeGeometry(0.72, 0.95, 8), rm); tr.position.set(tx, 3.25, tz); g.add(tr);
+      // Every stronghold gets its OWN silhouette, from its real campaign style —
+      // square-towered marcher forts, round drum castles, double-ringed concentric
+      // giants, walled towns — with regional stone and roof tints. Locked holds
+      // stay ghost-grey; conquered ones turn gold.
+      const st = node.style, hsh = (s: number) => hash(node.id * 3.31 + s, s * 1.7 + 1);
+      const stone = new THREE.Color('#efe0bb').lerp(new THREE.Color(node.lat < 36 ? '#e8d5a8' : '#d9d3c4'), hsh(1) * 0.8);
+      const wm = locked ? lockM : done ? doneM : new THREE.MeshLambertMaterial({ color: stone });
+      const rm = locked ? lockM : new THREE.MeshLambertMaterial({ color: ['#c8643f', '#8a4436', '#5a6a8a', '#7a6a4a'][Math.floor(hsh(2) * 4) % 4] });
+      const holy = node.name === 'Jerusalem';
+      const towers = st.round ? 'drum' : 'square';
+      const twr = (tx: number, tz: number, h: number, r: number) => {
+        const tw = towers === 'drum'
+          ? new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.12, h, 8), wm)
+          : new THREE.Mesh(new THREE.BoxGeometry(r * 1.8, h, r * 1.8), wm);
+        tw.position.set(tx, h / 2, tz); g.add(tw);
+        const tr = towers === 'drum'
+          ? new THREE.Mesh(new THREE.ConeGeometry(r * 1.1, r * 1.5, 8), rm)
+          : new THREE.Mesh(new THREE.ConeGeometry(r * 1.35, r * 1.3, 4), rm);
+        tr.position.set(tx, h + r * 0.7, tz); if (towers !== 'drum') tr.rotation.y = Math.PI / 4; g.add(tr);
+      };
+      const wallRing = (rad: number, ht: number) => {
+        const sides = st.round ? 8 : 4;
+        const curtain = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.06, ht, sides), wm); curtain.position.y = ht / 2; if (sides === 4) curtain.rotation.y = Math.PI / 4; g.add(curtain);
+        const merlons = new THREE.Mesh(new THREE.TorusGeometry(rad * 1.01, 0.15, 4, sides).rotateX(Math.PI / 2), wm); merlons.position.y = ht; if (sides === 4) merlons.rotation.z = Math.PI / 4; g.add(merlons);
+        const nt = st.round ? 4 : 4;
+        for (let h = 0; h < nt; h++) { const a = h / nt * 6.28 + Math.PI / 4; twr(Math.cos(a) * rad, Math.sin(a) * rad, ht + 1.2, 0.62); }
+      };
+      wallRing(2.6, 1.4);
+      if (st.concentric) wallRing(1.7, 2.0);          // the inner ring of a concentric giant
+      if (st.town > 0.3) for (let hh = 0; hh < 3; hh++) { // a walled town: houses crowd the bailey
+        const hx = (hsh(30 + hh) - 0.5) * 2.6, hz2 = (hsh(40 + hh) - 0.5) * 2.6;
+        const house = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.9), wm); house.position.set(hx, 0.3, hz2); g.add(house);
+        const hr = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.5, 4), rm); hr.position.set(hx, 0.8, hz2); hr.rotation.y = Math.PI / 4; g.add(hr);
       }
-      const keep = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.35, 3.6, 10), wm); keep.position.y = 1.8; g.add(keep);
-      const keepRing = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.17, 4, 10).rotateX(Math.PI / 2), wm); keepRing.position.y = 3.6; g.add(keepRing);
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.18, 1.5, 10), rm); roof.position.y = 4.4; g.add(roof);
+      // the keep: a great dome for the Holy City, a square donjon for strong keeps,
+      // a round tower otherwise — tallest thing in the silhouette
+      if (holy) {
+        const drum = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.3, 2.6, 10), wm); drum.position.y = 1.3; g.add(drum);
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(1.25, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), locked ? lockM : new THREE.MeshLambertMaterial({ color: '#e8c76a' })); dome.position.y = 2.6; g.add(dome);
+        const fin = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0), wm); fin.position.y = 4.2; g.add(fin);
+      } else if (st.strongKeep || !st.round) {
+        const keep = new THREE.Mesh(new THREE.BoxGeometry(1.9, 3.4, 1.9), wm); keep.position.y = 1.7; g.add(keep);
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.3, 4), rm); cap.position.y = 4.05; cap.rotation.y = Math.PI / 4; g.add(cap);
+        for (const [cx2, cz2] of [[-0.85, -0.85], [0.85, 0.85]] as const) { const tt = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 4.0, 6), wm); tt.position.set(cx2, 2.0, cz2); g.add(tt); }
+      } else {
+        const keep = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.35, 3.6, 10), wm); keep.position.y = 1.8; g.add(keep);
+        const keepRing = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.17, 4, 10).rotateX(Math.PI / 2), wm); keepRing.position.y = 3.6; g.add(keepRing);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(1.18, 1.5, 10), rm); roof.position.y = 4.4; g.add(roof);
+      }
       // a banner on the keep: your colours once taken/under siege, the enemy's while it holds out
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.4), new THREE.MeshLambertMaterial({ color: '#5a4326' })); pole.position.set(0, 5.4, 0); g.add(pole);
       const cgeo = new THREE.PlaneGeometry(1.5, 0.95, 6, 1).translate(0.75, 0, 0); // pole at local x=0
@@ -372,6 +413,159 @@ export class WorldMap3D {
     }
   }
 
+  // ---- FAMOUS PLACES: little 3D monuments with names, scattered across the world ----
+  // Pyramids on the Nile, the Parthenon over Athens, Hagia Sophia, Stonehenge…
+  // so the map reads as a living medieval world, not empty terrain between sieges.
+  private buildLandmarks() {
+    const stoneM = new THREE.MeshLambertMaterial({ color: '#d8cdb2' });
+    const columnM = new THREE.MeshLambertMaterial({ color: '#e4dac0' });
+    const darkM = new THREE.MeshLambertMaterial({ color: '#8a7f6a' });
+    const goldM = new THREE.MeshLambertMaterial({ color: '#e0be62' });
+    const sandM = new THREE.MeshLambertMaterial({ color: '#d6bf8e' });
+    const roseM = new THREE.MeshLambertMaterial({ color: '#c08a6c' });
+    const slateM = new THREE.MeshLambertMaterial({ color: '#6a7086' });
+    const B = (g: THREE.Group, geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, ry = 0) => {
+      const mesh = new THREE.Mesh(geo, m); mesh.position.set(x, y, z); if (ry) mesh.rotation.y = ry; g.add(mesh); return mesh;
+    };
+    for (const lm of LANDMARKS) {
+      const g = new THREE.Group();
+      switch (lm.kind) {
+        case 'stonehenge': { // a broken ring of trilithons on the plain
+          for (let i = 0; i < 7; i++) { const a = i / 7 * 6.28; if (i === 4) continue; B(g, new THREE.BoxGeometry(0.42, 1.25, 0.42), darkM, Math.cos(a) * 1.7, 0.62, Math.sin(a) * 1.7); }
+          for (let i = 0; i < 3; i++) { const a = (i * 2.4 + 0.45); B(g, new THREE.BoxGeometry(1.5, 0.34, 0.5), darkM, Math.cos(a) * 1.7, 1.42, Math.sin(a) * 1.7, -a); }
+          break;
+        }
+        case 'temple': { // a colonnaded classical temple (Parthenon, Baalbek, Carthage)
+          B(g, new THREE.BoxGeometry(4.6, 0.5, 3.0), stoneM, 0, 0.25, 0);
+          for (let i = 0; i < 6; i++) B(g, new THREE.CylinderGeometry(0.17, 0.19, 1.7, 6), columnM, -1.9 + i * 0.76, 1.35, 1.1);
+          for (let i = 0; i < 6; i++) B(g, new THREE.CylinderGeometry(0.17, 0.19, 1.7, 6), columnM, -1.9 + i * 0.76, 1.35, -1.1);
+          B(g, new THREE.BoxGeometry(4.4, 0.4, 2.8), stoneM, 0, 2.35, 0);
+          B(g, new THREE.ConeGeometry(2.15, 0.85, 4), stoneM, 0, 2.95, 0, Math.PI / 4).scale.set(1.05, 1, 0.66);
+          break;
+        }
+        case 'cathedral': { // a gothic cathedral: nave, steep roof, twin west towers
+          B(g, new THREE.BoxGeometry(2.1, 1.7, 4.4), stoneM, 0, 0.85, 0);
+          const roof = B(g, new THREE.BoxGeometry(1.5, 1.5, 4.4), slateM, 0, 1.95, 0); roof.rotation.z = Math.PI / 4;
+          B(g, new THREE.BoxGeometry(0.85, 3.1, 0.85), stoneM, -0.62, 1.55, 2.05);
+          B(g, new THREE.BoxGeometry(0.85, 3.1, 0.85), stoneM, 0.62, 1.55, 2.05);
+          B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, -0.62, 3.6, 2.05, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, 0.62, 3.6, 2.05, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(0.34, 1.5, 6), slateM, 0, 3.3, -0.6);
+          break;
+        }
+        case 'dome': { // a great domed sanctuary with slender minarets
+          B(g, new THREE.BoxGeometry(3.2, 1.4, 3.2), stoneM, 0, 0.7, 0);
+          B(g, new THREE.SphereGeometry(1.55, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), goldM, 0, 1.4, 0);
+          for (const [mx, mz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]] as const) {
+            B(g, new THREE.CylinderGeometry(0.14, 0.16, 3.4, 6), stoneM, mx, 1.7, mz);
+            B(g, new THREE.ConeGeometry(0.22, 0.5, 6), goldM, mx, 3.6, mz);
+          }
+          break;
+        }
+        case 'pyramids': { // Giza: three pyramids on the sand, stepped in size
+          B(g, new THREE.ConeGeometry(2.0, 2.5, 4), sandM, 0, 1.25, 0, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(1.4, 1.8, 4), sandM, 2.5, 0.9, 1.2, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(0.9, 1.15, 4), sandM, -2.1, 0.57, 1.5, Math.PI / 4);
+          break;
+        }
+        case 'lighthouse': { // the Pharos: three tapering tiers and a beacon
+          B(g, new THREE.BoxGeometry(2.0, 2.0, 2.0), stoneM, 0, 1.0, 0);
+          B(g, new THREE.CylinderGeometry(0.62, 0.75, 1.7, 8), stoneM, 0, 2.85, 0);
+          B(g, new THREE.CylinderGeometry(0.34, 0.42, 1.2, 8), stoneM, 0, 4.3, 0);
+          B(g, new THREE.SphereGeometry(0.3, 8, 6), goldM, 0, 5.1, 0);
+          break;
+        }
+        case 'colosseum': { // the Flavian ring, one side fallen
+          const outer = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 1.5, 18, 1, true), stoneM); outer.position.y = 0.75; (outer.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide; g.add(outer);
+          const inner = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.0, 18, 1, true), darkM); inner.position.y = 0.5; (inner.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide; g.add(inner);
+          B(g, new THREE.BoxGeometry(2.4, 0.9, 1.2), stoneM, 1.1, 0.45, 1.1, -0.8); // the collapsed stretch as rubble
+          break;
+        }
+        case 'abbeymount': { // Mont-Saint-Michel: an abbey crowning a tidal mount
+          B(g, new THREE.ConeGeometry(2.3, 2.5, 8), darkM, 0, 1.25, 0);
+          B(g, new THREE.CylinderGeometry(2.0, 2.3, 0.5, 8), stoneM, 0, 0.5, 0);
+          B(g, new THREE.BoxGeometry(1.2, 1.1, 1.2), stoneM, 0, 2.9, 0);
+          B(g, new THREE.ConeGeometry(0.5, 1.7, 6), slateM, 0, 4.2, 0);
+          B(g, new THREE.SphereGeometry(0.12, 6, 5), goldM, 0, 5.1, 0);
+          break;
+        }
+        case 'campanile': { // Venice: a low island city and St Mark's slim bell-tower
+          for (let i = 0; i < 4; i++) { const hx = (hash(i, 3) - 0.5) * 2.8, hz2 = (hash(i, 7) - 0.5) * 2.2; B(g, new THREE.BoxGeometry(0.9, 0.5, 0.7), stoneM, hx, 0.35, hz2); B(g, new THREE.ConeGeometry(0.65, 0.4, 4), new THREE.MeshLambertMaterial({ color: '#b56a4a' }), hx, 0.8, hz2, Math.PI / 4); }
+          B(g, new THREE.BoxGeometry(0.62, 3.2, 0.62), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 0.9, 1.7, 0);
+          B(g, new THREE.ConeGeometry(0.55, 0.9, 4), goldM, 0.9, 3.7, 0, Math.PI / 4);
+          break;
+        }
+        case 'aqueduct': { // Pont du Gard: two tiers of arches striding a valley
+          for (let i = 0; i < 5; i++) B(g, new THREE.BoxGeometry(0.45, 1.6, 0.6), sandM, -2.2 + i * 1.1, 0.8, 0);
+          B(g, new THREE.BoxGeometry(5.2, 0.35, 0.66), sandM, 0, 1.75, 0);
+          for (let i = 0; i < 4; i++) B(g, new THREE.BoxGeometry(0.4, 0.9, 0.55), sandM, -1.65 + i * 1.1, 2.35, 0);
+          B(g, new THREE.BoxGeometry(5.2, 0.3, 0.6), sandM, 0, 2.95, 0);
+          break;
+        }
+        case 'rockcity': { // Petra: a temple face carved into rose sandstone
+          B(g, new THREE.BoxGeometry(3.4, 2.7, 1.3), roseM, 0, 1.35, 0);
+          for (let i = 0; i < 4; i++) B(g, new THREE.CylinderGeometry(0.12, 0.13, 1.5, 6), new THREE.MeshLambertMaterial({ color: '#d8a685' }), -0.9 + i * 0.6, 0.95, 0.72);
+          B(g, new THREE.BoxGeometry(2.7, 0.35, 0.3), new THREE.MeshLambertMaterial({ color: '#d8a685' }), 0, 1.85, 0.72);
+          break;
+        }
+      }
+      const x = this.wX(lm.lon), z = this.wZ(lm.lat), y = this.terrainY(lm.lon, lm.lat);
+      g.scale.setScalar(1.35); g.position.set(x, y, z); this.scene.add(g);
+      // a small parchment name beneath — quieter than castle labels
+      const cv = document.createElement('canvas'); cv.width = 256; cv.height = 44; const ctx = cv.getContext('2d')!;
+      ctx.font = "italic 600 23px 'EB Garamond', Georgia, serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(22,15,7,0.8)'; ctx.strokeText(lm.name, 128, 24);
+      ctx.fillStyle = '#e7dcc2'; ctx.fillText(lm.name, 128, 24);
+      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.92, depthTest: false }));
+      sp.position.set(x, y + 7.2, z); sp.scale.set(15, 2.6, 1); sp.renderOrder = 9; this.scene.add(sp);
+    }
+  }
+
+  // ---- RIVERS: the great rivers as winding ribbons, from source to sea ----
+  private buildRivers() {
+    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false });
+    const geos: THREE.BufferGeometry[] = [];
+    for (const river of RIVERS) {
+      // densify the waypoints, then lay a tapering ribbon that follows the terrain
+      const pts: { x: number; y: number; z: number }[] = [];
+      for (let i = 0; i < river.length - 1; i++) {
+        const [la0, lo0] = river[i], [la1, lo1] = river[i + 1];
+        for (let s = 0; s < 8; s++) {
+          const t = s / 8, la = la0 + (la1 - la0) * t, lo = lo0 + (lo1 - lo0) * t;
+          // a gentle meander so the line doesn't read ruler-straight
+          const w = Math.sin((i * 8 + s) * 0.9) * 0.06;
+          pts.push({ x: this.wX(lo + w), y: this.terrainY(lo, la) + 0.22, z: this.wZ(la + w * 0.7) });
+        }
+      }
+      if (pts.length < 2) continue;
+      const pos: number[] = [], idx: number[] = [];
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        let dx = b.x - a.x, dz = b.z - a.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        const w = 0.55 + (i / pts.length) * 1.0;       // swells toward the mouth
+        pos.push(pts[i].x - dz * w, pts[i].y, pts[i].z + dx * w, pts[i].x + dz * w, pts[i].y, pts[i].z - dx * w);
+      }
+      for (let i = 0; i < pts.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); gg.setIndex(idx);
+      geos.push(gg);
+    }
+    if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.renderOrder = 1; this.scene.add(m); }
+  }
+
+  // ---- ambient shipping: lone sails working the sea lanes ----
+  private ships: { grp: THREE.Group; cx: number; cz: number; r: number; a: number; spd: number }[] = [];
+  private buildAmbientShips() {
+    const LANES: [number, number][] = [[50.4, -1.6], [39.6, 6.6], [35.2, 21.0], [33.8, 33.6], [42.5, 29.5]];
+    for (const [la, lo] of LANES) {
+      if (!this.isWater(lo, la)) continue;
+      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(1.35);
+      this.scene.add(grp);
+      this.ships.push({ grp, cx: this.wX(lo), cz: this.wZ(la), r: 6 + Math.random() * 9, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
+    }
+  }
+
   // A gradient sky dome (warm horizon → cool zenith) so the sky reads with depth
   // instead of a flat fill — fog still blends the far terrain into the horizon band.
   private buildSkyDome() {
@@ -385,6 +579,206 @@ export class WorldMap3D {
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
   }
 
+  // fine parchment-like grain (multiplied over the vertex colours by Lambert)
+  private _grain?: THREE.CanvasTexture;
+  private grainTex() {
+    if (this._grain) return this._grain;
+    const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S; const ctx = cv.getContext('2d')!;
+    const img = ctx.createImageData(S, S);
+    for (let i = 0; i < S * S; i++) {
+      const v = 236 + Math.floor(Math.random() * 20) - (Math.random() < 0.06 ? 14 : 0); // speckled stipple
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  private softSprite(hex: string) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128; const ctx = cv.getContext('2d')!;
+    const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62); g.addColorStop(0, hex); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; return tex;
+  }
+  // ---- FAMOUS PLACES: little 3D monuments with names, scattered across the world ----
+  // Pyramids on the Nile, the Parthenon over Athens, Hagia Sophia, Stonehenge…
+  // so the map reads as a living medieval world, not empty terrain between sieges.
+  private buildLandmarks() {
+    const stoneM = new THREE.MeshLambertMaterial({ color: '#d8cdb2' });
+    const columnM = new THREE.MeshLambertMaterial({ color: '#e4dac0' });
+    const darkM = new THREE.MeshLambertMaterial({ color: '#8a7f6a' });
+    const goldM = new THREE.MeshLambertMaterial({ color: '#e0be62' });
+    const sandM = new THREE.MeshLambertMaterial({ color: '#d6bf8e' });
+    const roseM = new THREE.MeshLambertMaterial({ color: '#c08a6c' });
+    const slateM = new THREE.MeshLambertMaterial({ color: '#6a7086' });
+    const B = (g: THREE.Group, geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, ry = 0) => {
+      const mesh = new THREE.Mesh(geo, m); mesh.position.set(x, y, z); if (ry) mesh.rotation.y = ry; g.add(mesh); return mesh;
+    };
+    for (const lm of LANDMARKS) {
+      const g = new THREE.Group();
+      switch (lm.kind) {
+        case 'stonehenge': { // a broken ring of trilithons on the plain
+          for (let i = 0; i < 7; i++) { const a = i / 7 * 6.28; if (i === 4) continue; B(g, new THREE.BoxGeometry(0.42, 1.25, 0.42), darkM, Math.cos(a) * 1.7, 0.62, Math.sin(a) * 1.7); }
+          for (let i = 0; i < 3; i++) { const a = (i * 2.4 + 0.45); B(g, new THREE.BoxGeometry(1.5, 0.34, 0.5), darkM, Math.cos(a) * 1.7, 1.42, Math.sin(a) * 1.7, -a); }
+          break;
+        }
+        case 'temple': { // a colonnaded classical temple (Parthenon, Baalbek, Carthage)
+          B(g, new THREE.BoxGeometry(4.6, 0.5, 3.0), stoneM, 0, 0.25, 0);
+          for (let i = 0; i < 6; i++) B(g, new THREE.CylinderGeometry(0.17, 0.19, 1.7, 6), columnM, -1.9 + i * 0.76, 1.35, 1.1);
+          for (let i = 0; i < 6; i++) B(g, new THREE.CylinderGeometry(0.17, 0.19, 1.7, 6), columnM, -1.9 + i * 0.76, 1.35, -1.1);
+          B(g, new THREE.BoxGeometry(4.4, 0.4, 2.8), stoneM, 0, 2.35, 0);
+          B(g, new THREE.ConeGeometry(2.15, 0.85, 4), stoneM, 0, 2.95, 0, Math.PI / 4).scale.set(1.05, 1, 0.66);
+          break;
+        }
+        case 'cathedral': { // a gothic cathedral: nave, steep roof, twin west towers
+          B(g, new THREE.BoxGeometry(2.1, 1.7, 4.4), stoneM, 0, 0.85, 0);
+          const roof = B(g, new THREE.BoxGeometry(1.5, 1.5, 4.4), slateM, 0, 1.95, 0); roof.rotation.z = Math.PI / 4;
+          B(g, new THREE.BoxGeometry(0.85, 3.1, 0.85), stoneM, -0.62, 1.55, 2.05);
+          B(g, new THREE.BoxGeometry(0.85, 3.1, 0.85), stoneM, 0.62, 1.55, 2.05);
+          B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, -0.62, 3.6, 2.05, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, 0.62, 3.6, 2.05, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(0.34, 1.5, 6), slateM, 0, 3.3, -0.6);
+          break;
+        }
+        case 'dome': { // a great domed sanctuary with slender minarets
+          B(g, new THREE.BoxGeometry(3.2, 1.4, 3.2), stoneM, 0, 0.7, 0);
+          B(g, new THREE.SphereGeometry(1.55, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), goldM, 0, 1.4, 0);
+          for (const [mx, mz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]] as const) {
+            B(g, new THREE.CylinderGeometry(0.14, 0.16, 3.4, 6), stoneM, mx, 1.7, mz);
+            B(g, new THREE.ConeGeometry(0.22, 0.5, 6), goldM, mx, 3.6, mz);
+          }
+          break;
+        }
+        case 'pyramids': { // Giza: three pyramids on the sand, stepped in size
+          B(g, new THREE.ConeGeometry(2.0, 2.5, 4), sandM, 0, 1.25, 0, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(1.4, 1.8, 4), sandM, 2.5, 0.9, 1.2, Math.PI / 4);
+          B(g, new THREE.ConeGeometry(0.9, 1.15, 4), sandM, -2.1, 0.57, 1.5, Math.PI / 4);
+          break;
+        }
+        case 'lighthouse': { // the Pharos: three tapering tiers and a beacon
+          B(g, new THREE.BoxGeometry(2.0, 2.0, 2.0), stoneM, 0, 1.0, 0);
+          B(g, new THREE.CylinderGeometry(0.62, 0.75, 1.7, 8), stoneM, 0, 2.85, 0);
+          B(g, new THREE.CylinderGeometry(0.34, 0.42, 1.2, 8), stoneM, 0, 4.3, 0);
+          B(g, new THREE.SphereGeometry(0.3, 8, 6), goldM, 0, 5.1, 0);
+          break;
+        }
+        case 'colosseum': { // the Flavian ring, one side fallen
+          const outer = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 1.5, 18, 1, true), stoneM); outer.position.y = 0.75; (outer.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide; g.add(outer);
+          const inner = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.0, 18, 1, true), darkM); inner.position.y = 0.5; (inner.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide; g.add(inner);
+          B(g, new THREE.BoxGeometry(2.4, 0.9, 1.2), stoneM, 1.1, 0.45, 1.1, -0.8); // the collapsed stretch as rubble
+          break;
+        }
+        case 'abbeymount': { // Mont-Saint-Michel: an abbey crowning a tidal mount
+          B(g, new THREE.ConeGeometry(2.3, 2.5, 8), darkM, 0, 1.25, 0);
+          B(g, new THREE.CylinderGeometry(2.0, 2.3, 0.5, 8), stoneM, 0, 0.5, 0);
+          B(g, new THREE.BoxGeometry(1.2, 1.1, 1.2), stoneM, 0, 2.9, 0);
+          B(g, new THREE.ConeGeometry(0.5, 1.7, 6), slateM, 0, 4.2, 0);
+          B(g, new THREE.SphereGeometry(0.12, 6, 5), goldM, 0, 5.1, 0);
+          break;
+        }
+        case 'campanile': { // Venice: a low island city and St Mark's slim bell-tower
+          for (let i = 0; i < 4; i++) { const hx = (hash(i, 3) - 0.5) * 2.8, hz2 = (hash(i, 7) - 0.5) * 2.2; B(g, new THREE.BoxGeometry(0.9, 0.5, 0.7), stoneM, hx, 0.35, hz2); B(g, new THREE.ConeGeometry(0.65, 0.4, 4), new THREE.MeshLambertMaterial({ color: '#b56a4a' }), hx, 0.8, hz2, Math.PI / 4); }
+          B(g, new THREE.BoxGeometry(0.62, 3.2, 0.62), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 0.9, 1.7, 0);
+          B(g, new THREE.ConeGeometry(0.55, 0.9, 4), goldM, 0.9, 3.7, 0, Math.PI / 4);
+          break;
+        }
+        case 'aqueduct': { // Pont du Gard: two tiers of arches striding a valley
+          for (let i = 0; i < 5; i++) B(g, new THREE.BoxGeometry(0.45, 1.6, 0.6), sandM, -2.2 + i * 1.1, 0.8, 0);
+          B(g, new THREE.BoxGeometry(5.2, 0.35, 0.66), sandM, 0, 1.75, 0);
+          for (let i = 0; i < 4; i++) B(g, new THREE.BoxGeometry(0.4, 0.9, 0.55), sandM, -1.65 + i * 1.1, 2.35, 0);
+          B(g, new THREE.BoxGeometry(5.2, 0.3, 0.6), sandM, 0, 2.95, 0);
+          break;
+        }
+        case 'rockcity': { // Petra: a temple face carved into rose sandstone
+          B(g, new THREE.BoxGeometry(3.4, 2.7, 1.3), roseM, 0, 1.35, 0);
+          for (let i = 0; i < 4; i++) B(g, new THREE.CylinderGeometry(0.12, 0.13, 1.5, 6), new THREE.MeshLambertMaterial({ color: '#d8a685' }), -0.9 + i * 0.6, 0.95, 0.72);
+          B(g, new THREE.BoxGeometry(2.7, 0.35, 0.3), new THREE.MeshLambertMaterial({ color: '#d8a685' }), 0, 1.85, 0.72);
+          break;
+        }
+      }
+      const x = this.wX(lm.lon), z = this.wZ(lm.lat), y = this.terrainY(lm.lon, lm.lat);
+      g.scale.setScalar(1.35); g.position.set(x, y, z); this.scene.add(g);
+      // a small parchment name beneath — quieter than castle labels
+      const cv = document.createElement('canvas'); cv.width = 256; cv.height = 44; const ctx = cv.getContext('2d')!;
+      ctx.font = "italic 600 23px 'EB Garamond', Georgia, serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(22,15,7,0.8)'; ctx.strokeText(lm.name, 128, 24);
+      ctx.fillStyle = '#e7dcc2'; ctx.fillText(lm.name, 128, 24);
+      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.92, depthTest: false }));
+      sp.position.set(x, y + 7.2, z); sp.scale.set(15, 2.6, 1); sp.renderOrder = 9; this.scene.add(sp);
+    }
+  }
+
+  // ---- RIVERS: the great rivers as winding ribbons, from source to sea ----
+  private buildRivers() {
+    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false });
+    const geos: THREE.BufferGeometry[] = [];
+    for (const river of RIVERS) {
+      // densify the waypoints, then lay a tapering ribbon that follows the terrain
+      const pts: { x: number; y: number; z: number }[] = [];
+      for (let i = 0; i < river.length - 1; i++) {
+        const [la0, lo0] = river[i], [la1, lo1] = river[i + 1];
+        for (let s = 0; s < 8; s++) {
+          const t = s / 8, la = la0 + (la1 - la0) * t, lo = lo0 + (lo1 - lo0) * t;
+          // a gentle meander so the line doesn't read ruler-straight
+          const w = Math.sin((i * 8 + s) * 0.9) * 0.06;
+          pts.push({ x: this.wX(lo + w), y: this.terrainY(lo, la) + 0.22, z: this.wZ(la + w * 0.7) });
+        }
+      }
+      if (pts.length < 2) continue;
+      const pos: number[] = [], idx: number[] = [];
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        let dx = b.x - a.x, dz = b.z - a.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        const w = 0.55 + (i / pts.length) * 1.0;       // swells toward the mouth
+        pos.push(pts[i].x - dz * w, pts[i].y, pts[i].z + dx * w, pts[i].x + dz * w, pts[i].y, pts[i].z - dx * w);
+      }
+      for (let i = 0; i < pts.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); gg.setIndex(idx);
+      geos.push(gg);
+    }
+    if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.renderOrder = 1; this.scene.add(m); }
+  }
+
+  // ---- ambient shipping: lone sails working the sea lanes ----
+  private ships: { grp: THREE.Group; cx: number; cz: number; r: number; a: number; spd: number }[] = [];
+  private buildAmbientShips() {
+    const LANES: [number, number][] = [[50.4, -1.6], [39.6, 6.6], [35.2, 21.0], [33.8, 33.6], [42.5, 29.5]];
+    for (const [la, lo] of LANES) {
+      if (!this.isWater(lo, la)) continue;
+      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(1.35);
+      this.scene.add(grp);
+      this.ships.push({ grp, cx: this.wX(lo), cz: this.wZ(la), r: 6 + Math.random() * 9, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
+    }
+  }
+
+  // A gradient sky dome (warm horizon → cool zenith) so the sky reads with depth
+  // instead of a flat fill — fog still blends the far terrain into the horizon band.
+  private buildSkyDome() {
+    const geo = new THREE.SphereGeometry(2500, 24, 16);
+    const top = new THREE.Color('#1b2440'), bot = new THREE.Color('#c3b49a');
+    const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
+    // a warm pale haze band hugs the horizon (the cloudy rim the map melts into),
+    // ramping up to a deep dusk zenith
+    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 2500) * 1.7 + 0.18)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
+  }
+
+  // fine parchment-like grain (multiplied over the vertex colours by Lambert)
+  private _grain?: THREE.CanvasTexture;
+  private grainTex() {
+    if (this._grain) return this._grain;
+    const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S; const ctx = cv.getContext('2d')!;
+    const img = ctx.createImageData(S, S);
+    for (let i = 0; i < S * S; i++) {
+      const v = 236 + Math.floor(Math.random() * 20) - (Math.random() < 0.06 ? 14 : 0); // speckled stipple
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
   private softSprite(hex: string) {
     const cv = document.createElement('canvas'); cv.width = cv.height = 128; const ctx = cv.getContext('2d')!;
     const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62); g.addColorStop(0, hex); g.addColorStop(1, 'rgba(255,255,255,0)');
@@ -404,25 +798,6 @@ export class WorldMap3D {
     lobe(C, C + 14, 52, 0.95); lobe(C - 40, C + 20, 34, 0.9); lobe(C + 42, C + 18, 36, 0.9);
     lobe(C - 14, C - 8, 40, 0.96); lobe(C + 22, C - 4, 38, 0.94); lobe(C - 58, C + 26, 22, 0.8); lobe(C + 60, C + 24, 22, 0.8);
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; return tex;
-  }
-  // soft cumulus drifting west→east high over the map, PLUS a low bank ringing the
-  // map's rim so the edges read as cloud, not a cut tile (Total War horizon).
-  private buildClouds() {
-    const tex = this.cloudSprite();
-    const add = (x: number, y: number, z: number, s: number, op: number, drift: number) => {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: op, depthWrite: false }));
-      sp.position.set(x, y, z); sp.scale.set(s, s * 0.62, 1); sp.renderOrder = 1; this.scene.add(sp);
-      this.clouds.push({ mesh: sp, speed: drift });
-    };
-    const xw = this.wX(this.bb.w), xe = this.wX(this.bb.e), zn = this.wZ(this.bb.n), zs = this.wZ(this.bb.s);
-    // high drifting clouds over the map
-    for (let i = 0; i < 16; i++) add(xw + Math.random() * (xe - xw) + 200, 96 + Math.random() * 64, zn + Math.random() * (zs - zn), 64 + Math.random() * 90, 0.5, 0.06 + Math.random() * 0.08);
-    // a low, fat cloud bank wreathing the map edge — fading land/sea dissolve into it
-    const cx = (xw + xe) / 2, cz = (zn + zs) / 2, rx = (xe - xw) / 2, rz = (zs - zn) / 2;
-    for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * Math.PI * 2 + Math.random() * 0.25, rr = 1.04 + Math.random() * 0.16;
-      add(cx + Math.cos(a) * rx * rr, 14 + Math.random() * 26, cz + Math.sin(a) * rz * rr, 120 + Math.random() * 110, 0.78, 0.015 + Math.random() * 0.03);
-    }
   }
   // small V-flocks of gull silhouettes, each a pair of swept wings that flap;
   // kept small and high so they read as distant birds, not objects on the ground
@@ -611,26 +986,56 @@ export class WorldMap3D {
   private buildArmy() {
     const g = new THREE.Group();
     const bodyMat = new THREE.MeshLambertMaterial({ color: '#41372a' }), steel = new THREE.MeshLambertMaterial({ color: '#8b8f98' });
-    const figs: THREE.BufferGeometry[] = [];
-    for (let i = 0; i < 9; i++) { const col = (i % 3 - 1) * 1.2, row = Math.floor(i / 3) * 1.4; figs.push(new THREE.BoxGeometry(0.7, 1.5, 0.7).translate(col, 0.75, row)); }
+    const redMat = new THREE.MeshLambertMaterial({ color: '#a03a2c' });
+    // a proper marching column: two files of twelve, spears sloped, shields on
+    // the outer arm, twin banners — reads as a host on the road, not nine crates
+    const figs: THREE.BufferGeometry[] = [], heads: THREE.BufferGeometry[] = [], spears: THREE.BufferGeometry[] = [], shields: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < 12; i++) {
+      const col = (i % 2 - 0.5) * 1.5, row = Math.floor(i / 2) * 1.35 + (i % 2) * 0.4;
+      figs.push(new THREE.BoxGeometry(0.62, 1.4, 0.62).translate(col, 0.7, row));
+      heads.push(new THREE.SphereGeometry(0.3, 6, 5).translate(col, 1.58, row));
+      spears.push(new THREE.CylinderGeometry(0.045, 0.045, 2.6, 4).rotateX(0.16).translate(col + 0.34, 2.0, row));
+      shields.push(new THREE.CylinderGeometry(0.42, 0.42, 0.1, 8).rotateZ(Math.PI / 2).translate(col + (col > 0 ? 0.42 : -0.42), 0.85, row));
+    }
     g.add(new THREE.Mesh(mergeGeometries(figs, false), bodyMat));
-    const heads: THREE.BufferGeometry[] = [];
-    for (let i = 0; i < 9; i++) { const col = (i % 3 - 1) * 1.2, row = Math.floor(i / 3) * 1.4; heads.push(new THREE.SphereGeometry(0.34, 6, 5).translate(col, 1.7, row)); }
     g.add(new THREE.Mesh(mergeGeometries(heads, false), steel));
-    // standard-bearer with a big banner
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.2), new THREE.MeshLambertMaterial({ color: '#4a3620' })); pole.position.set(0, 2.1, -1.4); g.add(pole);
-    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.3).translate(1.0, 0, 0), new THREE.MeshLambertMaterial({ color: '#c43d34', side: THREE.DoubleSide })); cloth.position.set(0, 3.4, -1.4); g.add(cloth);
-    (g as any).cloth = cloth;
-    g.scale.set(2.4, 2.4, 2.4); g.visible = false; this.scene.add(g); return g;
+    g.add(new THREE.Mesh(mergeGeometries(spears, false), new THREE.MeshLambertMaterial({ color: '#5a4326' })));
+    g.add(new THREE.Mesh(mergeGeometries(shields, false), redMat));
+    // twin standards, front and centre of the column
+    for (const bz of [-1.4, 4.6]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.2), new THREE.MeshLambertMaterial({ color: '#4a3620' })); pole.position.set(0, 2.1, bz); g.add(pole);
+      const cloth = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.3).translate(1.0, 0, 0), new THREE.MeshLambertMaterial({ color: '#c43d34', side: THREE.DoubleSide })); cloth.position.set(0, 3.4, bz); g.add(cloth);
+      if (bz < 0) (g as any).cloth = cloth;
+    }
+    g.scale.set(2.2, 2.2, 2.2); g.visible = false; this.scene.add(g); return g;
   }
+  // A medieval cog: planked hull with raised bow & stern castles, shields along
+  // the gunwale, a striped square sail bellied on its yard, banner at the masthead.
   private buildBoat() {
     const g = new THREE.Group();
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(3.0, 1.0, 7.0), new THREE.MeshLambertMaterial({ color: '#6b4a2a' })); hull.position.y = 0.4; g.add(hull);
-    const prow = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.2, 4).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#5a3d22' })); prow.position.set(0, 0.4, 4.2); prow.rotation.z = Math.PI / 4; g.add(prow);
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5), new THREE.MeshLambertMaterial({ color: '#3f2d18' })); mast.position.y = 3; g.add(mast);
-    const sail = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3.0), new THREE.MeshLambertMaterial({ color: '#efe6cf', side: THREE.DoubleSide })); sail.position.set(0, 3.3, 0.1); g.add(sail);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.8).translate(0.7, 0, 0), new THREE.MeshLambertMaterial({ color: '#c43d34', side: THREE.DoubleSide })); flag.position.set(0, 5.3, 0); g.add(flag);
-    g.scale.set(2.6, 2.6, 2.6); g.visible = false; this.scene.add(g); return g;
+    const wood = new THREE.MeshLambertMaterial({ color: '#6b4a2a' }), woodDark = new THREE.MeshLambertMaterial({ color: '#523a1f' });
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.0, 6.4), wood); hull.position.y = 0.5; g.add(hull);
+    const keelBow = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 1.6).rotateX(-0.5), wood); keelBow.position.set(0, 0.75, 3.4); g.add(keelBow);
+    const keelSt = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 1.6).rotateX(0.5), wood); keelSt.position.set(0, 0.75, -3.4); g.add(keelSt);
+    const fore = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.85, 1.5), woodDark); fore.position.set(0, 1.45, 2.6); g.add(fore);
+    const aft = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.85, 1.5), woodDark); aft.position.set(0, 1.45, -2.6); g.add(aft);
+    // shields along each gunwale, alternating red and steel
+    for (let i = 0; i < 4; i++) for (const s of [-1, 1]) {
+      const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.09, 8).rotateZ(Math.PI / 2), new THREE.MeshLambertMaterial({ color: i % 2 ? '#a03a2c' : '#9298a2' }));
+      sh.position.set(s * 1.36, 1.1, -1.5 + i * 1.0); g.add(sh);
+    }
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 5.2), new THREE.MeshLambertMaterial({ color: '#3f2d18' })); mast.position.y = 3.1; g.add(mast);
+    const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.8).rotateZ(Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#3f2d18' })); yard.position.y = 4.6; g.add(yard);
+    // the striped sail, gently bellied
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64; const cx2 = cv.getContext('2d')!;
+    cx2.fillStyle = '#eee4cb'; cx2.fillRect(0, 0, 64, 64); cx2.fillStyle = '#b0432f';
+    for (let s = 0; s < 4; s++) cx2.fillRect(s * 16 + 4, 0, 8, 64);
+    const stex = new THREE.CanvasTexture(cv); stex.colorSpace = THREE.SRGBColorSpace;
+    const sgeo = new THREE.PlaneGeometry(3.6, 2.9, 8, 1);
+    { const p = sgeo.attributes.position; for (let i = 0; i < p.count; i++) { const lx = p.getX(i) / 1.8; p.setZ(i, (1 - lx * lx) * 0.55); } sgeo.computeVertexNormals(); }
+    const sail = new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ map: stex, side: THREE.DoubleSide })); sail.position.set(0, 3.15, 0.12); g.add(sail);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.7).translate(0.65, 0, 0), new THREE.MeshLambertMaterial({ color: '#c43d34', side: THREE.DoubleSide })); flag.position.set(0, 5.9, 0); g.add(flag);
+    g.scale.set(2.4, 2.4, 2.4); g.visible = false; this.scene.add(g); return g;
   }
   private marchTo(node: CampaignCastle) {
     const src = node.id > 0 ? this.nodes[node.id - 1] : null;
@@ -783,7 +1188,11 @@ export class WorldMap3D {
       for (let i = 0; i < a.length; i += 3) { const lx = base[i]; a[i + 2] = Math.sin(this.pulse * 2.4 + lx * 4 + b.phase) * 0.22 * (0.3 + lx * 0.6); }
       p.needsUpdate = true;
     }
-    for (const cl of this.clouds) { cl.mesh.position.x += cl.speed; if (cl.mesh.position.x > this.wX(this.bb.e) + 200) cl.mesh.position.x = this.wX(this.bb.w) - 200; }
+    for (const sh of this.ships) { // lone sails slowly working circles on their sea lanes
+      sh.a += sh.spd; const px = sh.cx + Math.cos(sh.a) * sh.r, pz = sh.cz + Math.sin(sh.a) * sh.r;
+      sh.grp.position.set(px, 0.55 + Math.sin(this.pulse * 1.6 + sh.a * 9) * 0.16, pz);
+      sh.grp.rotation.y = Math.atan2(-Math.sin(sh.a), Math.cos(sh.a));
+    }
     for (const bd of this.birds) {
       bd.grp.position.x += bd.speed;
       if (bd.grp.position.x > this.wX(this.bb.e) + 150) bd.grp.position.x = this.wX(this.bb.w) - 150;

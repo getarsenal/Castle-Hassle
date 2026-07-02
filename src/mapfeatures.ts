@@ -72,6 +72,29 @@ export const BORDERS: [number, number][][] = [
   [[36.4, 36.3], [35.0, 36.2], [33.4, 35.6], [31.7, 35.2]],                                      // Crusader Levant coast
 ];
 
+// Famous places of the medieval world, each drawn as a little 3D monument on the
+// map with its name beneath — wonders, holy sites and ancient ruins a crusader
+// would have heard tell of. Non-interactive scenery; pure flavour and wayfinding.
+export type LandmarkKind = 'stonehenge' | 'temple' | 'cathedral' | 'dome' | 'pyramids' | 'lighthouse'
+  | 'colosseum' | 'abbeymount' | 'campanile' | 'aqueduct' | 'rockcity';
+export const LANDMARKS: { name: string; kind: LandmarkKind; lat: number; lon: number }[] = [
+  { name: 'Stonehenge', kind: 'stonehenge', lat: 51.18, lon: -1.83 },
+  { name: 'Mont-Saint-Michel', kind: 'abbeymount', lat: 48.64, lon: -1.51 },
+  { name: 'Notre-Dame', kind: 'cathedral', lat: 48.85, lon: 2.35 },
+  { name: 'Cologne Cathedral', kind: 'cathedral', lat: 50.94, lon: 6.96 },
+  { name: 'Pont du Gard', kind: 'aqueduct', lat: 43.95, lon: 4.54 },
+  { name: 'Venice', kind: 'campanile', lat: 45.43, lon: 12.34 },
+  { name: 'The Colosseum', kind: 'colosseum', lat: 41.89, lon: 12.49 },
+  { name: 'The Parthenon', kind: 'temple', lat: 37.97, lon: 23.73 },
+  { name: 'Hagia Sophia', kind: 'dome', lat: 41.01, lon: 28.98 },
+  { name: 'The Pharos', kind: 'lighthouse', lat: 31.21, lon: 29.89 },
+  { name: 'Pyramids of Giza', kind: 'pyramids', lat: 29.98, lon: 31.13 },
+  { name: 'Umayyad Mosque', kind: 'dome', lat: 33.51, lon: 36.31 },
+  { name: 'Baalbek', kind: 'temple', lat: 34.01, lon: 36.2 },
+  { name: 'Petra', kind: 'rockcity', lat: 30.33, lon: 35.44 },
+  { name: 'Carthage', kind: 'temple', lat: 36.85, lon: 10.32 },
+];
+
 // realm labels for the period (drawn big & faint)
 export const REALMS: [string, number, number][] = [
   ['ENGLAND', 52.3, -1.5], ['KINGDOM OF FRANCE', 47.4, 2.2], ['THE EMPIRE', 50.2, 9.6],
