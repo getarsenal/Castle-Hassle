@@ -691,7 +691,14 @@ function initMuteControl() {
 // loads silent (web audio can't start without a gesture), and "March to War" is
 // the gate — that tap unlocks audio, plays the studio sting WITH sound as a brief
 // "Scheidel Interactive presents" transition, then drops into the campaign.
-$('startGameBtn')?.addEventListener('click', () => playStudioSting(() => showMainMenu()), { once: true });
+// The "Sound the War Trumpets" button blasts a trumpet fanfare the instant it's
+// pressed. Drop the clip at the deploy root as trumpet.mp3 (like theme.mp3); until
+// then this no-ops silently.
+const WAR_TRUMPET_SRC = './trumpet.mp3';
+function soundWarTrumpets() {
+  try { const a = new Audio(WAR_TRUMPET_SRC); a.volume = audioMuted ? 0 : 0.9; a.muted = audioMuted; a.play().catch(() => { /* not dropped in yet / autoplay */ }); } catch { /* ignore */ }
+}
+$('startGameBtn')?.addEventListener('click', () => { soundWarTrumpets(); playStudioSting(() => showMainMenu()); }, { once: true });
 function playStudioSting(then: () => void) {
   battleAudio.unlock?.();
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
