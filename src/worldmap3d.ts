@@ -59,6 +59,7 @@ export class WorldMap3D {
   private camera: THREE.PerspectiveCamera;
   private raf = 0; private pulse = 0;
   private bb!: BB; private GW = 0; private GH = 0; private heights = new Float32Array(0);
+  private fineH = new Float32Array(0); private TW = 0; private TH = 0; // upsampled relief grid
   private readonly K = 11; private lonMid = 0; private myMid = 0;
   private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private pitch = 52 * Math.PI / 180;
   private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh }[] = [];
@@ -88,9 +89,9 @@ export class WorldMap3D {
     this.scene.fog = new THREE.Fog('#c3b49a', 720, 2050);
     this.camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
     // dusk lighting: a low warm-gold sun rakes the relief, cool dusk sky fill, muted ambient
-    this.scene.add(new THREE.HemisphereLight('#b9c2e6', '#4a3c28', 0.72));
-    const sun = new THREE.DirectionalLight('#ffce92', 1.4); sun.position.set(-150, 195, 120); this.scene.add(sun);
-    this.scene.add(new THREE.AmbientLight('#5a4e5e', 0.36));
+    this.scene.add(new THREE.HemisphereLight('#b9c2e6', '#4a3c28', 0.66));
+    const sun = new THREE.DirectionalLight('#ffce92', 1.55); sun.position.set(-150, 175, 120); this.scene.add(sun);
+    this.scene.add(new THREE.AmbientLight('#5a4e5e', 0.3));
     this.buildSkyDome();
     this.resize();
     this.bind();
@@ -113,10 +114,14 @@ export class WorldMap3D {
   private wX(lon: number) { return (lon - this.lonMid) * this.K; }
   private wZ(lat: number) { return -(mercYdeg(lat) - this.myMid) * this.K; }
   private terrainY(lon: number, lat: number) {
-    const { bb, GW, GH } = this;
-    const gx = Math.max(0, Math.min(GW - 1, Math.round((lon - bb.w) / (bb.e - bb.w) * (GW - 1))));
-    const gy = Math.max(0, Math.min(GH - 1, Math.round((lat - bb.s) / (bb.n - bb.s) * (GH - 1))));
-    return Math.max(0.4, this.heights[gy * GW + gx]);
+    const { bb, TW, TH } = this;
+    if (!this.fineH.length) return 0.4;
+    const fx = Math.max(0, Math.min(TW - 1.001, (lon - bb.w) / (bb.e - bb.w) * (TW - 1)));
+    const fy = Math.max(0, Math.min(TH - 1.001, (lat - bb.s) / (bb.n - bb.s) * (TH - 1)));
+    const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0, i = y0 * TW + x0;
+    const h = this.fineH[i] * (1 - tx) * (1 - ty) + this.fineH[i + 1] * tx * (1 - ty)
+      + this.fineH[i + TW] * (1 - tx) * ty + this.fineH[i + TW + 1] * tx * ty;
+    return Math.max(0.4, h);
   }
   private distRidge(lon: number, lat: number, r: [number, number][]) {
     let m = 1e9;
@@ -167,35 +172,76 @@ export class WorldMap3D {
     }
     // 2) smooth (softer mountains + much gentler shores)
     this.heights = this.smoothHeights(raw, mask, 4);
-    // 3) geometry
+    // 3) geometry — the relief is UPSAMPLED 2x past the data grid: bilinear base
+    // heights plus multi-octave detail noise (calm in the lowlands, rugged in the
+    // ranges) give crisp, hand-modelled-looking terrain instead of low-poly mush.
+    const UP = 2, TW = (GW - 1) * UP + 1, TH = (GH - 1) * UP + 1;
+    this.TW = TW; this.TH = TH;
+    const vn = (x: number, y: number) => {                                  // smooth value noise
+      const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+      const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const a = hash(xi, yi), b = hash(xi + 1, yi), cc2 = hash(xi, yi + 1), d2 = hash(xi + 1, yi + 1);
+      return a + (b - a) * sx + (cc2 - a) * sy + (a - b - cc2 + d2) * sx * sy;
+    };
+    const fbm = (x: number, y: number) => vn(x, y) * 0.55 + vn(x * 2.13, y * 2.13) * 0.28 + vn(x * 4.31, y * 4.31) * 0.17;
+    const bi = (arr: ArrayLike<number>, fx: number, fy: number) => {        // bilinear over the data grid
+      const x0 = Math.max(0, Math.min(GW - 2, Math.floor(fx))), y0 = Math.max(0, Math.min(GH - 2, Math.floor(fy)));
+      const tx = fx - x0, ty = fy - y0, i = y0 * GW + x0;
+      return arr[i] * (1 - tx) * (1 - ty) + arr[i + 1] * tx * (1 - ty) + arr[i + GW] * (1 - tx) * ty + arr[i + GW + 1] * tx * ty;
+    };
+    const fine = new Float32Array(TW * TH), landF = new Float32Array(TW * TH);
+    for (let ty = 0; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) {
+      const fx = tx / UP, fy = ty / UP;
+      const base = bi(this.heights, fx, fy), landness = bi(mask, fx, fy);
+      const rug = 0.2 + Math.min(1, Math.max(0, base) / 5.5) * 1.35;        // detail grows with elevation
+      const n = (fbm(fx * 0.85, fy * 0.85) - 0.5) * 2;
+      fine[ty * TW + tx] = base + (landness > 0.4 ? n * rug : n * 0.08);
+      landF[ty * TW + tx] = landness;
+    }
+    this.fineH = fine;
+    // colours: smooth band blends + slope-darkened rock faces + a farmland quilt
     const pos: number[] = [], col: number[] = [], uv: number[] = [], idx: number[] = []; const c = new THREE.Color();
     const green = new THREE.Color('#5d7842'), tan = new THREE.Color('#b89c5f'), haze = new THREE.Color('#c3b49a');
-    for (let gy = 0; gy < GH; gy++) {
-      const lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
-      for (let gx = 0; gx < GW; gx++) {
-        const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)); const i = gy * GW + gx; const land = mask[i]; const y = this.heights[i];
-        pos.push(this.wX(lon), y, this.wZ(lat)); uv.push(gx * 0.55, gy * 0.55);
+    const beachC = new THREE.Color('#c7b380'), uplandC = new THREE.Color('#6e6b40'), rockC = new THREE.Color('#736452'),
+      snowC = new THREE.Color('#d6d0c2'), cragC = new THREE.Color('#7a705c'), seaBed = new THREE.Color(0.10, 0.15, 0.26), seaHi = new THREE.Color(0.13, 0.20, 0.31);
+    const cl01 = (v: number) => Math.max(0, Math.min(1, v));
+    for (let ty2 = 0; ty2 < TH; ty2++) {
+      const lat = bb.s + (bb.n - bb.s) * (ty2 / (TH - 1));
+      for (let tx2 = 0; tx2 < TW; tx2++) {
+        const lon = bb.w + (bb.e - bb.w) * (tx2 / (TW - 1)); const i = ty2 * TW + tx2;
+        const y = fine[i], land = landF[i] > 0.42;
+        const wx = this.wX(lon), wz = this.wZ(lat);
+        pos.push(wx, y, wz); uv.push(tx2 * 0.28, ty2 * 0.28);
         const latT = (bb.n - lat) / (bb.n - bb.s);
-        if (!land || y < 0.05) c.setRGB(0.10, 0.15, 0.26);                   // submerged shelf, deep dusk
-        else if (y < 2.0) c.set('#c7b380');                                  // beach / coastal flats
-        else if (y < 6.2) c.copy(green).lerp(tan, Math.min(1, latT * 1.05)); // lowland farmland
-        else if (y < 9.0) c.set('#6e6b40');                                   // upland
-        else if (y < 11.2) c.set('#736452');                                  // bare mountain rock
-        else c.set('#d6d0c2');                                               // snow, dusk-lit
-        // gentle per-vertex shade jitter so the flat colour bands don't read blocky
-        if (land && y >= 0.05) c.offsetHSL((hash(gx * 1.3, gy * 2.7) - 0.5) * 0.012, (hash(gx * 2.1, gy * 0.7) - 0.5) * 0.05, (hash(gx * 1.7, gy * 2.3) - 0.5) * 0.05);
-        // dissolve the map edge into haze along a wavy, noisy border — kept to a
-        // NARROW outer rim (a wide band swallowed Ireland/Scotland in fuzzy mush)
-        const ex = gx / (GW - 1), ey = gy / (GH - 1);
-        const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(gx * 0.8, gy * 1.1) - 0.5) * 0.03;
-        const fade = Math.max(0, Math.min(1, dEdge / 0.045));
+        if (!land || y < 0.05) {
+          c.copy(seaBed).lerp(seaHi, cl01((y + 1.7) / 1.7) * 0.7);          // shelf lightens toward the shore
+        } else {
+          c.copy(green).lerp(tan, Math.min(1, latT * 1.05));                 // lowland base by latitude
+          // the medieval countryside: a quilt of field parcels, only on gentle lowland
+          const l2 = tx2 > 0 && tx2 < TW - 1 ? tx2 : 1, r2 = ty2 > 0 && ty2 < TH - 1 ? ty2 : 1;
+          const slope = Math.hypot(fine[r2 * TW + l2 + 1] - fine[r2 * TW + l2 - 1], fine[(r2 + 1) * TW + l2] - fine[(r2 - 1) * TW + l2]) * 0.5;
+          if (y < 5 && slope < 0.6) {
+            const pq = hash(Math.floor(wx / 6.5), Math.floor(wz / 6.5));
+            c.offsetHSL((pq - 0.5) * 0.03, (hash(Math.floor(wx / 6.5) + 9, Math.floor(wz / 6.5)) - 0.5) * 0.10, (pq - 0.5) * 0.06);
+          }
+          c.lerp(beachC, cl01(1 - y / 1.5));                                 // shoreline sand
+          c.lerp(uplandC, cl01((y - 4.9) / 1.7));                            // heath
+          c.lerp(rockC, cl01((y - 7.9) / 1.5));                              // bare stone
+          c.lerp(cragC, cl01((slope - 0.8) / 0.55) * cl01((y - 2) / 1.5) * 0.85); // steep faces break to crag
+          c.lerp(snowC, cl01((y - 10.6) / 1.1));                             // the high snows
+          c.offsetHSL((hash(tx2 * 1.3, ty2 * 2.7) - 0.5) * 0.012, (hash(tx2 * 2.1, ty2 * 0.7) - 0.5) * 0.05, (hash(tx2 * 1.7, ty2 * 2.3) - 0.5) * 0.045);
+        }
+        // dissolve the map edge into haze along a NARROW wavy rim
+        const ex = tx2 / (TW - 1), ey = ty2 / (TH - 1);
+        const dEdge = Math.min(ex, 1 - ex, ey, 1 - ey) + (hash(tx2 * 0.8, ty2 * 1.1) - 0.5) * 0.03;
+        const fade = cl01(dEdge / 0.045);
         if (fade < 1) c.lerp(haze, (1 - fade) * (1 - fade));
         col.push(c.r, c.g, c.b);
       }
     }
     // winding chosen so face normals point UP (else the whole map is backface-
     // culled from the overhead camera and the sea shows through — looks all-blue)
-    for (let gy = 0; gy < GH - 1; gy++) for (let gx = 0; gx < GW - 1; gx++) { const a = gy * GW + gx, b = a + 1, dd = a + GW, e = dd + 1; idx.push(a, b, dd, b, e, dd); }
+    for (let gy = 0; gy < TH - 1; gy++) for (let gx = 0; gx < TW - 1; gx++) { const a = gy * TW + gx, b = a + 1, dd = a + TW, e = dd + 1; idx.push(a, b, dd, b, e, dd); }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -211,7 +257,7 @@ export class WorldMap3D {
     this.buildBorders();
     this.buildSettlements();
     this.buildLandmarks();
-    this.buildRoute();
+    this.buildRoads();
     this.buildRealmLabels();
     this.buildBirds();
     this.buildAmbientShips();
@@ -346,14 +392,25 @@ export class WorldMap3D {
       return { x: this.wX(lon), z: this.wZ(lat) };
     });
     const MIN = 8.2;                                    // world units between castle centres
-    for (let it = 0; it < 12; it++) for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
-      const dx = pts[j].x - pts[i].x, dz = pts[j].z - pts[i].z; const d = Math.hypot(dx, dz);
-      if (d >= MIN || d < 1e-4) continue;
-      const push = (MIN - d) / 2, ux = dx / d, uz = dz / d;
-      const ax = pts[i].x - ux * push, az = pts[i].z - uz * push;
-      const bx = pts[j].x + ux * push, bz = pts[j].z + uz * push;
-      if (!this.isWaterWorld(ax, az)) { pts[i].x = ax; pts[i].z = az; }
-      if (!this.isWaterWorld(bx, bz)) { pts[j].x = bx; pts[j].z = bz; }
+    const LMIN = 9.5;                                   // clearance from a landmark (they have sprawl)
+    const lms = LANDMARKS.map((l) => ({ x: this.wX(l.lon), z: this.wZ(l.lat) }));
+    for (let it = 0; it < 12; it++) {
+      for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+        const dx = pts[j].x - pts[i].x, dz = pts[j].z - pts[i].z; const d = Math.hypot(dx, dz);
+        if (d >= MIN || d < 1e-4) continue;
+        const push = (MIN - d) / 2, ux = dx / d, uz = dz / d;
+        const ax = pts[i].x - ux * push, az = pts[i].z - uz * push;
+        const bx = pts[j].x + ux * push, bz = pts[j].z + uz * push;
+        if (!this.isWaterWorld(ax, az)) { pts[i].x = ax; pts[i].z = az; }
+        if (!this.isWaterWorld(bx, bz)) { pts[j].x = bx; pts[j].z = bz; }
+      }
+      // landmarks are anchored to their true sites — castles give way, never them
+      for (let i = 0; i < pts.length; i++) for (const lm of lms) {
+        const dx = pts[i].x - lm.x, dz = pts[i].z - lm.z; const d = Math.hypot(dx, dz);
+        if (d >= LMIN || d < 1e-4) continue;
+        const nx2 = pts[i].x + dx / d * (LMIN - d), nz2 = pts[i].z + dz / d * (LMIN - d);
+        if (!this.isWaterWorld(nx2, nz2)) { pts[i].x = nx2; pts[i].z = nz2; }
+      }
     }
     this.spots = pts.map((p2) => { const [lon, lat] = this.worldToLL(p2.x, p2.z); return { x: p2.x, z: p2.z, y: this.terrainY(lon, lat) }; });
     return this.spots;
@@ -593,7 +650,7 @@ export class WorldMap3D {
 
   // ---- RIVERS: the great rivers as winding ribbons, from source to sea ----
   private buildRivers() {
-    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false });
+    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
     const geos: THREE.BufferGeometry[] = [];
     for (const river of RIVERS) {
       // densify the waypoints, then lay a tapering ribbon that follows the terrain
@@ -811,7 +868,7 @@ export class WorldMap3D {
 
   // ---- RIVERS: the great rivers as winding ribbons, from source to sea ----
   private buildRivers() {
-    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false });
+    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
     const geos: THREE.BufferGeometry[] = [];
     for (const river of RIVERS) {
       // densify the waypoints, then lay a tapering ribbon that follows the terrain
@@ -944,16 +1001,92 @@ export class WorldMap3D {
     }
   }
 
-  private buildRoute() {
-    const pts: THREE.Vector3[] = [], colors: number[] = []; const reached = new THREE.Color('#6e3d18'), future = new THREE.Color('#8a7250');
+  // Roads that WIND like real medieval tracks: each leg of the crusade is A*-routed
+  // over the height grid — water impassable, climbing dear, high ground dearer —
+  // so the road hunts out passes and valley floors instead of ruling a line over
+  // the fells. Legs with no land path fall back to a faint dashed sea-lane.
+  private buildRoads() {
     const spots = this.settlementSpots();
-    for (let i = 0; i < this.nodes.length; i++) {
-      const a = spots[i];
-      const steps = 6; if (i > 0) { const p2 = spots[i - 1]; for (let st = 1; st <= steps; st++) { const t = st / steps; const x = p2.x + (a.x - p2.x) * t, z = p2.z + (a.z - p2.z) * t; const [lon, lat] = this.worldToLL(x, z); pts.push(new THREE.Vector3(x, this.terrainY(lon, lat) + 1.2, z)); const cc = i <= this.prog.unlocked ? reached : future; colors.push(cc.r, cc.g, cc.b); } }
-      else { pts.push(new THREE.Vector3(a.x, a.y + 1.2, a.z)); colors.push(reached.r, reached.g, reached.b); }
+    const { GW, GH, bb } = this; const H = this.heights, M = this.maskRef;
+    const cellAt = (x: number, z: number) => {
+      const [lon, lat] = this.worldToLL(x, z);
+      const gx = Math.max(0, Math.min(GW - 1, Math.round((lon - bb.w) / (bb.e - bb.w) * (GW - 1))));
+      const gy = Math.max(0, Math.min(GH - 1, Math.round((lat - bb.s) / (bb.n - bb.s) * (GH - 1))));
+      return gy * GW + gx;
+    };
+    const astar = (start: number, goal: number): number[] | null => {
+      if (!M[start] || !M[goal]) return null;
+      const gxo = (i: number) => i % GW, gyo = (i: number) => (i / GW) | 0;
+      const hEst = (i: number) => Math.hypot(gxo(i) - gxo(goal), gyo(i) - gyo(goal));
+      const gs = new Float32Array(GW * GH).fill(Infinity), fs = new Float32Array(GW * GH).fill(Infinity);
+      const came = new Int32Array(GW * GH).fill(-1); const closed = new Uint8Array(GW * GH);
+      const heap: number[] = []; const less = (a: number, b: number) => fs[a] < fs[b];
+      const push = (v: number) => { heap.push(v); let i = heap.length - 1; while (i > 0) { const p2 = (i - 1) >> 1; if (less(heap[i], heap[p2])) { const t = heap[i]; heap[i] = heap[p2]; heap[p2] = t; i = p2; } else break; } };
+      const pop = () => { const top = heap[0], last = heap.pop()!; if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = i * 2 + 1, r = l + 1; let m2 = i; if (l < heap.length && less(heap[l], heap[m2])) m2 = l; if (r < heap.length && less(heap[r], heap[m2])) m2 = r; if (m2 === i) break; const t = heap[i]; heap[i] = heap[m2]; heap[m2] = t; i = m2; } } return top; };
+      gs[start] = 0; fs[start] = hEst(start); push(start);
+      let seen = 0;
+      while (heap.length) {
+        const cur = pop(); if (cur === goal) break;
+        if (closed[cur]) continue; closed[cur] = 1;
+        if (++seen > 42000) return null;                                     // bail on hopeless searches
+        const cx2 = gxo(cur), cy2 = gyo(cur);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx2 = cx2 + dx, ny2 = cy2 + dy; if (nx2 < 0 || ny2 < 0 || nx2 >= GW || ny2 >= GH) continue;
+          const nb = ny2 * GW + nx2; if (!M[nb] || closed[nb]) continue;
+          const dh = H[nb] - H[cur];
+          const step = Math.hypot(dx, dy) * (1 + Math.max(0, dh) * 6 + Math.abs(dh) * 1.5 + Math.max(0, H[nb] - 4.5) * 0.35);
+          const cand = gs[cur] + step;
+          if (cand < gs[nb]) { gs[nb] = cand; fs[nb] = cand + hEst(nb); came[nb] = cur; push(nb); }
+        }
+      }
+      if (came[goal] < 0 && goal !== start) return null;
+      const path: number[] = [goal]; let cur2 = goal;
+      while (cur2 !== start && came[cur2] >= 0) { cur2 = came[cur2]; path.push(cur2); }
+      return path.reverse();
+    };
+    const cellXZ = (i: number): [number, number] => {
+      const lon = bb.w + (bb.e - bb.w) * ((i % GW) / (GW - 1)), lat = bb.s + (bb.n - bb.s) * (((i / GW) | 0) / (GH - 1));
+      return [this.wX(lon), this.wZ(lat)];
+    };
+    const roadGeos: THREE.BufferGeometry[] = [];
+    const seaMat = new THREE.LineDashedMaterial({ color: '#8ba0b2', transparent: true, opacity: 0.45, dashSize: 2.2, gapSize: 2.6 });
+    for (let i = 1; i < this.nodes.length; i++) {
+      const A = spots[i - 1], B2 = spots[i];
+      const path = astar(cellAt(A.x, A.z), cellAt(B2.x, B2.z));
+      if (!path || path.length < 2) {                                        // a sea leg — dashed shipping lane
+        const g2 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(A.x, 0.75, A.z), new THREE.Vector3(B2.x, 0.75, B2.z)]);
+        const ln = new THREE.Line(g2, seaMat); ln.computeLineDistances(); ln.renderOrder = 2; this.scene.add(ln);
+        continue;
+      }
+      // cells -> world points (endpoints snapped to the markers), then smoothed
+      let wpts: [number, number][] = [[A.x, A.z], ...path.slice(1, -1).map(cellXZ), [B2.x, B2.z]];
+      for (let r = 0; r < 2; r++) {                                          // Chaikin corner-cutting
+        const out: [number, number][] = [wpts[0]];
+        for (let k = 0; k < wpts.length - 1; k++) {
+          const a = wpts[k], b = wpts[k + 1];
+          out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+        }
+        out.push(wpts[wpts.length - 1]); wpts = out;
+      }
+      // a tapered dirt ribbon draped on the relief
+      const rp: number[] = [], ri: number[] = [];
+      for (let k = 0; k < wpts.length; k++) {
+        const a = wpts[Math.max(0, k - 1)], b = wpts[Math.min(wpts.length - 1, k + 1)];
+        let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        const [lon, lat] = this.worldToLL(wpts[k][0], wpts[k][1]);
+        const y = this.terrainY(lon, lat) + 0.38, w = 0.62;   // riding clear of the detail noise
+        rp.push(wpts[k][0] - dz * w, y, wpts[k][1] + dx * w, wpts[k][0] + dz * w, y, wpts[k][1] - dx * w);
+      }
+      for (let k = 0; k < wpts.length - 1; k++) { const a = k * 2; ri.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const rg = new THREE.BufferGeometry();
+      rg.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3)); rg.setIndex(ri);
+      roadGeos.push(rg);
     }
-    const g = new THREE.BufferGeometry().setFromPoints(pts); g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    this.scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true })));
+    if (roadGeos.length) {
+      const m = new THREE.Mesh(mergeGeometries(roadGeos, false), new THREE.MeshBasicMaterial({ color: '#c9a878', transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
+      m.renderOrder = 2; this.scene.add(m);
+    }
   }
 
   // ---- compass + castle info panel (DOM overlays on the map screen) ----
