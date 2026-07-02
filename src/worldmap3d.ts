@@ -68,7 +68,8 @@ export class WorldMap3D {
   private banners: { mesh: THREE.Mesh; phase: number; base: Float32Array }[] = [];
   private birds: { grp: THREE.Group; speed: number; phase: number }[] = [];
   private march?: { t: number; dur: number; last: number; path: { p: THREE.Vector3; water: boolean }[]; army: THREE.Group; boat: THREE.Group; done: () => void; skip: boolean };
-  private maskRef!: Uint8Array;
+  private maskRef!: Uint8Array; private cdistRef!: Uint8Array;
+  private spots: { x: number; z: number; y: number }[] = []; // final (de-clumped) marker positions
   private compassEl?: HTMLElement; private panelEl?: HTMLElement; private styleEl?: HTMLElement;
   private dragging = false; private lastX = 0; private lastY = 0; private moved = 0; private downX = 0; private downY = 0; private downT = 0; private pinchD = 0; private pinchA?: number; private azReset = false;
   private compassRose?: HTMLElement; private _tp = new THREE.Vector3(); private _np = new THREE.Vector3();
@@ -151,7 +152,7 @@ export class WorldMap3D {
     this.lonMid = (d.bb.w + d.bb.e) / 2; this.myMid = mercYdeg((d.bb.s + d.bb.n) / 2);
     const mask = Uint8Array.from(atob(d.grid.mask), c => c.charCodeAt(0));
     const cdist = Uint8Array.from(atob(d.grid.cdist), c => c.charCodeAt(0));
-    this.maskRef = mask;
+    this.maskRef = mask; this.cdistRef = cdist;
     const { GW, GH, bb } = this;
     // 1) raw heights — gentle coastal ramp + range relief
     const raw = new Float32Array(GW * GH);
@@ -314,11 +315,56 @@ export class WorldMap3D {
     tm.instanceColor!.needsUpdate = true; this.scene.add(tm);
   }
 
+  // world XZ -> lon/lat (inverse of wX/wZ), for water tests at world positions
+  private worldToLL(x: number, z: number): [number, number] {
+    const lon = x / this.K + this.lonMid;
+    const my = this.myMid - z / this.K;
+    const lat = (2 * Math.atan(Math.exp(my * Math.PI / 180)) - Math.PI / 2) * 180 / Math.PI;
+    return [lon, lat];
+  }
+  private isWaterWorld(x: number, z: number) { const [lon, lat] = this.worldToLL(x, z); return this.isWater(lon, lat); }
+
+  // Final marker positions: nudge coast-hugging castles a touch inland, then relax
+  // overlapping neighbours apart (Wales!) — every move is rejected if it would put
+  // the castle in the sea. Purely visual: campaign lat/lon are untouched.
+  private settlementSpots() {
+    if (this.spots.length) return this.spots;
+    const { GW, GH, bb } = this;
+    const pts = this.nodes.map((n) => {
+      let gx = Math.round((n.lon - bb.w) / (bb.e - bb.w) * (GW - 1));
+      let gy = Math.round((n.lat - bb.s) / (bb.n - bb.s) * (GH - 1));
+      for (let step = 0; step < 3; step++) {           // walk up the coast-distance gradient
+        if (this.cdistRef[gy * GW + gx] >= 2) break;
+        let bx = gx, by = gy, bv = this.cdistRef[gy * GW + gx];
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx2 = gx + dx, ny2 = gy + dy; if (nx2 < 0 || ny2 < 0 || nx2 >= GW || ny2 >= GH) continue;
+          const v = this.cdistRef[ny2 * GW + nx2]; if (v > bv) { bv = v; bx = nx2; by = ny2; }
+        }
+        if (bx === gx && by === gy) break; gx = bx; gy = by;
+      }
+      const lon = bb.w + (bb.e - bb.w) * (gx / (GW - 1)), lat = bb.s + (bb.n - bb.s) * (gy / (GH - 1));
+      return { x: this.wX(lon), z: this.wZ(lat) };
+    });
+    const MIN = 8.2;                                    // world units between castle centres
+    for (let it = 0; it < 12; it++) for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+      const dx = pts[j].x - pts[i].x, dz = pts[j].z - pts[i].z; const d = Math.hypot(dx, dz);
+      if (d >= MIN || d < 1e-4) continue;
+      const push = (MIN - d) / 2, ux = dx / d, uz = dz / d;
+      const ax = pts[i].x - ux * push, az = pts[i].z - uz * push;
+      const bx = pts[j].x + ux * push, bz = pts[j].z + uz * push;
+      if (!this.isWaterWorld(ax, az)) { pts[i].x = ax; pts[i].z = az; }
+      if (!this.isWaterWorld(bx, bz)) { pts[j].x = bx; pts[j].z = bz; }
+    }
+    this.spots = pts.map((p2) => { const [lon, lat] = this.worldToLL(p2.x, p2.z); return { x: p2.x, z: p2.z, y: this.terrainY(lon, lat) }; });
+    return this.spots;
+  }
+
   private buildSettlements() {
     const doneM = new THREE.MeshLambertMaterial({ color: '#cf9b3a' });
     const lockM = new THREE.MeshLambertMaterial({ color: '#9a978f' });
+    const spots = this.settlementSpots();
     for (const node of this.nodes) {
-      const x = this.wX(node.lon), z = this.wZ(node.lat), y = this.terrainY(node.lon, node.lat);
+      const { x, z, y } = spots[node.id];
       const done = this.prog.completed.includes(node.id), current = node.id === this.prog.unlocked, locked = node.id > this.prog.unlocked;
       const g = new THREE.Group();
       // Every stronghold gets its OWN silhouette, from its real campaign style —
@@ -344,7 +390,7 @@ export class WorldMap3D {
       const wallRing = (rad: number, ht: number) => {
         const sides = st.round ? 8 : 4;
         const curtain = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.06, ht, sides), wm); curtain.position.y = ht / 2; if (sides === 4) curtain.rotation.y = Math.PI / 4; g.add(curtain);
-        const merlons = new THREE.Mesh(new THREE.TorusGeometry(rad * 1.01, 0.15, 4, sides).rotateX(Math.PI / 2), wm); merlons.position.y = ht; if (sides === 4) merlons.rotation.z = Math.PI / 4; g.add(merlons);
+        const merlons = new THREE.Mesh(new THREE.TorusGeometry(rad * 1.01, 0.15, 4, sides).rotateX(Math.PI / 2), wm); merlons.position.y = ht; if (sides === 4) merlons.rotation.y = Math.PI / 4; g.add(merlons);
         const nt = st.round ? 4 : 4;
         for (let h = 0; h < nt; h++) { const a = h / nt * 6.28 + Math.PI / 4; twr(Math.cos(a) * rad, Math.sin(a) * rad, ht + 1.2, 0.62); }
       };
@@ -375,7 +421,7 @@ export class WorldMap3D {
       const cgeo = new THREE.PlaneGeometry(1.5, 0.95, 6, 1).translate(0.75, 0, 0); // pole at local x=0
       const cloth = new THREE.Mesh(cgeo, new THREE.MeshLambertMaterial({ color: locked ? '#7c2b27' : done ? '#caa53c' : '#c43d34', side: THREE.DoubleSide }));
       cloth.position.set(0, 6.0, 0); g.add(cloth);
-      const sc = current ? 2.0 : 1.5; g.scale.set(sc, sc, sc); g.position.set(x, y, z); this.scene.add(g);
+      const sc = current ? 1.3 : 0.95; g.scale.set(sc, sc, sc); g.position.set(x, y, z); this.scene.add(g); // small enough that neighbours never merge
       this.banners.push({ mesh: cloth, phase: node.id * 1.3, base: (cgeo.attributes.position.array as Float32Array).slice() });
       let ring: THREE.Mesh | undefined;
       if (current) {
@@ -451,6 +497,15 @@ export class WorldMap3D {
           B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, -0.62, 3.6, 2.05, Math.PI / 4);
           B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, 0.62, 3.6, 2.05, Math.PI / 4);
           B(g, new THREE.ConeGeometry(0.34, 1.5, 6), slateM, 0, 3.3, -0.6);
+          { // the city crowds in around the cathedral close
+            const tile = new THREE.MeshLambertMaterial({ color: '#9a5a40' });
+            for (let i = 0; i < 8; i++) {
+              const a2 = i / 8 * 6.28 + hash(i, 11) * 0.6, rr = 2.6 + hash(i, 13) * 1.8;
+              const hx = Math.cos(a2) * rr, hz2 = Math.sin(a2) * rr, ry2 = hash(i, 17) * 3.14;
+              B(g, new THREE.BoxGeometry(0.8, 0.5, 0.62), stoneM, hx, 0.25, hz2, ry2);
+              B(g, new THREE.ConeGeometry(0.56, 0.4, 4), tile, hx, 0.68, hz2, ry2 + Math.PI / 4);
+            }
+          }
           break;
         }
         case 'dome': { // a great domed sanctuary with slender minarets
@@ -459,6 +514,10 @@ export class WorldMap3D {
           for (const [mx, mz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]] as const) {
             B(g, new THREE.CylinderGeometry(0.14, 0.16, 3.4, 6), stoneM, mx, 1.7, mz);
             B(g, new THREE.ConeGeometry(0.22, 0.5, 6), goldM, mx, 3.6, mz);
+          }
+          for (let i = 0; i < 7; i++) { // flat-roofed quarter pressing close
+            const a2 = i / 7 * 6.28 + hash(i, 21) * 0.6, rr = 2.9 + hash(i, 23) * 1.6;
+            B(g, new THREE.BoxGeometry(0.85, 0.45 + hash(i, 27) * 0.35, 0.7), sandM, Math.cos(a2) * rr, 0.3, Math.sin(a2) * rr, hash(i, 29) * 3.14);
           }
           break;
         }
@@ -489,10 +548,20 @@ export class WorldMap3D {
           B(g, new THREE.SphereGeometry(0.12, 6, 5), goldM, 0, 5.1, 0);
           break;
         }
-        case 'campanile': { // Venice: a low island city and St Mark's slim bell-tower
-          for (let i = 0; i < 4; i++) { const hx = (hash(i, 3) - 0.5) * 2.8, hz2 = (hash(i, 7) - 0.5) * 2.2; B(g, new THREE.BoxGeometry(0.9, 0.5, 0.7), stoneM, hx, 0.35, hz2); B(g, new THREE.ConeGeometry(0.65, 0.4, 4), new THREE.MeshLambertMaterial({ color: '#b56a4a' }), hx, 0.8, hz2, Math.PI / 4); }
-          B(g, new THREE.BoxGeometry(0.62, 3.2, 0.62), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 0.9, 1.7, 0);
-          B(g, new THREE.ConeGeometry(0.55, 0.9, 4), goldM, 0.9, 3.7, 0, Math.PI / 4);
+        case 'campanile': { // Venice: a whole island city in the lagoon — sand bar,
+          // packed rooftops around the piazza, St Mark's bell-tower above it all
+          B(g, new THREE.CylinderGeometry(4.0, 4.4, 0.5, 10), sandM, 0, 0.12, 0);
+          const tile = new THREE.MeshLambertMaterial({ color: '#b56a4a' });
+          for (let i = 0; i < 9; i++) {
+            const a2 = i / 9 * 6.28 + hash(i, 5) * 0.5, rr = 1.5 + hash(i, 3) * 1.7;
+            const hx = Math.cos(a2) * rr, hz2 = Math.sin(a2) * rr, ry2 = hash(i, 9) * 3.14;
+            B(g, new THREE.BoxGeometry(0.85, 0.5, 0.65), stoneM, hx, 0.62, hz2, ry2);
+            B(g, new THREE.ConeGeometry(0.6, 0.42, 4), tile, hx, 1.05, hz2, ry2 + Math.PI / 4);
+          }
+          B(g, new THREE.BoxGeometry(1.2, 0.8, 1.0), stoneM, 0, 0.75, 0);              // the basilica
+          B(g, new THREE.SphereGeometry(0.5, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), goldM, 0, 1.15, 0);
+          B(g, new THREE.BoxGeometry(0.55, 3.0, 0.55), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 1.3, 1.85, 0);
+          B(g, new THREE.ConeGeometry(0.5, 0.85, 4), goldM, 1.3, 3.75, 0, Math.PI / 4);
           break;
         }
         case 'aqueduct': { // Pont du Gard: two tiers of arches striding a valley
@@ -557,12 +626,21 @@ export class WorldMap3D {
   // ---- ambient shipping: lone sails working the sea lanes ----
   private ships: { grp: THREE.Group; cx: number; cz: number; r: number; a: number; spd: number }[] = [];
   private buildAmbientShips() {
-    const LANES: [number, number][] = [[50.4, -1.6], [39.6, 6.6], [35.2, 21.0], [33.8, 33.6], [42.5, 29.5]];
+    const LANES: [number, number][] = [[50.0, -3.4], [38.6, 5.8], [35.6, 20.5], [33.6, 33.2], [41.4, 29.1], [36.4, 14.2]];
     for (const [la, lo] of LANES) {
-      if (!this.isWater(lo, la)) continue;
-      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(1.35);
+      const cx = this.wX(lo), cz = this.wZ(la);
+      // find an orbit that stays WELL clear of every coast (else skip the lane) —
+      // an unchecked radius used to sail cogs straight up onto the beach
+      let r = 0;
+      for (const rr of [5.5, 4, 2.8]) {
+        let clear = true;
+        for (let k = 0; k < 16 && clear; k++) { const a2 = k / 16 * 6.28; for (const f of [1.5, 1, 0.5]) if (!this.isWaterWorld(cx + Math.cos(a2) * rr * f, cz + Math.sin(a2) * rr * f)) clear = false; } // margin covers hull length + swing
+        if (clear) { r = rr; break; }
+      }
+      if (!r) continue;
+      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(0.85); // a distant sail, not a leviathan
       this.scene.add(grp);
-      this.ships.push({ grp, cx: this.wX(lo), cz: this.wZ(la), r: 6 + Math.random() * 9, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
+      this.ships.push({ grp, cx, cz, r, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
     }
   }
 
@@ -637,6 +715,15 @@ export class WorldMap3D {
           B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, -0.62, 3.6, 2.05, Math.PI / 4);
           B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, 0.62, 3.6, 2.05, Math.PI / 4);
           B(g, new THREE.ConeGeometry(0.34, 1.5, 6), slateM, 0, 3.3, -0.6);
+          { // the city crowds in around the cathedral close
+            const tile = new THREE.MeshLambertMaterial({ color: '#9a5a40' });
+            for (let i = 0; i < 8; i++) {
+              const a2 = i / 8 * 6.28 + hash(i, 11) * 0.6, rr = 2.6 + hash(i, 13) * 1.8;
+              const hx = Math.cos(a2) * rr, hz2 = Math.sin(a2) * rr, ry2 = hash(i, 17) * 3.14;
+              B(g, new THREE.BoxGeometry(0.8, 0.5, 0.62), stoneM, hx, 0.25, hz2, ry2);
+              B(g, new THREE.ConeGeometry(0.56, 0.4, 4), tile, hx, 0.68, hz2, ry2 + Math.PI / 4);
+            }
+          }
           break;
         }
         case 'dome': { // a great domed sanctuary with slender minarets
@@ -645,6 +732,10 @@ export class WorldMap3D {
           for (const [mx, mz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]] as const) {
             B(g, new THREE.CylinderGeometry(0.14, 0.16, 3.4, 6), stoneM, mx, 1.7, mz);
             B(g, new THREE.ConeGeometry(0.22, 0.5, 6), goldM, mx, 3.6, mz);
+          }
+          for (let i = 0; i < 7; i++) { // flat-roofed quarter pressing close
+            const a2 = i / 7 * 6.28 + hash(i, 21) * 0.6, rr = 2.9 + hash(i, 23) * 1.6;
+            B(g, new THREE.BoxGeometry(0.85, 0.45 + hash(i, 27) * 0.35, 0.7), sandM, Math.cos(a2) * rr, 0.3, Math.sin(a2) * rr, hash(i, 29) * 3.14);
           }
           break;
         }
@@ -675,10 +766,20 @@ export class WorldMap3D {
           B(g, new THREE.SphereGeometry(0.12, 6, 5), goldM, 0, 5.1, 0);
           break;
         }
-        case 'campanile': { // Venice: a low island city and St Mark's slim bell-tower
-          for (let i = 0; i < 4; i++) { const hx = (hash(i, 3) - 0.5) * 2.8, hz2 = (hash(i, 7) - 0.5) * 2.2; B(g, new THREE.BoxGeometry(0.9, 0.5, 0.7), stoneM, hx, 0.35, hz2); B(g, new THREE.ConeGeometry(0.65, 0.4, 4), new THREE.MeshLambertMaterial({ color: '#b56a4a' }), hx, 0.8, hz2, Math.PI / 4); }
-          B(g, new THREE.BoxGeometry(0.62, 3.2, 0.62), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 0.9, 1.7, 0);
-          B(g, new THREE.ConeGeometry(0.55, 0.9, 4), goldM, 0.9, 3.7, 0, Math.PI / 4);
+        case 'campanile': { // Venice: a whole island city in the lagoon — sand bar,
+          // packed rooftops around the piazza, St Mark's bell-tower above it all
+          B(g, new THREE.CylinderGeometry(4.0, 4.4, 0.5, 10), sandM, 0, 0.12, 0);
+          const tile = new THREE.MeshLambertMaterial({ color: '#b56a4a' });
+          for (let i = 0; i < 9; i++) {
+            const a2 = i / 9 * 6.28 + hash(i, 5) * 0.5, rr = 1.5 + hash(i, 3) * 1.7;
+            const hx = Math.cos(a2) * rr, hz2 = Math.sin(a2) * rr, ry2 = hash(i, 9) * 3.14;
+            B(g, new THREE.BoxGeometry(0.85, 0.5, 0.65), stoneM, hx, 0.62, hz2, ry2);
+            B(g, new THREE.ConeGeometry(0.6, 0.42, 4), tile, hx, 1.05, hz2, ry2 + Math.PI / 4);
+          }
+          B(g, new THREE.BoxGeometry(1.2, 0.8, 1.0), stoneM, 0, 0.75, 0);              // the basilica
+          B(g, new THREE.SphereGeometry(0.5, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), goldM, 0, 1.15, 0);
+          B(g, new THREE.BoxGeometry(0.55, 3.0, 0.55), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 1.3, 1.85, 0);
+          B(g, new THREE.ConeGeometry(0.5, 0.85, 4), goldM, 1.3, 3.75, 0, Math.PI / 4);
           break;
         }
         case 'aqueduct': { // Pont du Gard: two tiers of arches striding a valley
@@ -743,12 +844,21 @@ export class WorldMap3D {
   // ---- ambient shipping: lone sails working the sea lanes ----
   private ships: { grp: THREE.Group; cx: number; cz: number; r: number; a: number; spd: number }[] = [];
   private buildAmbientShips() {
-    const LANES: [number, number][] = [[50.4, -1.6], [39.6, 6.6], [35.2, 21.0], [33.8, 33.6], [42.5, 29.5]];
+    const LANES: [number, number][] = [[50.0, -3.4], [38.6, 5.8], [35.6, 20.5], [33.6, 33.2], [41.4, 29.1], [36.4, 14.2]];
     for (const [la, lo] of LANES) {
-      if (!this.isWater(lo, la)) continue;
-      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(1.35);
+      const cx = this.wX(lo), cz = this.wZ(la);
+      // find an orbit that stays WELL clear of every coast (else skip the lane) —
+      // an unchecked radius used to sail cogs straight up onto the beach
+      let r = 0;
+      for (const rr of [5.5, 4, 2.8]) {
+        let clear = true;
+        for (let k = 0; k < 16 && clear; k++) { const a2 = k / 16 * 6.28; for (const f of [1.5, 1, 0.5]) if (!this.isWaterWorld(cx + Math.cos(a2) * rr * f, cz + Math.sin(a2) * rr * f)) clear = false; } // margin covers hull length + swing
+        if (clear) { r = rr; break; }
+      }
+      if (!r) continue;
+      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(0.85); // a distant sail, not a leviathan
       this.scene.add(grp);
-      this.ships.push({ grp, cx: this.wX(lo), cz: this.wZ(la), r: 6 + Math.random() * 9, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
+      this.ships.push({ grp, cx, cz, r, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
     }
   }
 
@@ -836,10 +946,11 @@ export class WorldMap3D {
 
   private buildRoute() {
     const pts: THREE.Vector3[] = [], colors: number[] = []; const reached = new THREE.Color('#6e3d18'), future = new THREE.Color('#8a7250');
+    const spots = this.settlementSpots();
     for (let i = 0; i < this.nodes.length; i++) {
-      const a = this.nodes[i];
-      const steps = 6; if (i > 0) { const p = this.nodes[i - 1]; for (let s = 1; s <= steps; s++) { const t = s / steps; const lon = p.lon + (a.lon - p.lon) * t, lat = p.lat + (a.lat - p.lat) * t; pts.push(new THREE.Vector3(this.wX(lon), this.terrainY(lon, lat) + 1.2, this.wZ(lat))); const cc = i <= this.prog.unlocked ? reached : future; colors.push(cc.r, cc.g, cc.b); } }
-      else { pts.push(new THREE.Vector3(this.wX(a.lon), this.terrainY(a.lon, a.lat) + 1.2, this.wZ(a.lat))); colors.push(reached.r, reached.g, reached.b); }
+      const a = spots[i];
+      const steps = 6; if (i > 0) { const p2 = spots[i - 1]; for (let st = 1; st <= steps; st++) { const t = st / steps; const x = p2.x + (a.x - p2.x) * t, z = p2.z + (a.z - p2.z) * t; const [lon, lat] = this.worldToLL(x, z); pts.push(new THREE.Vector3(x, this.terrainY(lon, lat) + 1.2, z)); const cc = i <= this.prog.unlocked ? reached : future; colors.push(cc.r, cc.g, cc.b); } }
+      else { pts.push(new THREE.Vector3(a.x, a.y + 1.2, a.z)); colors.push(reached.r, reached.g, reached.b); }
     }
     const g = new THREE.BufferGeometry().setFromPoints(pts); g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     this.scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true })));
@@ -1007,7 +1118,7 @@ export class WorldMap3D {
       const cloth = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.3).translate(1.0, 0, 0), new THREE.MeshLambertMaterial({ color: '#c43d34', side: THREE.DoubleSide })); cloth.position.set(0, 3.4, bz); g.add(cloth);
       if (bz < 0) (g as any).cloth = cloth;
     }
-    g.scale.set(2.2, 2.2, 2.2); g.visible = false; this.scene.add(g); return g;
+    g.scale.set(1.7, 1.7, 1.7); g.visible = false; this.scene.add(g); return g;
   }
   // A medieval cog: planked hull with raised bow & stern castles, shields along
   // the gunwale, a striped square sail bellied on its yard, banner at the masthead.
@@ -1035,7 +1146,7 @@ export class WorldMap3D {
     { const p = sgeo.attributes.position; for (let i = 0; i < p.count; i++) { const lx = p.getX(i) / 1.8; p.setZ(i, (1 - lx * lx) * 0.55); } sgeo.computeVertexNormals(); }
     const sail = new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ map: stex, side: THREE.DoubleSide })); sail.position.set(0, 3.15, 0.12); g.add(sail);
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.7).translate(0.65, 0, 0), new THREE.MeshLambertMaterial({ color: '#c43d34', side: THREE.DoubleSide })); flag.position.set(0, 5.9, 0); g.add(flag);
-    g.scale.set(2.4, 2.4, 2.4); g.visible = false; this.scene.add(g); return g;
+    g.scale.set(1.5, 1.5, 1.5); g.visible = false; this.scene.add(g); return g;
   }
   private marchTo(node: CampaignCastle) {
     const src = node.id > 0 ? this.nodes[node.id - 1] : null;
