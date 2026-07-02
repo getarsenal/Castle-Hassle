@@ -12,12 +12,14 @@ interface BiomeCfg {
   hemiSky: string; hemiGround: string; sun: string; sunInt: number; amb: string;
   ground: string; sand: boolean; hill: string; hillTop: string; snow: boolean; hillH: number; dune: boolean; tree: string;
 }
+// Palette note: grounds/hills/trees are kept SOMBER — desaturated, slightly darker
+// greens — so the field reads clear, defined and medieval rather than candy-bright.
 const BIOMES: Record<Biome, BiomeCfg> = {
-  britain: { bg: '#bcd6ef', skyTop: '#bcd9f0', skyBot: '#ece6d2', fog: '#cfe0df', fogNear: 380, fogFar: 980, hemiSky: '#fff4da', hemiGround: '#6d7b3e', sun: '#ffe1ad', sunInt: 2.0, amb: '#fff0d6', ground: '#9bbb5c', sand: false, hill: '#5d7a3e', hillTop: '#86a35a', snow: false, hillH: 62, dune: false, tree: '#3f5a2a' },
-  france:  { bg: '#c2dbef', skyTop: '#c1dcf0', skyBot: '#eee8d4', fog: '#d6e2dc', fogNear: 400, fogFar: 1000, hemiSky: '#fff6e0', hemiGround: '#76833f', sun: '#ffe6b6', sunInt: 2.0, amb: '#fff2da', ground: '#a4c062', sand: false, hill: '#6c8a44', hillTop: '#90ab5e', snow: false, hillH: 40, dune: false, tree: '#46622e' },
-  alpine:  { bg: '#c4daf0', skyTop: '#bcd6f2', skyBot: '#e6eef2', fog: '#dbe6ee', fogNear: 420, fogFar: 1040, hemiSky: '#f4f8ff', hemiGround: '#5e6f3f', sun: '#ffe9c2', sunInt: 1.95, amb: '#eef2ff', ground: '#8fae58', sand: false, hill: '#586b42', hillTop: '#c9d2cf', snow: true, hillH: 205, dune: false, tree: '#33502a' },
-  med:     { bg: '#cdd9dd', skyTop: '#bcd2dc', skyBot: '#efe6c8', fog: '#e4ddc4', fogNear: 360, fogFar: 960, hemiSky: '#fff3cf', hemiGround: '#8a8048', sun: '#ffe0a0', sunInt: 2.1, amb: '#fff0cc', ground: '#a9a866', sand: false, hill: '#8a7d4a', hillTop: '#a99a60', snow: false, hillH: 58, dune: false, tree: '#5a6a35' },
-  desert:  { bg: '#e0d6bd', skyTop: '#cdd4cf', skyBot: '#f1e4c2', fog: '#e9dcbe', fogNear: 380, fogFar: 980, hemiSky: '#fff0c8', hemiGround: '#b09255', sun: '#ffe2a4', sunInt: 2.15, amb: '#fff0cf', ground: '#cdb27f', sand: true, hill: '#c9b07f', hillTop: '#dcc699', snow: false, hillH: 42, dune: true, tree: '#7a7e40' },
+  britain: { bg: '#b3cbe2', skyTop: '#b3cee4', skyBot: '#e4dcc6', fog: '#c6d4d0', fogNear: 430, fogFar: 1060, hemiSky: '#f7ebd2', hemiGround: '#63703c', sun: '#f7d9a6', sunInt: 1.95, amb: '#f3e4cb', ground: '#84994f', sand: false, hill: '#54683a', hillTop: '#748c50', snow: false, hillH: 62, dune: false, tree: '#384d26' },
+  france:  { bg: '#b8cfe2', skyTop: '#b7d0e3', skyBot: '#e6dec8', fog: '#ccd6cd', fogNear: 450, fogFar: 1080, hemiSky: '#f7edd6', hemiGround: '#6b763c', sun: '#f7dcab', sunInt: 1.95, amb: '#f3e6cd', ground: '#8ba354', sand: false, hill: '#5f783e', hillTop: '#7e9453', snow: false, hillH: 40, dune: false, tree: '#3e552a' },
+  alpine:  { bg: '#bacfe4', skyTop: '#b2cbe6', skyBot: '#dee5e8', fog: '#d1dbe2', fogNear: 470, fogFar: 1120, hemiSky: '#eef2f8', hemiGround: '#57653c', sun: '#f7ddb4', sunInt: 1.9, amb: '#e6eaf3', ground: '#7c944e', sand: false, hill: '#4f5f3c', hillTop: '#b8bfba', snow: true, hillH: 205, dune: false, tree: '#2e4526' },
+  med:     { bg: '#c2ccce', skyTop: '#b2c5cd', skyBot: '#e6dcba', fog: '#d9d1b6', fogNear: 410, fogFar: 1040, hemiSky: '#f5e8c4', hemiGround: '#7d7443', sun: '#f5d494', sunInt: 2.05, amb: '#f3e4c1', ground: '#93925a', sand: false, hill: '#7b7043', hillTop: '#968a57', snow: false, hillH: 58, dune: false, tree: '#505e30' },
+  desert:  { bg: '#d6ccb2', skyTop: '#c3cac4', skyBot: '#e8dab6', fog: '#ded1b2', fogNear: 430, fogFar: 1060, hemiSky: '#f5e6bd', hemiGround: '#a2874f', sun: '#f5d89b', sunInt: 2.1, amb: '#f3e4c3', ground: '#bda471', sand: true, hill: '#b7a071', hillTop: '#c9b485', snow: false, hillH: 42, dune: true, tree: '#6d7039' },
 };
 
 const KIND: SpriteKind[] = ['heavy', 'light', 'archer', 'cavalry'];
@@ -290,7 +292,7 @@ export class Renderer {
       // (warmer, yellower) on the sunlit rises.
       const dry = 0.5 + 0.4 * Math.sin(x * 0.021 + 2.0) * Math.cos(z * 0.017 - 1.1) + 0.18 * Math.sin(x * 0.06 - 0.4) * Math.sin(z * 0.048 + 1.7);
       const d = Math.max(0, Math.min(1, dry));
-      let r = n * (0.9 + 0.26 * d), gch = n * (1.04 - 0.12 * d), b = n * (0.92 - 0.26 * d);
+      let r = n * (0.92 + 0.18 * d), gch = n * (1.03 - 0.09 * d), b = n * (0.93 - 0.18 * d);
       // CHURN: a siege tears up the earth — a muddy scar hugs the walls and runs up the
       // gate lane where the host masses. Darken + brown the grass there (trampled ground).
       const distWall = Math.max(Math.abs(x) - Wg, Math.abs(z) - Dg);
@@ -302,9 +304,9 @@ export class Renderer {
       colors.push(c.r, c.g, c.b);
     }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    // biome grass, brightened & freshened for a summer-day feel; larger tiles so the
-    // repeat reads as meadow rather than a checkerboard
-    const warmGround = new THREE.Color(this.biomeCfg.ground).multiplyScalar(1.34).lerp(new THREE.Color('#cfe39a'), this.biomeCfg.sand ? 0 : 0.18);
+    // biome grass — only a gentle lift (the somber, desaturated base colour must
+    // survive), larger tiles so the repeat reads as meadow rather than a checkerboard
+    const warmGround = new THREE.Color(this.biomeCfg.ground).multiplyScalar(1.16).lerp(new THREE.Color('#c2cf94'), this.biomeCfg.sand ? 0 : 0.08);
     const groundTex = this.biomeCfg.sand ? dirtTexture('#d3ba88') : grassTexture('#' + warmGround.getHexString());
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping; groundTex.repeat.set(40, 40); groundTex.needsUpdate = true;
     const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: groundTex, vertexColors: true }));
@@ -621,6 +623,38 @@ export class Renderer {
     return out;
   }
 
+  // Sweep a smooth cross-section along a run of ring nodes into ONE continuous
+  // ribbon: `profile` = [lateralOffset, height, colour] (lateral + = away from the
+  // castle). Ends taper into the turf, the whole section snakes gently side to
+  // side and the crest height undulates — so the work reads as one fluent,
+  // hand-raised earthwork rather than a row of blocks.
+  private sweepRibbon(run: { x: number; z: number; nx: number; nz: number }[],
+    profile: [number, number, THREE.Color][], snakeAmp = 0, taper = true): THREE.BufferGeometry | null {
+    if (run.length < 3) return null;
+    const P = profile.length, pos: number[] = [], col: number[] = [], uv: number[] = [], idx: number[] = [];
+    for (let i = 0; i < run.length; i++) {
+      const nd = run[i];
+      const endT = taper ? Math.min(1, Math.min(i, run.length - 1 - i) / 2.6) : 1;
+      const hS = (0.86 + 0.2 * Math.sin(i * 0.83) * Math.sin(i * 0.31 + 2)) * (0.05 + 0.95 * endT);
+      const sn = snakeAmp ? Math.sin(i * 0.52) * snakeAmp + Math.sin(i * 0.19 + 1.3) * snakeAmp * 0.7 : 0;
+      for (let p = 0; p < P; p++) {
+        const [off, h, c] = profile[p];
+        pos.push(nd.x + nd.nx * (off + sn), Math.max(0.02, h * hS), nd.z + nd.nz * (off + sn));
+        col.push(c.r, c.g, c.b); uv.push(p / (P - 1), i * 0.35);
+      }
+    }
+    for (let i = 0; i < run.length - 1; i++) for (let p = 0; p < P - 1; p++) {
+      const a = i * P + p, b = (i + 1) * P + p;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx); g.computeVertexNormals();
+    return g;
+  }
+
   private buildSiegeCamp() {
     const gx = LAYOUT.gate.x, F = LAYOUT.front;
     const maxZ = WORLD.maxZ - 10, minX = WORLD.minX + 12, maxX = WORLD.maxX - 12;
@@ -633,7 +667,9 @@ export class Renderer {
       crates: THREE.BufferGeometry[] = [], barrels: THREE.BufferGeometry[] = [], sacks: THREE.BufferGeometry[] = [],
       hay: THREE.BufferGeometry[] = [], cart: THREE.BufferGeometry[] = [], banner: THREE.BufferGeometry[] = [],
       flag: THREE.BufferGeometry[] = [], rock: THREE.BufferGeometry[] = [], trenchG: THREE.BufferGeometry[] = [],
-      rubbleG: THREE.BufferGeometry[] = [];
+      rubbleG: THREE.BufferGeometry[] = [], worksG: THREE.BufferGeometry[] = [], apronG: THREE.BufferGeometry[] = [],
+      arrowG: THREE.BufferGeometry[] = [], fletchG: THREE.BufferGeometry[] = [], wreckG: THREE.BufferGeometry[] = [],
+      scorchG: THREE.BufferGeometry[] = [];
 
     // ----- primitives -----
     const tent = (cx: number, cz: number, big = false) => {
@@ -672,9 +708,12 @@ export class Renderer {
         cart.push(new THREE.CylinderGeometry(0.72, 0.72, 0.24, 9).rotateZ(1.5708).rotateY(ry).translate(wx, 0.72, wz));
       }
     };
-    // a flat ground decal (dirt patch), laid on the meadow and oriented by ry
-    const flat = (w: number, d: number, x: number, z: number, ry: number, y = 0.035) =>
-      new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).rotateY(ry).translate(x, y, z);
+    // a soft elliptical ground decal (dug earth / scorch), laid flat on the meadow
+    const flatE = (r1: number, r2: number, x: number, z: number, ry: number, y = 0.035) =>
+      new THREE.CircleGeometry(1, 10).rotateX(-Math.PI / 2).scale(r1, 1, r2).rotateY(ry).translate(x, y, z);
+    // a smooth half-buried spoil mound (dug earth is rounded, never boxy)
+    const mound = (r: number, x: number, z: number, squash = 0.55) =>
+      new THREE.SphereGeometry(r, 7, 5).scale(1, squash, 1).translate(x, r * 0.16, z);
 
     // ---- THE INVESTMENT: siege lines encircling the WHOLE castle ----
     // The line traces an offset of the castle's own footprint (a jittered rounded
@@ -689,48 +728,97 @@ export class Renderer {
     const nodes = this.siegeRingNodes(ccx, ccz, hx, hz, gap);
     const ga = Math.atan2(gx - ccx, F - ccz);                                  // bearing to the gate (assault gap)
     const gateOpen = (a: number) => Math.abs(((a - ga + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.5;
+
+    // ---- THE CONTINUOUS EARTHWORK: one swept ribbon per run of the ring ----
+    // Cross-section (castle side → rear): churned foot, the raised fighting parapet,
+    // a dip, then the dark fire trench between two soft lips. Vertex colours carry
+    // the earth tones so the whole work is a single smooth mesh — no boxes —
+    // snaking gently and undulating in height as it goes.
+    const C_FOOT = new THREE.Color('#5c4a34'), C_EARTH = new THREE.Color('#67533a'),
+      C_LIT = new THREE.Color('#7a6342'), C_DITCH = new THREE.Color('#2a2013');
+    const WORKS_PROFILE: [number, number, THREE.Color][] = [
+      [-4.2, 0.0, C_FOOT],
+      [-2.4, 1.05, C_LIT],     // fighting face (toward the castle, catches the sun)
+      [-0.6, 1.5, C_LIT],      // parapet crest
+      [1.0, 1.2, C_EARTH],
+      [2.6, 0.32, C_EARTH],
+      [3.4, 0.05, C_FOOT],     // rear foot of the parapet
+      [4.4, 0.55, C_EARTH],    // trench inner lip
+      [5.3, 0.06, C_DITCH],    // ...the fire trench floor...
+      [7.4, 0.06, C_DITCH],
+      [8.5, 0.5, C_EARTH],     // trench outer lip
+      [9.8, 0.0, C_FOOT],
+    ];
+    const APRON_PROFILE: [number, number, THREE.Color][] = [[-8, 0.022, C_EARTH], [12, 0.022, C_EARTH]];
+    // rotate the loop to start at the assault gap, then split into contiguous runs
+    let start = nodes.findIndex((nd) => gateOpen(nd.ang)); if (start < 0) start = 0;
+    const rot = nodes.slice(start).concat(nodes.slice(0, start));
+    const runs: (typeof nodes)[] = []; let cur: typeof nodes = [];
+    for (const nd of rot) { if (gateOpen(nd.ang)) { if (cur.length > 2) runs.push(cur); cur = []; } else cur.push(nd); }
+    if (cur.length > 2) runs.push(cur);
+    for (const run of runs) { const w = this.sweepRibbon(run, WORKS_PROFILE, 1.6); if (w) worksG.push(w); }
+    { const a = this.sweepRibbon([...rot, rot[0]], APRON_PROFILE, 1.6, false); if (a) apronG.push(a); } // churned ground under the whole ring, gap included
+
+    // gabions + stakes fronting the parapet (the basket line the trench is served from)
     for (const nd of nodes) {
-      const inx = -nd.nx, inz = -nd.nz, tvx = -nd.nz, tvz = nd.nx, ry = Math.atan2(tvx, tvz); // inward toward castle + tangent
-      const px = nd.x, pz = nd.z;
-      rubbleG.push(flat(rnd(9, 12), 9, px + inx * 5, pz + inz * 5, ry, 0.03));  // churned earth under the line
-      if (gateOpen(nd.ang)) continue;                                          // leave the assault avenue open
-      // gabions (earth-filled baskets) — the front cover facing the wall
-      const gbx = px + inx * 6, gbz = pz + inz * 6;
-      for (let g = -1; g <= 1; g++) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.95, 8).translate(gbx + tvx * g * 3.6, 0.98, gbz + tvz * g * 3.6));
-      // a picket of sharpened stakes planted in front of the gabions (toward the wall)
+      if (gateOpen(nd.ang)) continue;
+      const inx = -nd.nx, inz = -nd.nz, tvx = -nd.nz, tvz = nd.nx, ry = Math.atan2(tvx, tvz);
+      const gbx = nd.x + inx * 6.2, gbz = nd.z + inz * 6.2;
+      for (let g = -1; g <= 1; g++) wicker.push(new THREE.CylinderGeometry(1.05, 1.2, 1.95, 8).translate(gbx + tvx * g * 3.4, 0.98, gbz + tvz * g * 3.4));
       const shead = Math.atan2(inx, inz);
-      for (let s = -1; s <= 1; s++) stakes.push(new THREE.CylinderGeometry(0.12, 0.02, 2.7, 4).rotateX(-0.6).rotateY(shead).translate(gbx + inx * 3 + tvx * s * 2.4, 0.85, gbz + inz * 3 + tvz * s * 2.4));
-      if (chance(0.2)) planks.push(new THREE.BoxGeometry(3.2, 2.4, 0.3).rotateX(-0.26).rotateY(ry).translate(gbx, 1.35, gbz)); // occasional mantlet by the gabions
-    }
-    // ---- THE FIRE TRENCH: a loose zig-zag ditch dug behind the gabions ----
-    const zig = 4.5;
-    let prev: { x: number; z: number } | null = null;
-    for (let i = 0; i <= nodes.length; i++) {
-      const nd = nodes[i % nodes.length];
-      if (gateOpen(nd.ang)) { prev = null; continue; }                          // break the trench at the assault gap
-      const off = 2 + ((Math.floor(i / 2) % 2) ? zig : -zig);                   // 2-node runs, offset OUT behind the gabions
-      const cx2 = nd.x + nd.nx * off, cz2 = nd.z + nd.nz * off;
-      if (prev) {
-        const mx = (prev.x + cx2) / 2, mz = (prev.z + cz2) / 2, ddx = cx2 - prev.x, ddz = cz2 - prev.z;
-        const len = Math.hypot(ddx, ddz), hd = Math.atan2(ddx, ddz);
-        rubbleG.push(flat(8, len + 2.5, mx, mz, hd, 0.03));                    // dug-earth apron around the cut
-        trenchG.push(flat(3.0, len + 1.2, mx, mz, hd, 0.055));                 // the dark ditch floor
-        const perpX = Math.cos(hd), perpZ = -Math.sin(hd);                     // spoil heaped on both lips
-        for (let k = 0; k < 3; k++) { const side = k % 2 ? 1 : -1, o2 = rnd(2.2, 3.4) * side, s = rnd(0.45, 1.05); earth.push(this.boxG(s, s * rnd(0.4, 0.8), s * rnd(0.8, 1.2), mx + perpX * o2 + rnd(-2, 2), s * 0.3, mz + perpZ * o2 + rnd(-2, 2), Math.random() * 3.14)); }
-      }
-      prev = { x: cx2, z: cz2 };
+      for (let s = -1; s <= 1; s++) stakes.push(new THREE.CylinderGeometry(0.12, 0.02, 2.7, 4).rotateX(-0.6).rotateY(shead).translate(gbx + inx * 2.8 + tvx * s * 2.4, 0.85, gbz + inz * 2.8 + tvz * s * 2.4));
+      if (chance(0.18)) planks.push(new THREE.BoxGeometry(3.2, 2.4, 0.3).rotateX(-0.26).rotateY(ry).translate(gbx, 1.35, gbz)); // occasional mantlet
     }
 
-    // ---- SPOIL & RUBBLE: churned dirt, dug spoil-heaps and shattered stone in the gap ----
-    const nRub = Math.round(nodes.length * 0.5);
-    for (let i = 0; i < nRub; i++) {
-      const nd = nodes[Math.floor(Math.random() * nodes.length)];
-      const d = rnd(4, gap - 6);                                               // between the works and the wall
-      const rx = nd.x - nd.nx * d, rz = nd.z - nd.nz * d;
-      rubbleG.push(flat(rnd(4, 7), rnd(4, 7), rx, rz, Math.random() * 3.14, 0.04));
+    // ---- NO MAN'S LAND: the shot-torn ground between the works and the wall ----
+    const nmSpot = (d0 = 7, d1 = gap - 7) => { const nd = nodes[Math.floor(Math.random() * nodes.length)]; const d = rnd(d0, Math.max(d0 + 2, d1)); return { x: nd.x - nd.nx * d, z: nd.z - nd.nz * d }; };
+    // craters — boulder strikes: a scorched halo, a dark pit, a rim of thrown earth
+    let smokers = 0;
+    for (let i = 0; i < Math.round(nodes.length * 0.35); i++) {
+      const p = nmSpot(); const cr = rnd(1.6, 3.4);
+      scorchG.push(flatE(cr * rnd(1.15, 1.45), cr * rnd(1.15, 1.45), p.x, p.z, Math.random() * 3.14, 0.03));
+      trenchG.push(flatE(cr, cr * rnd(0.85, 1.1), p.x, p.z, Math.random() * 3.14, 0.05));
+      const rim = 4 + Math.floor(Math.random() * 3);
+      for (let k = 0; k < rim; k++) { const a = k / rim * 6.28 + rnd(-0.3, 0.3); earth.push(mound(rnd(0.4, 0.8), p.x + Math.cos(a) * cr * rnd(0.95, 1.25), p.z + Math.sin(a) * cr * rnd(0.95, 1.25))); }
+      if (smokers < 4 && chance(0.22)) { smokers++; this.smokeSources.push({ x: p.x, y: 0.3, z: p.z, s: 1.7, rate: 0.3, dark: 0.6, t: Math.random() }); }
+    }
+    // spent arrow flights bristling from the turf (thickest under the walls)
+    for (let i = 0; i < Math.round(nodes.length * 0.3); i++) {
+      const p = nmSpot(5, gap * 0.6);
+      for (let k = 0; k < 5 + Math.floor(Math.random() * 6); k++) {
+        const ax = p.x + rnd(-3.5, 3.5), az = p.z + rnd(-3.5, 3.5), tx = rnd(-0.38, 0.38), tz2 = rnd(-0.38, 0.38);
+        arrowG.push(new THREE.CylinderGeometry(0.04, 0.04, 1.25, 4).translate(0, 0.62, 0).rotateX(tx).rotateZ(tz2).translate(ax, 0, az));
+        fletchG.push(new THREE.BoxGeometry(0.15, 0.2, 0.15).translate(0, 1.18, 0).rotateX(tx).rotateZ(tz2).translate(ax, 0, az));
+      }
+    }
+    // broken supply wagons, burnt where they were caught in the open
+    for (let i = 0; i < 3; i++) {
+      const p = nmSpot(10, gap - 8), ry = Math.random() * 3.14;
+      wreckG.push(new THREE.BoxGeometry(3.8, 0.6, 1.9).rotateZ(rnd(0.7, 1.1)).rotateY(ry).translate(p.x, 0.8, p.z));
+      wreckG.push(new THREE.CylinderGeometry(0.72, 0.72, 0.2, 9).rotateX(1.5708).rotateY(rnd(0, 3)).translate(p.x + rnd(-3, 3), 0.11, p.z + rnd(-3, 3)));
+      wreckG.push(new THREE.CylinderGeometry(0.72, 0.72, 0.2, 9).rotateZ(1.26).rotateY(rnd(0, 3)).translate(p.x + rnd(-2, 2), 0.5, p.z + rnd(-2, 2)));
+      for (let k = 0; k < 3; k++) wreckG.push(new THREE.BoxGeometry(rnd(1.4, 2.6), 0.14, 0.3).rotateY(rnd(0, 3)).translate(p.x + rnd(-3, 3), 0.08, p.z + rnd(-3, 3)));
+      scorchG.push(flatE(rnd(3.5, 5), rnd(3.5, 5), p.x, p.z, rnd(0, 3), 0.028));
+    }
+    // a burnt siege engine, frame collapsed and still smouldering
+    {
+      const p = nmSpot(12, gap - 8), ry = Math.random() * 3.14;
+      wreckG.push(new THREE.BoxGeometry(0.55, 6.4, 0.55).rotateZ(0.9).rotateY(ry).translate(p.x, 1.8, p.z));
+      wreckG.push(new THREE.BoxGeometry(0.55, 5.6, 0.55).rotateZ(-0.75).rotateX(0.2).rotateY(ry).translate(p.x + 1, 1.5, p.z + 1));
+      wreckG.push(new THREE.BoxGeometry(0.4, 8.5, 0.4).rotateZ(1.35).rotateY(ry).translate(p.x - 1, 1.1, p.z - 1)); // the thrown arm, flat on the ground
+      wreckG.push(new THREE.BoxGeometry(3.4, 0.5, 0.7).rotateY(ry).translate(p.x, 0.28, p.z));
+      wreckG.push(new THREE.CylinderGeometry(0.85, 0.85, 0.22, 9).rotateZ(1.5708).rotateY(ry).translate(p.x + 1.8, 0.5, p.z - 1.2));
+      scorchG.push(flatE(4.5, 4.5, p.x, p.z, 0, 0.028));
+      this.smokeSources.push({ x: p.x, y: 0.8, z: p.z, s: 2.2, rate: 0.45, dark: 0.65, t: Math.random() * 0.4 });
+    }
+    // dug spoil and shattered stone strewn through the gap
+    for (let i = 0; i < Math.round(nodes.length * 0.7); i++) {
+      const p = nmSpot(4, gap - 6);
+      rubbleG.push(flatE(rnd(3.5, 7), rnd(3.5, 7), p.x, p.z, Math.random() * 3.14, 0.035));
       for (let k = 0; k < 2 + Math.floor(Math.random() * 3); k++) {
-        const s = rnd(0.5, 1.5), ox = rnd(-3.5, 3.5), oz = rnd(-3.5, 3.5);
-        (chance(0.5) ? rock : earth).push(this.boxG(s, s * rnd(0.5, 0.9), s * rnd(0.8, 1.2), rx + ox, s * 0.3, rz + oz, Math.random() * 3.14));
+        const s = rnd(0.5, 1.3), ox = rnd(-3.5, 3.5), oz = rnd(-3.5, 3.5);
+        if (chance(0.4)) rock.push(this.boxG(s, s * rnd(0.5, 0.8), s * rnd(0.8, 1.2), p.x + ox, s * 0.3, p.z + oz, Math.random() * 3.14)); // shattered stone stays angular
+        else earth.push(mound(s * 0.8, p.x + ox, p.z + oz));                   // dug spoil is rounded
       }
     }
 
@@ -766,8 +854,15 @@ export class Renderer {
     const add = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.castShadow = m.receiveShadow = true; this.scene.add(m); } };
     const dirt = (hex: string, col: string) => { const t = dirtTexture(hex); t.wrapS = t.wrapT = THREE.RepeatWrapping; return new THREE.MeshLambertMaterial({ map: t, color: col }); };
     const decal = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.receiveShadow = true; m.renderOrder = 1; this.scene.add(m); } };
-    decal(rubbleG, dirt('#9a835c', '#b39a6e'));  // churned spoil / dug earth
-    decal(trenchG, dirt('#48381f', '#6a5636'));  // the dark ditch floor
+    // the continuous earthwork ribbons (vertex-coloured, smooth-shaded)
+    if (worksG.length) { const m = new THREE.Mesh(mergeGeometries(worksG, false), new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
+    if (apronG.length) { const at = dirtTexture('#6f5c40'); at.wrapS = at.wrapT = THREE.RepeatWrapping; const m = new THREE.Mesh(mergeGeometries(apronG, false), new THREE.MeshLambertMaterial({ map: at, color: '#7d6a4d', side: THREE.DoubleSide })); m.receiveShadow = true; m.renderOrder = 1; this.scene.add(m); }
+    decal(rubbleG, dirt('#84714e', '#95835f'));  // churned spoil / dug earth (somber)
+    decal(trenchG, dirt('#3e3019', '#5c4a2e'));  // ditch floors / crater pits
+    decal(scorchG, dirt('#3a2d1b', '#4a3a26'));  // scorched, fire-blackened ground
+    add(arrowG, this.stone('#a8926a'));     // spent arrow shafts
+    add(fletchG, this.stone('#ddd3ba'));    // pale goose-feather fletchings
+    add(wreckG, this.stone('#31261a'));     // charred wreckage (wagons, engines)
     add(cloth, this.stone('#cbb894'));      // weathered linen tents
     add(pavilion, this.stone('#8a4436'));   // lords' command pavilions (dyed cloth)
     add(poles, this.stone('#6a4a2a'));
