@@ -238,6 +238,7 @@ export class Renderer {
   private dummy = new THREE.Object3D();
   private billboard = new THREE.Quaternion(); // dust + projectiles still billboard on the CPU
   private _col = new THREE.Color();
+  private _up = new THREE.Vector3(0, 1, 0); private _v1 = new THREE.Vector3(); private _v2 = new THREE.Vector3(); private _fogCol: THREE.Color | null = null;
   private corpse?: Uint8Array;                 // which units have been laid down as bodies
   private colorDirty = [false, false, false, false];
   private moveMarker?: THREE.Group;
@@ -372,7 +373,7 @@ export class Renderer {
     this.camTarget.set(LAYOUT.gate.x * 0.5, 0, LAYOUT.D * 0.5 + 48);
     this.camDist = Math.min(250, Math.hypot(LAYOUT.W, LAYOUT.D) * 2.3 + 92);
 
-    window.addEventListener('resize', () => this.onResize());
+    window.addEventListener('resize', this.onResizeBound);
   }
 
   // The post chain: render (linear HDR) → selective bloom → cinematic grade → screen.
@@ -394,6 +395,31 @@ export class Renderer {
     u.uExposure.value = T.exposure; u.uSat.value = T.sat; u.uBalance.value.set(...T.balance);
     this.composer.addPass(this.gradePass);
     this.composer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  private onResizeBound = () => this.onResize();
+  // Full teardown between battles. Without this every battle leaked its entire
+  // scene (the anonymous resize closure pinned the Renderer) AND a live WebGL
+  // context — enough to crash an iPhone inside one campaign session.
+  dispose() {
+    window.removeEventListener('resize', this.onResizeBound);
+    const seen = new Set<object>();
+    this.scene.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.geometry && !seen.has(m.geometry)) { seen.add(m.geometry); m.geometry.dispose(); }
+      const mat = (m as { material?: THREE.Material | THREE.Material[] }).material;
+      if (mat) for (const mm of Array.isArray(mat) ? mat : [mat]) {
+        if (seen.has(mm)) continue; seen.add(mm);
+        const anyM = mm as any;
+        for (const k of ['map', 'normalMap', 'alphaMap', 'aoMap', 'emissiveMap']) anyM[k]?.dispose?.();
+        mm.dispose();
+      }
+    });
+    (this.composer as any)?.dispose?.();
+    (this.bloomPass as any)?.dispose?.();
+    (this.gradePass as any)?.dispose?.();
+    this.gl.dispose();
+    this.gl.forceContextLoss(); // release the context NOW, not when the tab dies
   }
 
   private onResize() {
@@ -617,7 +643,20 @@ export class Renderer {
       const w = b.x1 - b.x0, d = b.z1 - b.z0, cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
       const extras: THREE.Object3D[] = [];
 
-      if (b.kind === 'wall' || b.kind === 'gate') {
+      if (b.kind === 'gate' && b.h <= 3) {
+        // a street BARRICADE: rough planks + stakes, not a miniature gatehouse
+        const horiz = w > d, len = horiz ? w : d;
+        const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h * 0.82, d, 0, b.h * 0.41, 0)];
+        const nst = Math.max(3, Math.round(len / 1.6));
+        for (let k = 0; k < nst; k++) {
+          const t2 = (k + 0.5) / nst - 0.5;
+          parts.push(this.boxG(0.22, b.h + 0.9 + jit(s * 31 + k, 3) * 0.5, 0.22, horiz ? t2 * len : (jit(k, 4) - 0.5) * d * 0.6, (b.h + 0.9) / 2, horiz ? (jit(k, 5) - 0.5) * d * 0.6 : t2 * len));
+        }
+        const mat = this.stone('#6b4b28');
+        const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
+        box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
+        this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
+      } else if (b.kind === 'wall' || b.kind === 'gate') {
         // every part of the section merges into ONE mesh (origin at ground)
         const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
         const isStone = b.kind === 'wall';
@@ -1326,7 +1365,7 @@ export class Renderer {
     for (let s = 0; s < CASTLE.length; s++) {
       const b = CASTLE[s], cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
       if (b.kind === 'tower' && Math.random() < 0.72) this.braziers.push({ x: cx, y: b.h + 1.4, z: cz, ph: Math.random() * 6.28, seg: s });
-      else if (b.kind === 'gate') { this.braziers.push({ x: b.x0 + 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28, seg: s }); this.braziers.push({ x: b.x1 - 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28, seg: s }); }
+      else if (b.kind === 'gate' && b.h > 3) { this.braziers.push({ x: b.x0 + 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28, seg: s }); this.braziers.push({ x: b.x1 - 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28, seg: s }); }
     }
     const bowlMat = this.stone('#2a2320');
     for (const p of this.braziers) {
@@ -1927,7 +1966,7 @@ export class Renderer {
         const lx = b[i]; // distance from the pole along the cloth
         a[i + 2] = Math.sin(t + lx * 1.5 + f.ph) * f.amp * (0.25 + lx * 0.13); // more flutter toward the fly
       }
-      p.needsUpdate = true; f.mesh.geometry.computeVertexNormals();
+      p.needsUpdate = true; // flat cloth normals suffice — per-flag-per-frame normal recompute was pure churn
     }
   }
 
@@ -1956,14 +1995,14 @@ export class Renderer {
 
   updateCamera() {
     const cp = Math.cos(this.camPitch), sp = Math.sin(this.camPitch), cy = Math.cos(this.camYaw), sy = Math.sin(this.camYaw);
-    this.camera.position.copy(this.camTarget).add(new THREE.Vector3(sy * cp, sp, cy * cp).multiplyScalar(this.camDist));
+    this.camera.position.copy(this.camTarget).add(this._v2.set(sy * cp, sp, cy * cp).multiplyScalar(this.camDist));
     this.camera.lookAt(this.camTarget);
     if (this.shakeAmt > 0.002) { // jolt the camera on impacts (scaled to zoom so it reads at any distance)
       const s = this.shakeAmt * this.camDist * 0.012;
       this.camera.position.x += (Math.random() - 0.5) * s; this.camera.position.y += (Math.random() - 0.5) * s; this.camera.position.z += (Math.random() - 0.5) * s;
     }
     if (this.camera.position.y < 1.1) this.camera.position.y = 1.1; // anywhere but underground
-    const dir = new THREE.Vector3().subVectors(this.camera.position, this.camTarget);
+    const dir = this._v2.subVectors(this.camera.position, this.camTarget);
     const ang = Math.atan2(dir.x, dir.z);
     this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ang); // dust/projectiles still use the quaternion
     this.uRight.value.set(Math.cos(ang), 0, -Math.sin(ang));           // soldier shader billboard basis
@@ -2090,7 +2129,7 @@ export class Renderer {
   private _smokeCol = new THREE.Color();
   private stepSmoke(dt: number) {
     if (!this.smokeMesh) return;
-    const fog = new THREE.Color(this.biomeCfg.fog), wind = 1.6;
+    const fog = this._fogCol ?? (this._fogCol = new THREE.Color(this.biomeCfg.fog)); const wind = 1.6;
     for (const src of this.smokeSources) {
       if (src.seg !== undefined && ((this.segVis[src.seg]?.crumbling ?? 0) > 0 || CASTLE[src.seg]?.dead)) continue; // its wall fell — the fire is out
       src.t -= dt;
@@ -2235,7 +2274,7 @@ export class Renderer {
       bm.stock.position.z = -e.recoil * 0.4;
     }
 
-    let ac = 0, bc = 0, fc = 0; const up = new THREE.Vector3(0, 1, 0); const v = new THREE.Vector3();
+    let ac = 0, bc = 0, fc = 0; const up = this._up, v = this._v1;
     for (const p of sim.projectiles) {
       if (!p.active) continue;
       if (p.big) {
@@ -2252,10 +2291,9 @@ export class Renderer {
         const bs = p.bolt ? 2.0 : 1; this.dummy.scale.set(bs, bs, bs); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(ac++, this.dummy.matrix);
       }
     }
-    for (let k = ac; k < 3200; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.projMesh.setMatrixAt(k, this.dummy.matrix); }
-    for (let k = bc; k < 60; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.boulderMesh.setMatrixAt(k, this.dummy.matrix); }
-    for (let k = fc; k < 450; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.fireMesh.setMatrixAt(k, this.dummy.matrix); }
-    this.projMesh.count = 3200; this.boulderMesh.count = 60; this.fireMesh.count = 450;
+    // draw exactly the live projectiles — instances beyond .count are never
+    // rasterised, so no hide-fill and no full-capacity upload every frame
+    this.projMesh.count = ac; this.boulderMesh.count = bc; this.fireMesh.count = fc;
     this.projMesh.instanceMatrix.needsUpdate = true; this.boulderMesh.instanceMatrix.needsUpdate = true; this.fireMesh.instanceMatrix.needsUpdate = true;
 
     this.updateCamera(); this.composer.render();

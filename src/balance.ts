@@ -20,7 +20,13 @@ export interface CastleThreat {
 export interface Assessment { ratio: number; band: Band; hostValue: number; defValue: number }
 export type Band = 'Rout' | 'Strong' | 'Even' | 'Costly' | 'Grim';
 
-// mirrors src/sim.ts combat constants (kept in sync by hand — this is a dev estimate)
+// mirrors src/sim.ts combat constants (kept in sync by hand — this is a dev estimate).
+// NOTE: sim.ts multiplies HP and all RANGED damage by HP_SCALE; that scales both
+// sides of the ratio equally, so these UNSCALED bases stay correct for the ratio.
+// Deliberately NOT modelled (they mostly cancel or are player-skill dependent):
+// morale/rout, flank/rear counters, weather, engine crews, siege works, doctrine
+// path specials (charges, firepots, surgeons). If sim.ts's base HP/MELEE/ATKCD
+// arrays change, update these to match.
 const HP = [120, 70, 55, 95, 260], MELEE = [9, 7, 5, 15, 0], ATKCD = [0.8, 0.55, 1.3, 0.75, 6.5], ARCHER_DMG = 12;
 // per-soldier field value ≈ HP × sustained DPS; ranged arms carry a safety premium,
 // cavalry a grind penalty (brittle once the charge is spent).

@@ -168,7 +168,11 @@ class BattleAudioImpl {
   // a per-sound output bus: dry → master, plus an optional reverb send
   private bus(vol: number, panv = 0, send = 0) {
     const out = this.g(vol); const p = this.pan(panv); out.connect(p); p.connect(this.master);
-    if (send > 0 && this.reverbIn) { const s = this.g(send); p.connect(s); s.connect(this.reverbIn); }
+    let s: GainNode | undefined;
+    if (send > 0 && this.reverbIn) { s = this.g(send); p.connect(s); s.connect(this.reverbIn); }
+    // one-shot bus: tear the chain down once the sound (and its reverb tail) is
+    // spent, or every sfx leaks a gain+panner wired to the master forever
+    setTimeout(() => { try { out.disconnect(); p.disconnect(); s?.disconnect(); } catch { /* ctx closed */ } }, 4000);
     return out;
   }
   private rl(key: string, minS: number) { const t = this.now(); if ((this.last[key] ?? -9) + minS > t) return false; this.last[key] = t; return true; }

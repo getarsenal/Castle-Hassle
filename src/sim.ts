@@ -161,7 +161,9 @@ export let LAYOUT: CastleLayout = null as any;
 
 function genRng(seed: number) { let s = (seed >>> 0) || 1; return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
+let lastGen: { seed: number; style?: CastleStyle } | null = null;
 export function generateCastle(seed: number, style?: CastleStyle) {
+  lastGen = { seed, style };
   CASTLE = []; TOWERS.length = 0;
   const segs = CASTLE;
   const R = genRng(Math.imul(seed >>> 0, 2654435761) >>> 0);
@@ -342,16 +344,20 @@ export interface CastleSurvey {
   keep: { x0: number; x1: number; z0: number; z1: number } | null;
 }
 export function surveyCastle(seed: number, style: CastleStyle, difficulty: number): CastleSurvey {
+  const prev = lastGen; // CASTLE/LAYOUT are module globals a live scene may be reading
   generateCastle(seed, style);
   const L = LAYOUT, plan = defenderPlan(L, difficulty);
   const gates = L.wallLines.filter(ln => ln.gapH > 0 && Math.abs(ln.gapC) < 1e8).length + (L.citadel ? 1 : 0);
   const kp = CASTLE.find(b => b.kind === 'keep');
-  return {
+  const survey: CastleSurvey = {
     plan, total: plan.total, towers: L.towers.length, bigTowers: L.towers.filter(t => t.big).length,
     wallRings: L.concentric ? 2 : 1, gates, concentric: !!L.concentric, citadel: !!L.citadel,
     round: !!L.round, palisade: !!L.palisade, footprintW: Math.round(L.W * 2), footprintD: Math.round(L.D * 2), layout: L,
     keep: kp ? { x0: kp.x0, x1: kp.x1, z0: kp.z0, z1: kp.z1 } : null,
   };
+  // put the globals back the way the live scene had them (generation is seed-deterministic)
+  if (prev && (prev.seed !== seed || prev.style !== style)) generateCastle(prev.seed, prev.style);
+  return survey;
 }
 
 function blockedAt(x: number, z: number): boolean {
@@ -1731,7 +1737,7 @@ export class Sim {
     this.sfx.melee++;
     if (this.clashes.length < 96) this.clashes.push(this.px[j], this.pz[j]);
     if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++;
-    if (this.hp[j] <= 0) { this.kill(j, vu); if (u.faction === Faction.Attacker) this.creditAtkKill(t); }
+    if (this.hp[j] <= 0) { this.kill(j, vu); if (u.faction === Faction.Attacker && u.crewFor < 0) this.creditAtkKill(t); }
   }
 
   // Desired direction toward this soldier's formation slot, written to _dir.
@@ -2586,8 +2592,10 @@ export class Sim {
   // Sound the retreat — end now; survivors are saved, the castle stands.
   retreat() { if (this.phase === 'battle') { this.phase = 'over'; this.winner = Faction.Defender; this.retreated = true; } }
   // Attacker soldiers by unit type — committed (spawned) vs still alive.
-  attackerSpawned(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker) a[u.type] += u.count; return a; }
-  attackerAlive(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker) a[u.type] += u.alive; return a; }
+  // NOTE: engine crews (crewFor >= 0) are battery equipment, not the standing army —
+  // counting them here once let crew casualties wipe the player's SAVED light infantry.
+  attackerSpawned(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker && u.crewFor < 0) a[u.type] += u.count; return a; }
+  attackerAlive(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker && u.crewFor < 0) a[u.type] += u.alive; return a; }
 
   // aggregate counts for HUD
   countAlive(faction: Faction): number { let n = 0; for (const u of this.units) if (u.faction === faction) n += u.alive; return n; }

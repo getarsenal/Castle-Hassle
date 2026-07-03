@@ -101,8 +101,21 @@ export class WorldMap3D {
     loop();
     (window as any).__map = this;
   }
+  private resizeBound = () => this.resize();
   destroy() {
-    cancelAnimationFrame(this.raf); this.renderer.dispose();
+    cancelAnimationFrame(this.raf);
+    window.removeEventListener('resize', this.resizeBound); // the leak that retained every dead map
+    const seen = new Set<object>();
+    this.scene.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.geometry && !seen.has(m.geometry)) { seen.add(m.geometry); m.geometry.dispose(); }
+      const mat = (m as { material?: THREE.Material | THREE.Material[] }).material;
+      if (mat) for (const mm of Array.isArray(mat) ? mat : [mat]) {
+        if (seen.has(mm)) continue; seen.add(mm);
+        (mm as any).map?.dispose?.(); mm.dispose();
+      }
+    });
+    this.renderer.dispose(); this.renderer.forceContextLoss();
     this.compassEl?.remove(); this.panelEl?.remove(); (this as any).hintEl?.remove();
     this.canvas.replaceWith(this.canvas.cloneNode(false));
   }
@@ -136,7 +149,7 @@ export class WorldMap3D {
   // Box-blur the heightmap to soften peaks and especially coasts. We only clamp
   // land-above-water / sea-below-water on the FINAL pass, so the blur is free to
   // pull the coastline into a gentle ramp instead of re-stepping every iteration.
-  private smoothHeights(h: Float32Array, mask: Uint8Array, iters: number) {
+  private smoothHeights(h: Float32Array<ArrayBuffer>, mask: Uint8Array, iters: number) {
     const { GW, GH } = this; let cur = h;
     for (let it = 0; it < iters; it++) {
       const last = it === iters - 1; const out = new Float32Array(GW * GH);
@@ -516,224 +529,6 @@ export class WorldMap3D {
     }
   }
 
-  // ---- FAMOUS PLACES: little 3D monuments with names, scattered across the world ----
-  // Pyramids on the Nile, the Parthenon over Athens, Hagia Sophia, Stonehenge…
-  // so the map reads as a living medieval world, not empty terrain between sieges.
-  private buildLandmarks() {
-    const stoneM = new THREE.MeshLambertMaterial({ color: '#d8cdb2' });
-    const columnM = new THREE.MeshLambertMaterial({ color: '#e4dac0' });
-    const darkM = new THREE.MeshLambertMaterial({ color: '#8a7f6a' });
-    const goldM = new THREE.MeshLambertMaterial({ color: '#e0be62' });
-    const sandM = new THREE.MeshLambertMaterial({ color: '#d6bf8e' });
-    const roseM = new THREE.MeshLambertMaterial({ color: '#c08a6c' });
-    const slateM = new THREE.MeshLambertMaterial({ color: '#6a7086' });
-    const B = (g: THREE.Group, geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, ry = 0) => {
-      const mesh = new THREE.Mesh(geo, m); mesh.position.set(x, y, z); if (ry) mesh.rotation.y = ry; g.add(mesh); return mesh;
-    };
-    for (const lm of LANDMARKS) {
-      const g = new THREE.Group();
-      switch (lm.kind) {
-        case 'stonehenge': { // a broken ring of trilithons on the plain
-          for (let i = 0; i < 7; i++) { const a = i / 7 * 6.28; if (i === 4) continue; B(g, new THREE.BoxGeometry(0.42, 1.25, 0.42), darkM, Math.cos(a) * 1.7, 0.62, Math.sin(a) * 1.7); }
-          for (let i = 0; i < 3; i++) { const a = (i * 2.4 + 0.45); B(g, new THREE.BoxGeometry(1.5, 0.34, 0.5), darkM, Math.cos(a) * 1.7, 1.42, Math.sin(a) * 1.7, -a); }
-          break;
-        }
-        case 'temple': { // a colonnaded classical temple (Parthenon, Baalbek, Carthage)
-          B(g, new THREE.BoxGeometry(4.6, 0.5, 3.0), stoneM, 0, 0.25, 0);
-          for (let i = 0; i < 6; i++) B(g, new THREE.CylinderGeometry(0.17, 0.19, 1.7, 6), columnM, -1.9 + i * 0.76, 1.35, 1.1);
-          for (let i = 0; i < 6; i++) B(g, new THREE.CylinderGeometry(0.17, 0.19, 1.7, 6), columnM, -1.9 + i * 0.76, 1.35, -1.1);
-          B(g, new THREE.BoxGeometry(4.4, 0.4, 2.8), stoneM, 0, 2.35, 0);
-          B(g, new THREE.ConeGeometry(2.15, 0.85, 4), stoneM, 0, 2.95, 0, Math.PI / 4).scale.set(1.05, 1, 0.66);
-          break;
-        }
-        case 'cathedral': { // a gothic cathedral: nave, steep roof, twin west towers
-          B(g, new THREE.BoxGeometry(2.1, 1.7, 4.4), stoneM, 0, 0.85, 0);
-          const roof = B(g, new THREE.BoxGeometry(1.5, 1.5, 4.4), slateM, 0, 1.95, 0); roof.rotation.z = Math.PI / 4;
-          B(g, new THREE.BoxGeometry(0.85, 3.1, 0.85), stoneM, -0.62, 1.55, 2.05);
-          B(g, new THREE.BoxGeometry(0.85, 3.1, 0.85), stoneM, 0.62, 1.55, 2.05);
-          B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, -0.62, 3.6, 2.05, Math.PI / 4);
-          B(g, new THREE.ConeGeometry(0.6, 1.1, 4), slateM, 0.62, 3.6, 2.05, Math.PI / 4);
-          B(g, new THREE.ConeGeometry(0.34, 1.5, 6), slateM, 0, 3.3, -0.6);
-          { // the city crowds in around the cathedral close
-            const tile = new THREE.MeshLambertMaterial({ color: '#9a5a40' });
-            for (let i = 0; i < 8; i++) {
-              const a2 = i / 8 * 6.28 + hash(i, 11) * 0.6, rr = 2.6 + hash(i, 13) * 1.8;
-              const hx = Math.cos(a2) * rr, hz2 = Math.sin(a2) * rr, ry2 = hash(i, 17) * 3.14;
-              B(g, new THREE.BoxGeometry(0.8, 0.5, 0.62), stoneM, hx, 0.25, hz2, ry2);
-              B(g, new THREE.ConeGeometry(0.56, 0.4, 4), tile, hx, 0.68, hz2, ry2 + Math.PI / 4);
-            }
-          }
-          break;
-        }
-        case 'dome': { // a great domed sanctuary with slender minarets
-          B(g, new THREE.BoxGeometry(3.2, 1.4, 3.2), stoneM, 0, 0.7, 0);
-          B(g, new THREE.SphereGeometry(1.55, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), goldM, 0, 1.4, 0);
-          for (const [mx, mz] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]] as const) {
-            B(g, new THREE.CylinderGeometry(0.14, 0.16, 3.4, 6), stoneM, mx, 1.7, mz);
-            B(g, new THREE.ConeGeometry(0.22, 0.5, 6), goldM, mx, 3.6, mz);
-          }
-          for (let i = 0; i < 7; i++) { // flat-roofed quarter pressing close
-            const a2 = i / 7 * 6.28 + hash(i, 21) * 0.6, rr = 2.9 + hash(i, 23) * 1.6;
-            B(g, new THREE.BoxGeometry(0.85, 0.45 + hash(i, 27) * 0.35, 0.7), sandM, Math.cos(a2) * rr, 0.3, Math.sin(a2) * rr, hash(i, 29) * 3.14);
-          }
-          break;
-        }
-        case 'pyramids': { // Giza: three pyramids on the sand, stepped in size
-          B(g, new THREE.ConeGeometry(2.0, 2.5, 4), sandM, 0, 1.25, 0, Math.PI / 4);
-          B(g, new THREE.ConeGeometry(1.4, 1.8, 4), sandM, 2.5, 0.9, 1.2, Math.PI / 4);
-          B(g, new THREE.ConeGeometry(0.9, 1.15, 4), sandM, -2.1, 0.57, 1.5, Math.PI / 4);
-          break;
-        }
-        case 'lighthouse': { // the Pharos: three tapering tiers and a beacon
-          B(g, new THREE.BoxGeometry(2.0, 2.0, 2.0), stoneM, 0, 1.0, 0);
-          B(g, new THREE.CylinderGeometry(0.62, 0.75, 1.7, 8), stoneM, 0, 2.85, 0);
-          B(g, new THREE.CylinderGeometry(0.34, 0.42, 1.2, 8), stoneM, 0, 4.3, 0);
-          B(g, new THREE.SphereGeometry(0.3, 8, 6), goldM, 0, 5.1, 0);
-          break;
-        }
-        case 'colosseum': { // the Flavian ring, one side fallen
-          const outer = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 1.5, 18, 1, true), stoneM); outer.position.y = 0.75; (outer.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide; g.add(outer);
-          const inner = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.0, 18, 1, true), darkM); inner.position.y = 0.5; (inner.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide; g.add(inner);
-          B(g, new THREE.BoxGeometry(2.4, 0.9, 1.2), stoneM, 1.1, 0.45, 1.1, -0.8); // the collapsed stretch as rubble
-          break;
-        }
-        case 'abbeymount': { // Mont-Saint-Michel: an abbey crowning a tidal mount
-          B(g, new THREE.ConeGeometry(2.3, 2.5, 8), darkM, 0, 1.25, 0);
-          B(g, new THREE.CylinderGeometry(2.0, 2.3, 0.5, 8), stoneM, 0, 0.5, 0);
-          B(g, new THREE.BoxGeometry(1.2, 1.1, 1.2), stoneM, 0, 2.9, 0);
-          B(g, new THREE.ConeGeometry(0.5, 1.7, 6), slateM, 0, 4.2, 0);
-          B(g, new THREE.SphereGeometry(0.12, 6, 5), goldM, 0, 5.1, 0);
-          break;
-        }
-        case 'campanile': { // Venice: a whole island city in the lagoon — sand bar,
-          // packed rooftops around the piazza, St Mark's bell-tower above it all
-          B(g, new THREE.CylinderGeometry(4.0, 4.4, 0.5, 10), sandM, 0, 0.12, 0);
-          const tile = new THREE.MeshLambertMaterial({ color: '#b56a4a' });
-          for (let i = 0; i < 9; i++) {
-            const a2 = i / 9 * 6.28 + hash(i, 5) * 0.5, rr = 1.5 + hash(i, 3) * 1.7;
-            const hx = Math.cos(a2) * rr, hz2 = Math.sin(a2) * rr, ry2 = hash(i, 9) * 3.14;
-            B(g, new THREE.BoxGeometry(0.85, 0.5, 0.65), stoneM, hx, 0.62, hz2, ry2);
-            B(g, new THREE.ConeGeometry(0.6, 0.42, 4), tile, hx, 1.05, hz2, ry2 + Math.PI / 4);
-          }
-          B(g, new THREE.BoxGeometry(1.2, 0.8, 1.0), stoneM, 0, 0.75, 0);              // the basilica
-          B(g, new THREE.SphereGeometry(0.5, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), goldM, 0, 1.15, 0);
-          B(g, new THREE.BoxGeometry(0.55, 3.0, 0.55), new THREE.MeshLambertMaterial({ color: '#c98d76' }), 1.3, 1.85, 0);
-          B(g, new THREE.ConeGeometry(0.5, 0.85, 4), goldM, 1.3, 3.75, 0, Math.PI / 4);
-          break;
-        }
-        case 'aqueduct': { // Pont du Gard: two tiers of arches striding a valley
-          for (let i = 0; i < 5; i++) B(g, new THREE.BoxGeometry(0.45, 1.6, 0.6), sandM, -2.2 + i * 1.1, 0.8, 0);
-          B(g, new THREE.BoxGeometry(5.2, 0.35, 0.66), sandM, 0, 1.75, 0);
-          for (let i = 0; i < 4; i++) B(g, new THREE.BoxGeometry(0.4, 0.9, 0.55), sandM, -1.65 + i * 1.1, 2.35, 0);
-          B(g, new THREE.BoxGeometry(5.2, 0.3, 0.6), sandM, 0, 2.95, 0);
-          break;
-        }
-        case 'rockcity': { // Petra: a temple face carved into rose sandstone
-          B(g, new THREE.BoxGeometry(3.4, 2.7, 1.3), roseM, 0, 1.35, 0);
-          for (let i = 0; i < 4; i++) B(g, new THREE.CylinderGeometry(0.12, 0.13, 1.5, 6), new THREE.MeshLambertMaterial({ color: '#d8a685' }), -0.9 + i * 0.6, 0.95, 0.72);
-          B(g, new THREE.BoxGeometry(2.7, 0.35, 0.3), new THREE.MeshLambertMaterial({ color: '#d8a685' }), 0, 1.85, 0.72);
-          break;
-        }
-      }
-      const x = this.wX(lm.lon), z = this.wZ(lm.lat), y = this.terrainY(lm.lon, lm.lat);
-      g.scale.setScalar(1.35); g.position.set(x, y, z); this.scene.add(g);
-      // a small parchment name beneath — quieter than castle labels
-      const cv = document.createElement('canvas'); cv.width = 256; cv.height = 44; const ctx = cv.getContext('2d')!;
-      ctx.font = "italic 600 23px 'EB Garamond', Georgia, serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(22,15,7,0.8)'; ctx.strokeText(lm.name, 128, 24);
-      ctx.fillStyle = '#e7dcc2'; ctx.fillText(lm.name, 128, 24);
-      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.92, depthTest: false }));
-      sp.position.set(x, y + 7.2, z); sp.scale.set(15, 2.6, 1); sp.renderOrder = 9; this.scene.add(sp);
-    }
-  }
-
-  // ---- RIVERS: the great rivers as winding ribbons, from source to sea ----
-  private buildRivers() {
-    const mat = new THREE.MeshBasicMaterial({ color: '#3a6a7e', transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
-    const geos: THREE.BufferGeometry[] = [];
-    for (const river of RIVERS) {
-      // densify the waypoints, then lay a tapering ribbon that follows the terrain
-      const pts: { x: number; y: number; z: number }[] = [];
-      for (let i = 0; i < river.length - 1; i++) {
-        const [la0, lo0] = river[i], [la1, lo1] = river[i + 1];
-        for (let s = 0; s < 8; s++) {
-          const t = s / 8, la = la0 + (la1 - la0) * t, lo = lo0 + (lo1 - lo0) * t;
-          // a gentle meander so the line doesn't read ruler-straight
-          const w = Math.sin((i * 8 + s) * 0.9) * 0.06;
-          pts.push({ x: this.wX(lo + w), y: this.terrainY(lo, la) + 0.22, z: this.wZ(la + w * 0.7) });
-        }
-      }
-      if (pts.length < 2) continue;
-      const pos: number[] = [], idx: number[] = [];
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
-        let dx = b.x - a.x, dz = b.z - a.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-        const w = 0.55 + (i / pts.length) * 1.0;       // swells toward the mouth
-        pos.push(pts[i].x - dz * w, pts[i].y, pts[i].z + dx * w, pts[i].x + dz * w, pts[i].y, pts[i].z - dx * w);
-      }
-      for (let i = 0; i < pts.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-      const gg = new THREE.BufferGeometry();
-      gg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); gg.setIndex(idx);
-      geos.push(gg);
-    }
-    if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.renderOrder = 1; this.scene.add(m); }
-  }
-
-  // ---- ambient shipping: lone sails working the sea lanes ----
-  private ships: { grp: THREE.Group; cx: number; cz: number; r: number; a: number; spd: number }[] = [];
-  private buildAmbientShips() {
-    const LANES: [number, number][] = [[50.0, -3.4], [38.6, 5.8], [35.6, 20.5], [33.6, 33.2], [41.4, 29.1], [36.4, 14.2]];
-    for (const [la, lo] of LANES) {
-      const cx = this.wX(lo), cz = this.wZ(la);
-      // find an orbit that stays WELL clear of every coast (else skip the lane) —
-      // an unchecked radius used to sail cogs straight up onto the beach
-      let r = 0;
-      for (const rr of [5.5, 4, 2.8]) {
-        let clear = true;
-        for (let k = 0; k < 16 && clear; k++) { const a2 = k / 16 * 6.28; for (const f of [1.5, 1, 0.5]) if (!this.isWaterWorld(cx + Math.cos(a2) * rr * f, cz + Math.sin(a2) * rr * f)) clear = false; } // margin covers hull length + swing
-        if (clear) { r = rr; break; }
-      }
-      if (!r) continue;
-      const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(0.85); // a distant sail, not a leviathan
-      this.scene.add(grp);
-      this.ships.push({ grp, cx, cz, r, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
-    }
-  }
-
-  // A gradient sky dome (warm horizon → cool zenith) so the sky reads with depth
-  // instead of a flat fill — fog still blends the far terrain into the horizon band.
-  private buildSkyDome() {
-    const geo = new THREE.SphereGeometry(2500, 24, 16);
-    const top = new THREE.Color('#1b2440'), bot = new THREE.Color('#c3b49a');
-    const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
-    // a warm pale haze band hugs the horizon (the cloudy rim the map melts into),
-    // ramping up to a deep dusk zenith
-    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 2500) * 1.7 + 0.18)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
-  }
-
-  // fine parchment-like grain (multiplied over the vertex colours by Lambert)
-  private _grain?: THREE.CanvasTexture;
-  private grainTex() {
-    if (this._grain) return this._grain;
-    const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S; const ctx = cv.getContext('2d')!;
-    const img = ctx.createImageData(S, S);
-    for (let i = 0; i < S * S; i++) {
-      const v = 236 + Math.floor(Math.random() * 20) - (Math.random() < 0.06 ? 14 : 0); // speckled stipple
-      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }
-  private softSprite(hex: string) {
-    const cv = document.createElement('canvas'); cv.width = cv.height = 128; const ctx = cv.getContext('2d')!;
-    const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62); g.addColorStop(0, hex); g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
-    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; return tex;
-  }
   // ---- FAMOUS PLACES: little 3D monuments with names, scattered across the world ----
   // Pyramids on the Nile, the Parthenon over Athens, Hagia Sophia, Stonehenge…
   // so the map reads as a living medieval world, not empty terrain between sieges.
@@ -1356,7 +1151,7 @@ export class WorldMap3D {
     });
     const end = (e: PointerEvent) => { const tap = pts.size === 1 && this.moved < 9 && performance.now() - this.downT < 400; pts.delete(e.pointerId); if (pts.size < 2) { this.pinchD = 0; this.pinchA = undefined; } if (pts.size === 0) this.dragging = false; if (tap) this.pick(this.downX, this.downY); };
     c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', this.resizeBound);
   }
   private pick(sx: number, sy: number) {
     if (this.march) { this.march.skip = true; return; } // tap skips the march

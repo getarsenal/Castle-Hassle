@@ -120,11 +120,15 @@ function buildMuster() {
         <div class="own" data-skip id="worksOwn"></div></div>
       <div class="qty"><button class="rbtn" id="buyTower">Tower 250g</button><button class="rbtn" id="buyRam">Ram 300g</button></div>`;
     const own = row.querySelector('#worksOwn') as HTMLElement;
-    const refresh = () => { own.textContent = `This siege: ${currentTowers} tower${currentTowers === 1 ? '' : 's'}${currentRam ? ' · covered ram' : ''}`;
-      (row.querySelector('#buyTower') as HTMLButtonElement).disabled = currentTowers >= 3 || progress.gold < 250;
-      (row.querySelector('#buyRam') as HTMLButtonElement).disabled = currentRam || progress.gold < 300; };
-    row.querySelector('#buyTower')!.addEventListener('click', () => { if (currentTowers >= 3 || progress.gold < 250) return; progress.gold -= 250; currentTowers++; saveProgress(progress); refresh(); updateMuster(); });
-    row.querySelector('#buyRam')!.addEventListener('click', () => { if (currentRam || progress.gold < 300) return; progress.gold -= 300; currentRam = true; saveProgress(progress); refresh(); updateMuster(); });
+    // Selections are PENDING until the march — gold is only spent when the battle
+    // actually begins, so backing out of the muster costs nothing.
+    const pendingCost = () => currentTowers * 250 + (currentRam ? 300 : 0);
+    const refresh = () => { const pc = pendingCost();
+      own.textContent = `This siege: ${currentTowers} tower${currentTowers === 1 ? '' : 's'}${currentRam ? ' · covered ram' : ''}${pc ? ` — ${pc}g at the march` : ''}`;
+      (row.querySelector('#buyTower') as HTMLButtonElement).disabled = currentTowers >= 3 || progress.gold - pc < 250;
+      (row.querySelector('#buyRam') as HTMLButtonElement).disabled = currentRam || progress.gold - pc < 300; };
+    row.querySelector('#buyTower')!.addEventListener('click', () => { if (currentTowers >= 3 || progress.gold - pendingCost() < 250) return; currentTowers++; refresh(); updateMuster(); });
+    row.querySelector('#buyRam')!.addEventListener('click', () => { if (currentRam || progress.gold - pendingCost() < 300) return; currentRam = true; refresh(); updateMuster(); });
     refresh();
     rows.appendChild(row);
   }
@@ -147,7 +151,14 @@ function updateMuster() {
   const g = $('musterGold'), t = $('musterTotal'); if (g) g.textContent = String(progress.gold); if (t) t.textContent = String(total);
   ($('musterBtn') as HTMLButtonElement).disabled = (comp.heavy + comp.light + comp.archer + comp.cavalry) === 0;
 }
-$('musterBtn').addEventListener('click', () => { battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame(); startTutorial(); });
+$('musterBtn').addEventListener('click', () => {
+  // settle the Siege Works bill now that the march is real (recruiting may have
+  // drained the coffer since selection — shed the ram, then towers, to fit)
+  while (currentTowers * 250 + (currentRam ? 300 : 0) > progress.gold) { if (currentRam) currentRam = false; else if (currentTowers > 0) currentTowers--; else break; }
+  const worksCost = currentTowers * 250 + (currentRam ? 300 : 0);
+  if (worksCost > 0) { progress.gold -= worksCost; saveProgress(progress); }
+  battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame(); startTutorial();
+});
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
 // ---------------- New game ----------------
@@ -162,7 +173,8 @@ let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
 // play); the dev Battle Lab can pin a flat [1,1,1,1,1] to test a green host.
 let currentVet: number[] | null = null;
 function newGame() {
-  if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
+  if (renderer) { renderer.dispose(); app.innerHTML = ''; } // full teardown: listeners, scene GPU resources, the WebGL context itself
+  keysDown.clear(); // stale holds from the previous battle must not steer the new camera
   // the siege's weather, rolled from the castle seed (override: localStorage
   // 'castlehassle.weather' = clear|rain|mist|wind — QA + Director filming)
   const WX = ['clear', 'clear', 'clear', 'clear', 'clear', 'rain', 'rain', 'mist', 'mist', 'wind'] as const;
@@ -444,7 +456,7 @@ function showEnd() {
   }
   bannerText.textContent += casualtyLine;
   // ---- lifetime record + achievements (every battle, campaign or not) ----
-  const campaignWon = win && !!activeCastle && progress.completed.length >= castles.length;
+  const campaignWon = win && tookCastle && progress.completed.length >= castles.length; // tookCastle = first capture only, so replaying old sieges can't re-count the crusade
   const totalKills = kills.reduce((a, b) => a + b, 0);
   const newAch = recordBattle(profile, {
     won: win, castleTaken: tookCastle, raidWon: win && !!activeRaid, kills: totalKills,
@@ -491,6 +503,7 @@ window.addEventListener('keydown', (e) => {
   else if (k >= '1' && k <= '5') { const divs = sim.playerDivs(); const d = divs[+k - 1]; if (d !== undefined) { selected = selected === d ? -1 : d; attackArm = -1; refreshCards(); updateHint(); updateTools(); } }
 });
 window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
+window.addEventListener('blur', () => keysDown.clear()); // alt-tab mid-hold would leave the camera drifting forever
 function applyKeys(dt: number) {
   if (!keysDown.size || !renderer) return;
   const pan = renderer.camDist * 0.9 * dt, cy = Math.cos(renderer.camYaw), sy = Math.sin(renderer.camYaw);
@@ -512,6 +525,11 @@ const pointers = new Map<number, { x: number; y: number }>();
 let gesture: 'none' | 'orbit' | 'command' | 'camera' = 'none';
 let downAt = { x: 0, y: 0, t: 0 }; let moved = false;
 let lastCamInput = performance.now(); // idle timer — the auto-director takes the camera when the player rests
+// Is the battle hidden behind an opaque full-screen surface right now?
+function covered2(): boolean {
+  return ['map', 'titleScreen', 'intro', 'muster'].some(id => document.getElementById(id)?.classList.contains('show'))
+    || !!document.querySelector('.menuScreen, .upgScreen, .raidScreen, .ovPanel');
+}
 // decisive-moment slow motion: 1.3s at one-third speed on the battle's turning
 // points (first breach; the garrison breaking). A tap skips it instantly.
 let slowmoT = 0, sawBreach = false, sawBreak = false;
@@ -961,6 +979,7 @@ function devDiagText(): string {
   return rows.map(([k, v]) => `${k}: ${v}`).join('\n');
 }
 function startCustomBattle(cfg: DevConfig) {
+  currentTowers = 0; currentRam = false; // dev battles never carry campaign equipment
   comp.heavy = cfg.army.heavy; comp.light = cfg.army.light; comp.archer = cfg.army.archer;
   comp.cavalry = cfg.army.cavalry; comp.siege = cfg.army.siege;
   currentSeed = (cfg.seed >>> 0) || 1; currentDifficulty = cfg.difficulty; currentStyle = cfg.style;
@@ -1089,6 +1108,7 @@ function frame(now: number) {
   // a vast one (where a single step already eats the frame) takes one step and eases
   // into slight slow-motion rather than stacking steps and collapsing to single-digit
   // fps. Self-tuning to the device — the budget is measured wall-clock, not a count.
+  if (covered2()) acc = 0; // an invisible battle earns no CPU
   while (!paused && acc >= SIM_DT && steps < 4) {
     const st = performance.now();
     sim.step(SIM_DT); acc -= SIM_DT; steps++;
@@ -1151,7 +1171,8 @@ function frame(now: number) {
 
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
   // title or splash) — no point drawing two WebGL scenes at once.
-  const covered = ['map', 'titleScreen', 'intro'].some(id => document.getElementById(id)?.classList.contains('show'));
+  const covered = ['map', 'titleScreen', 'intro', 'muster'].some(id => document.getElementById(id)?.classList.contains('show'))
+    || !!document.querySelector('.menuScreen, .upgScreen, .raidScreen, .ovPanel'); // opaque overlays: menus, War Council, Raids, settings
   const tg = performance.now();
   if (!covered) renderer.render(Math.min(dt, 0.05));
   gfxMs += performance.now() - tg;

@@ -121,6 +121,36 @@ any combat change; naive-assault baseline ~6/8 wins, 56s-185s durations).
   (17283: bare STALL → towers+ram WIN); rain flips it back. Plug discipline:
   keep guard exempt from plugs, barricades rate 1 company.
 
+## Full code audit (July 2026) — fixes landed
+Ranked audit executed in phases; all verified (tsc clean repo-wide, build, bench,
+headless map screenshot):
+- **Leaks**: `Renderer.dispose()` (render.ts) — traverse-dispose geometry/
+  material/texture + composer/passes, `forceContextLoss()`, bound resize listener
+  removed; called from `newGame()`. Same treatment in worldmap3d `destroy()`.
+  audio.ts `bus()` one-shot chains now self-disconnect after 4s (were wired to
+  master forever). `keysDown` cleared on window blur + newGame.
+- **Correctness**: Siege Works gold deducted at MARCH not at buy (buy handlers
+  only stage; muster start deducts `worksCost`); engine/ballista crews excluded
+  from assault orders, divAgg, attacker counts, kill credit, victory check;
+  `campaignsWon` only increments when the winning battle IS the first capture
+  (was re-counting on every replay after the crusade); `surveyCastle()` restores
+  the previous castle's module globals after surveying (generation is seed-
+  deterministic, so re-gen = restore).
+- **Perf**: projectile InstancedMesh draws use `.count` instead of hide-fill
+  loops; per-frame scratch vectors hoisted; flags no longer recompute normals
+  per frame; sim + render both skip when a full-screen overlay covers the scene
+  (`covered2()` in main.ts).
+- **worldmap3d dedupe**: the file had byte-identical duplicate copies of
+  buildLandmarks/buildRivers/buildAmbientShips/buildSkyDome/grainTex/softSprite
+  (+ dup `ships`/`_grain` fields) — first copies deleted (~218 lines), Float32Array
+  generic fixed. `npx tsc --noEmit` is now FULLY clean — keep it that way; CI
+  (`deploy.yml`) runs `npm run typecheck` before build.
+- **Render**: barricades (h<=3 'gate' segs) draw as timber stake barriers, no
+  gatehouse doors/merlons/braziers.
+- iOS Info.plist: dropped the obsolete `armv7` UIRequiredDeviceCapabilities.
+- Known-and-accepted (LOW, not fixed): Director hot-corner discoverability, dev
+  gold grant in debug, `(this.sim as any)` casts, pennant 200 cap.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp
