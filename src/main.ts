@@ -18,6 +18,7 @@ import { feedback, installFeedback } from './feedback';
 import { startTutorial, startCampaignTour } from './tutorial';
 import { initDevPanel, DevConfig } from './devpanel';
 import { LOGO } from './logodata';
+import { TRUMPET } from './trumpetdata';
 import * as THREE from 'three';
 declare const __BUILD__: string; // injected at build time (commit + timestamp)
 
@@ -691,12 +692,13 @@ function initMuteControl() {
 // loads silent (web audio can't start without a gesture), and "March to War" is
 // the gate — that tap unlocks audio, plays the studio sting WITH sound as a brief
 // "Scheidel Interactive presents" transition, then drops into the campaign.
-// The "Sound the War Trumpets" button blasts a trumpet fanfare the instant it's
-// pressed. Drop the clip at the deploy root as trumpet.mp3 (like theme.mp3); until
-// then this no-ops silently.
-const WAR_TRUMPET_SRC = './trumpet.mp3';
+// The "Sound the War Trumpets" button blasts the fanfare the instant it's pressed.
+// The clip is INLINED in the bundle (no dependence on trumpet.mp3 being uploaded
+// with the deploy) and pre-decoded at boot so it fires with zero fetch latency.
+const warTrumpet = new Audio(TRUMPET);
+warTrumpet.preload = 'auto'; warTrumpet.load();
 function soundWarTrumpets() {
-  try { const a = new Audio(WAR_TRUMPET_SRC); a.volume = audioMuted ? 0 : 0.9; a.muted = audioMuted; a.play().catch(() => { /* not dropped in yet / autoplay */ }); } catch { /* ignore */ }
+  try { warTrumpet.volume = 0.95; warTrumpet.muted = audioMuted; warTrumpet.currentTime = 0; warTrumpet.play().catch(() => { /* autoplay denied */ }); } catch { /* ignore */ }
 }
 $('startGameBtn')?.addEventListener('click', () => { soundWarTrumpets(); playStudioSting(() => showMainMenu()); }, { once: true });
 function playStudioSting(then: () => void) {
@@ -718,11 +720,15 @@ function playStudioSting(then: () => void) {
   };
   if (!vid) { kickMusic(); then(); return; }
   show('titleScreen', false); show('intro', true);
-  vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = battleAudio.muted; vid.playsInline = true; vid.volume = 1;
-  // audio crossfade: in the last ~1.15s duck the sting out as the theme rises in
+  vid.src = './intro.mp4'; vid.style.display = 'block'; vid.muted = battleAudio.muted; vid.playsInline = true;
+  // the sting starts DUCKED under the war trumpets, rises as the fanfare tails off,
+  // then ducks out again in the last ~1.15s as the theme rises in
+  vid.volume = 0.16; const t0 = performance.now();
   vid.addEventListener('timeupdate', () => {
     const rem = (vid.duration || 9) - vid.currentTime;
-    if (rem < 1.15) { kickMusic(); vid.volume = Math.max(0, Math.min(1, rem / 1.15)); }
+    if (rem < 1.15) { kickMusic(); vid.volume = Math.max(0, Math.min(1, rem / 1.15)); return; }
+    const rise = Math.min(1, (performance.now() - t0) / 2600);
+    vid.volume = 0.16 + 0.84 * rise;
   });
   vid.addEventListener('ended', go, { once: true });
   vid.addEventListener('error', () => setTimeout(go, 300), { once: true });

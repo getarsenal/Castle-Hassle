@@ -61,11 +61,46 @@ export function styleFor(name: string, region: string, tier: number, seed: numbe
   return { ...base, ...(NAMED[name] || {}) };
 }
 
+// A marching distance in degrees (longitude shrunk toward the pole a little).
+const marchDist = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) =>
+  Math.hypot((a.lon - b.lon) * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180), a.lat - b.lat);
+
 export function generateCastles(): CampaignCastle[] {
-  const n = REAL_CASTLES.length;
-  return REAL_CASTLES.map(([name, region, lat, lon], i) => {
+  // The crusade marches region by region (the authored region order), but WITHIN
+  // each region the sieges are chained nearest-first from wherever the host last
+  // stood — so the route reads as one army pressing on, never doubling back
+  // across a country it has already crossed.
+  type Row = { name: string; region: string; lat: number; lon: number };
+  const rows: Row[] = REAL_CASTLES.map(([name, region, lat, lon]) => ({ name, region, lat, lon }));
+  const finale = rows[rows.length - 1];                 // the authored last siege (Jerusalem) stays the campaign's end
+  const regionOrder: string[] = []; const byRegion = new Map<string, Row[]>();
+  for (const r of rows) { if (r === finale) continue; if (!byRegion.has(r.region)) { byRegion.set(r.region, []); regionOrder.push(r.region); } byRegion.get(r.region)!.push(r); }
+  const ordered: Row[] = [];
+  let cursor: Row | null = null;
+  for (const reg of regionOrder) {
+    const pool = [...byRegion.get(reg)!];
+    // the first region keeps its authored opening siege (the campaign's first step)
+    const start = cursor ? pool.reduce((b, r) => marchDist(r, cursor!) < marchDist(b, cursor!) ? r : b, pool[0]) : pool[0];
+    const chain: Row[] = [start]; pool.splice(pool.indexOf(start), 1);
+    while (pool.length) { const cur = chain[chain.length - 1]; const nxt = pool.reduce((b, r) => marchDist(r, cur) < marchDist(b, cur) ? r : b, pool[0]); chain.push(nxt); pool.splice(pool.indexOf(nxt), 1); }
+    // 2-opt: untwist the greedy chain (fixed start, free end) until no reversal
+    // of any middle stretch shortens the march — kills the doubling-back loops
+    for (let improved = true; improved;) {
+      improved = false;
+      for (let i = 1; i < chain.length - 1; i++) for (let j = i + 1; j < chain.length; j++) {
+        const before = marchDist(chain[i - 1], chain[i]) + (j + 1 < chain.length ? marchDist(chain[j], chain[j + 1]) : 0);
+        const after = marchDist(chain[i - 1], chain[j]) + (j + 1 < chain.length ? marchDist(chain[i], chain[j + 1]) : 0);
+        if (after < before - 1e-9) { let a = i, b = j; while (a < b) { const t = chain[a]; chain[a] = chain[b]; chain[b] = t; a++; b--; } improved = true; }
+      }
+    }
+    ordered.push(...chain);
+    cursor = ordered[ordered.length - 1];
+  }
+  ordered.push(finale);
+  const n = ordered.length;
+  return ordered.map((r, i) => {
     const seed = 1000 + i * 7919, tier = n > 1 ? i / (n - 1) : 0;
-    return { id: i, name, region, lat, lon, seed, tier, style: styleFor(name, region, tier, seed) };
+    return { id: i, name: r.name, region: r.region, lat: r.lat, lon: r.lon, seed, tier, style: styleFor(r.name, r.region, tier, seed) };
   });
 }
 
