@@ -176,6 +176,26 @@ The map got the siege treatment. Everything below is in `worldmap3d.ts`:
   120Hz phones; ships/birds/march-camera all dt-based; the 99-castle threat pass
   pre-warms 1.1s after build so the first tap doesn't jank.
 
+## Polish batch (July 2026 — the LOW list + ambience)
+- Map ambience: `battleAudio.mapAmbience(bool)` — wind bed (roaming bandpass
+  noise + breathing LFO) + occasional synthesized gull cries; on in openMap,
+  off at muster/menu. Volume deliberately faint (0.07 bed).
+- ⚙ dev chip on the map now hidden unless `#dev` in URL or Director Mode on
+  (players could reach the Battle Lab + gold grants before).
+- gameConfirm backdrop listener wired once (was stacking per call); menu
+  screens de-dup on open; pennant cap 200→320; Director clean-screen shows a
+  fading "tap this corner to restore" toast; shrink.mjs degrades gracefully
+  without sharp; render.ts sim any-casts removed (members were real).
+- Earthworks backlog item was STALE — the continuous swept ribbon w/ parapet
+  already exists in render.ts ("THE CONTINUOUS EARTHWORK").
+- Snowball check (measured, scripts/_bal.ts pattern — esbuild bundle
+  campaign+sim+balance in node): START host Q1 = 9 Costly/14 Grim/1 Even,
+  Q2-Q4 all Grim; LATE host (950H/820L/720A/360C/14S, vet 1.3, buffs 1.35)
+  Q4 = 14 Rout / 13 Strong. Ceiling holds — no runaway snowball; revisit with
+  real telemetry (castlehassle.blog.v1) after play.
+- Still open (need product/backend decisions): cloud save, New Game+, enemy
+  variety, app icon swap (user asset).
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

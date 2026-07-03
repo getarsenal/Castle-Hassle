@@ -1443,7 +1443,7 @@ export class Renderer {
       px2.fillStyle = '#fff'; px2.beginPath(); px2.moveTo(17, 3); px2.lineTo(31, 7); px2.lineTo(17, 12); px2.fill(); // swallowtail (tinted per instance)
       const ptex = new THREE.CanvasTexture(pc); ptex.colorSpace = THREE.SRGBColorSpace;
       const pmat = new THREE.MeshBasicMaterial({ map: ptex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
-      this.pennantMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2.0, 2.0), pmat, 200);
+      this.pennantMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2.0, 2.0), pmat, 320); // big double-ring sieges field >200 companies
       this.pennantMesh.frustumCulled = false; this.scene.add(this.pennantMesh);
     }
 
@@ -1535,7 +1535,7 @@ export class Renderer {
     if (this.pennantMesh) { // pennants track their bearers; a fallen standard simply vanishes
       const sim = this.sim; let pi = 0;
       for (const u of sim.units) {
-        if (pi >= 200) break;
+        if (pi >= 320) break;
         if (u.bearer < 0 || !sim.alive[u.bearer]) continue;
         const b = u.bearer;
         this.dummy.position.set(sim.px[b], sim.py[b] + 3.1 + Math.sin(this.time * 2 + b) * 0.1, sim.pz[b]);
@@ -1544,7 +1544,7 @@ export class Renderer {
         this._col.copy(sim.fac[b] === 0 ? COL_ATTACK : COL_DEFEND).multiplyScalar(u.shaken ? 0.6 : 1);
         this.pennantMesh.setColorAt(pi, this._col); pi++;
       }
-      for (let k = pi; k < 200; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.pennantMesh.setMatrixAt(k, this.dummy.matrix); }
+      for (let k = pi; k < 320; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.pennantMesh.setMatrixAt(k, this.dummy.matrix); }
       this.pennantMesh.instanceMatrix.needsUpdate = true; if (this.pennantMesh.instanceColor) this.pennantMesh.instanceColor.needsUpdate = true;
     }
     // ---- melee clash sparks + the rolling clash centroid (auto-director POI) ----
@@ -1575,7 +1575,7 @@ export class Renderer {
     const lands = this.sim.drainFireLands();
     for (let c = 0; c + 1 < lands.length; c += 2) this.igniteHouse(lands[c], lands[c + 1], 9);
     // gatehouse oil: a scalding gout — steam, embers, a shock ring at the gate
-    const pours = (this.sim as any).drainOilPours ? (this.sim as any).drainOilPours() : [];
+    const pours = this.sim.drainOilPours();
     for (let c = 0; c + 1 < pours.length; c += 2) {
       this.spawnDust(pours[c], 5.5, pours[c + 1], 3.2, 4);
       this.spawnShock(pours[c], pours[c + 1], 0.8);
@@ -1600,7 +1600,7 @@ export class Renderer {
         }
       }
       // slots 8..19 render the sim's burning-pitch patches (incendiary trebuchet ammo)
-      const patches = (this.sim as any).burnPatches ?? [];
+      const patches = this.sim.burnPatches;
       for (let i = 8; i < 20; i++) {
         const p = patches[i - 8];
         if (p && p.life > 0) {
@@ -1883,7 +1883,7 @@ export class Renderer {
     g.add(stock); return { group: g, stock, bolt };
   }
   private buildBallistae() {
-    const list = (this.sim as any).ballistae as { x: number; z: number; y: number }[];
+    const list = this.sim.ballistae;
     for (let i = 0; i < list.length; i++) {
       const { group, stock, bolt } = this.makeBallista();
       group.position.set(list[i].x, list[i].y, list[i].z);

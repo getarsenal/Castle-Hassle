@@ -194,6 +194,18 @@ function build() {
   $('dClean').addEventListener('click', () => {
     panel.classList.remove('show'); chip.classList.remove('on');
     document.body.classList.add('dirclean');
+    // one fading breadcrumb so nobody is trapped in the clean frame hunting
+    // for the invisible restore corner
+    let toast = document.getElementById('dirToast');
+    if (!toast) {
+      toast = document.createElement('div'); toast.id = 'dirToast';
+      toast.style.cssText = 'position:fixed;left:14px;bottom:16px;z-index:59;background:#000b;color:#e8dcc2;'
+        + 'padding:8px 14px;border-radius:18px;font:600 12.5px Georgia,serif;pointer-events:none;transition:opacity .6s';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = 'Clean screen — tap this corner to restore';
+    toast.style.opacity = '1';
+    setTimeout(() => { toast!.style.opacity = '0'; }, 2600);
   });
   hot.addEventListener('click', () => { document.body.classList.remove('dirclean'); });
 

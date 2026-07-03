@@ -52,14 +52,18 @@ helpBtn?.addEventListener('click', () => { const wasPaused = paused; paused = tr
 // An on-brand confirm dialog (replaces the stock browser confirm()).
 function gameConfirm(opts: { title: string; body: string; confirm: string; cancel?: string; danger?: boolean; onConfirm: () => void }) {
   let el = document.getElementById('gConfirm');
-  if (!el) { el = document.createElement('div'); el.id = 'gConfirm'; document.body.appendChild(el); }
+  if (!el) {
+    el = document.createElement('div'); el.id = 'gConfirm'; document.body.appendChild(el);
+    // backdrop dismiss wired ONCE here — wiring it per-call stacked a new
+    // listener on the persistent element every confirm
+    el.addEventListener('click', (e) => { if (e.target === el) el!.classList.remove('show'); });
+  }
   el.innerHTML = `<div class="gcCard"><div class="gcTitle">${opts.title}</div><div class="gcBody">${opts.body}</div>`
     + `<div class="gcRow"><button class="ui-btn gcCancel">${opts.cancel || 'Cancel'}</button>`
     + `<button class="ui-btn ${opts.danger ? 'ui-btn--danger' : ''} gcOk">${opts.confirm}</button></div></div>`;
   const close = () => el!.classList.remove('show');
   el.querySelector('.gcCancel')!.addEventListener('click', close);
   el.querySelector('.gcOk')!.addEventListener('click', () => { close(); opts.onConfirm(); });
-  el.addEventListener('click', (e) => { if (e.target === el) close(); }); // tap the dark backdrop to dismiss
   el.classList.add('show');
 }
 document.getElementById('pushBtn')?.addEventListener('click', () => {
@@ -197,6 +201,7 @@ function newGame() {
   slowmoT = 0; sawBreach = false; sawBreak = false;
   hintEl.classList.remove('dismissed'); // a fresh battle brings its guidance back
   battleAudio.stopAmbience(); // silence any prior battle's din behind the new setup
+  battleAudio.mapAmbience(false); // the wind stays on the map
   buildCards(); updateHint(); updateTools();
 }
 
@@ -657,6 +662,7 @@ let progress: Progress = loadProgress();
 let profile = loadProfile();
 // The main menu: pick a save slot (or start fresh), reachable from the title.
 function showMainMenu() {
+  battleAudio.mapAmbience(false); // menu music takes over from the map wind
   openMainMenu({
     castles, profile,
     onPlay: (slot, isNew) => {
@@ -703,6 +709,7 @@ function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
 // into the Sim so a long-served arm fields hardier, deadlier men.
 function vetMulArray(): number[] { return ARMY_KEYS.map(k => vetMultiplier(vetRank(progress.vet[k].xp))); }
 function openMap() {
+  battleAudio.mapAmbience(true); // wind + gulls over the campaign world
   activeCastle = null; activeRaid = null;
   show('titleScreen', false); show('muster', false); show('map', true); // (the sting overlay, if up, fades itself out over the now-visible map)
   banner.classList.remove('show');
@@ -1080,8 +1087,18 @@ perfEl?.addEventListener('click', () => {
   perfTapT = now;
   if (++perfTaps >= 5) { perfTaps = 0; devPanel.open(); }
 });
-// the campaign map's discreet dev affordance: a ⚙ chip that opens the panel directly
-document.getElementById('devMapBtn')?.addEventListener('click', () => devPanel.open());
+// the campaign map's dev affordance: the ⚙ chip only appears for developers
+// (#dev in the URL, or Director Mode enabled) — every player could see the
+// Battle Lab (custom armies, gold grants) before this gate
+{
+  const devBtn = document.getElementById('devMapBtn');
+  let devOn = location.hash.includes('dev');
+  try { devOn = devOn || localStorage.getItem('castlehassle.director.v1') === '1'; } catch { /* private mode */ }
+  if (devBtn) {
+    if (!devOn) devBtn.style.display = 'none';
+    devBtn.addEventListener('click', () => devPanel.open());
+  }
+}
 let perfAcc = 0, perfFrames = 0, adaptCooldown = 0;
 
 const SIM_DT = 1 / 30; let acc = 0, last = performance.now(), ended = false;

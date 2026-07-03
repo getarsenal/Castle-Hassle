@@ -72,6 +72,7 @@ export function openMainMenu(opts: {
   onPlay: (slot: number, isNew: boolean) => void; onSettings: () => void; onAchievements: () => void;
 }) {
   injectStyles();
+  document.querySelectorAll('.menuScreen').forEach(el => el.remove()); // a double-tap on the way in must not stack two menus
   const root = document.createElement('div'); root.className = 'menuScreen';
   const render = () => {
     const slots = Array.from({ length: NUM_SLOTS }, (_, n) => slotSummary(n, opts.castles));

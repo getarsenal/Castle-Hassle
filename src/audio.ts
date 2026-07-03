@@ -142,6 +142,45 @@ class BattleAudioImpl {
     Object.assign(this, save);
     return rendered;
   }
+  // ---- campaign-map ambience: a soft wind bed + distant gulls, faded with the screen ----
+  private mapAmb?: { gain: GainNode; stop: () => void };
+  mapAmbience(on: boolean) {
+    if (!on) {
+      const amb = this.mapAmb; if (!amb) return; this.mapAmb = undefined;
+      if (this.ctx) amb.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.35);
+      setTimeout(() => amb.stop(), 1600);
+      return;
+    }
+    this.ensure(); const ctx = this.ctx; if (!ctx || this.mapAmb) return;
+    // wind: looped noise through a slowly-roaming bandpass, gently breathing
+    const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
+    const band = this.bq('bandpass', 360, 0.55), lp = this.bq('lowpass', 950);
+    const g = this.g(0);
+    const roam = ctx.createOscillator(); roam.frequency.value = 0.08; const roamG = this.g(90); roam.connect(roamG).connect(band.frequency); roam.start();
+    const bre = ctx.createOscillator(); bre.frequency.value = 0.13; const breG = this.g(0.022); bre.connect(breG).connect(g.gain); bre.start();
+    src.connect(band); band.connect(lp); lp.connect(g); g.connect(this.master); src.start();
+    g.gain.setTargetAtTime(0.07, ctx.currentTime, 0.9);
+    // gulls: every so often a little falling two-or-three-note cry, off to one side
+    const iv = setInterval(() => { if (this.mapAmb && Math.random() < 0.65) this.gullCry(); }, 6500);
+    this.mapAmb = {
+      gain: g,
+      stop: () => { clearInterval(iv); try { src.stop(); roam.stop(); bre.stop(); src.disconnect(); band.disconnect(); lp.disconnect(); g.disconnect(); roamG.disconnect(); breG.disconnect(); } catch { /* ctx closed */ } },
+    };
+  }
+  private gullCry() {
+    const ctx = this.ctx; if (!ctx) return;
+    const out = this.bus(0.16, (Math.random() - 0.5) * 1.1, 0.3);
+    const n = 2 + (Math.random() < 0.4 ? 1 : 0); let t = this.now() + 0.02;
+    for (let i = 0; i < n; i++) {
+      const o = ctx.createOscillator(); o.type = 'triangle';
+      const f0 = 1350 + Math.random() * 250;
+      o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * 0.62, t + 0.17);
+      const eg = this.g(0); o.connect(eg); eg.connect(out);
+      this.env(eg.gain, t, 0.5, 0.025, 0.19);
+      o.start(t); o.stop(t + 0.24); t += 0.21 + Math.random() * 0.08;
+    }
+  }
+
   // iOS/Safari: resume + a silent buffer inside a gesture, until it sticks.
   private kick() {
     const ctx = this.ctx; if (!ctx) return;
