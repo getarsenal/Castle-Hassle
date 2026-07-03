@@ -19,6 +19,7 @@ import { startTutorial, startCampaignTour } from './tutorial';
 import { initDevPanel, DevConfig } from './devpanel';
 import { LOGO } from './logodata';
 import { TRUMPET } from './trumpetdata';
+import { initDirector } from './director';
 import * as THREE from 'three';
 declare const __BUILD__: string; // injected at build time (commit + timestamp)
 
@@ -746,6 +747,7 @@ installFeedback(); // game-wide click/press sounds + haptics
 loading.remove();
 show('titleScreen', true); // land on the game's own title — the hero, and the audio gate
 initMuteControl();
+initDirector(); // promo-recording toolkit — on via #director hash, Settings toggle, or if left on
 (window as any).__running = true;
 
 // perf readout (fps / ms / unit count) for on-device testing; tap to hide

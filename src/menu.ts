@@ -4,6 +4,7 @@
 import { CampaignCastle, slotSummary, deleteSlot, NUM_SLOTS } from './campaign';
 import { Profile, ACHIEVEMENTS, DIFFICULTY, Difficulty } from './profile';
 import { LOGO } from './logodata';
+import { isDirectorEnabled, setDirectorEnabled } from './director';
 
 let styled = false;
 function injectStyles() {
@@ -106,11 +107,13 @@ export function openSettings(profile: Profile, onChange: () => void, onClose: ()
     + `<div class="setRow"><div class="lbl">Master Volume</div><input type="range" id="stVol" min="0" max="100" value="${Math.round(S.volume * 100)}"></div>`
     + `<div class="setRow"><div class="toggle"><span class="lbl" style="margin:0">Sound</span><div class="sw${S.muted ? '' : ' on'}" id="stMute"><i></i></div></div></div>`
     + `<div class="setRow"><div class="lbl">Difficulty</div><div class="diffPick">${diffChips}</div><div class="dblurb" id="stDiffBlurb">${DIFFICULTY[S.difficulty].blurb}</div></div>`
+    + `<div class="setRow"><div class="toggle"><span class="lbl" style="margin:0">Director Mode</span><div class="sw${isDirectorEnabled() ? ' on' : ''}" id="stDirector"><i></i></div></div><div class="dblurb">A 🎬 chip for filming promos: orbit, auto-cine, hide the HUD.</div></div>`
     + `</div><button class="ovClose" id="stDone">Done</button>`;
   document.body.appendChild(root);
   const vol = root.querySelector('#stVol') as HTMLInputElement;
   vol.addEventListener('input', () => { S.volume = vol.valueAsNumber / 100; onChange(); });
   root.querySelector('#stMute')!.addEventListener('click', () => { S.muted = !S.muted; (root.querySelector('#stMute') as HTMLElement).classList.toggle('on', !S.muted); onChange(); });
+  root.querySelector('#stDirector')!.addEventListener('click', () => { const on = !isDirectorEnabled(); setDirectorEnabled(on); (root.querySelector('#stDirector') as HTMLElement).classList.toggle('on', on); });
   root.querySelectorAll<HTMLElement>('.dchip').forEach(c => c.addEventListener('click', () => {
     S.difficulty = c.dataset.d as Difficulty;
     root.querySelectorAll('.dchip').forEach(x => x.classList.toggle('on', x === c));
