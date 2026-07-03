@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
 import { Biome } from './campaign';
 import { makeSoldierTexture, makeArrowTexture, spriteAspect, SpriteKind } from './sprites';
@@ -156,6 +157,11 @@ export class Renderer {
   private projMesh!: THREE.InstancedMesh;
   private boulderMesh!: THREE.InstancedMesh;
   private fireMesh!: THREE.InstancedMesh;
+  private fireTex!: THREE.CanvasTexture;
+  private brazierMesh?: THREE.InstancedMesh; private braziers: { x: number; y: number; z: number; ph: number }[] = [];
+  private emberMesh?: THREE.InstancedMesh; private embers: { x: number; y: number; z: number; vy: number; life: number; max: number }[] = []; private emberHead = 0;
+  private shockMesh?: THREE.InstancedMesh; private shocks: { x: number; y: number; z: number; life: number; max: number; scale: number }[] = []; private shockHead = 0;
+  private sunGlow?: THREE.Sprite;
   private segVis: (SegVis | null)[] = [];
   private trebs: Treb[] = [];
   private ladderMeshes: THREE.Mesh[] = [];
@@ -165,7 +171,7 @@ export class Renderer {
   private ramPhase = 0;
   private flags: { mesh: THREE.Mesh; base: Float32Array; amp: number; ph: number }[] = [];
   private sun!: THREE.DirectionalLight;
-  private composer!: EffectComposer; private gradePass!: ShaderPass;
+  private composer!: EffectComposer; private gradePass!: ShaderPass; private bloomPass!: UnrealBloomPass;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private smokeMesh!: THREE.InstancedMesh; private smoke: { x: number; y: number; z: number; s: number; life: number; max: number }[] = []; private smokeHead = 0;
@@ -265,6 +271,7 @@ export class Renderer {
     this.buildBallistae();
     this.buildEffects();
     this.buildMotes();
+    this.buildAtmosphere();
     this.buildComposer();
 
     const ringGeo = new THREE.RingGeometry(2.6, 3.4, 40); ringGeo.rotateX(-Math.PI / 2);
@@ -305,11 +312,18 @@ export class Renderer {
     window.addEventListener('resize', () => this.onResize());
   }
 
-  // The post chain: render the scene (linear HDR) → cinematic grade → screen.
+  // The post chain: render (linear HDR) → selective bloom → cinematic grade → screen.
+  // Bloom threshold sits ABOVE the lit daytime scene (which tops out near 1) so only
+  // the HDR-bright emissives — fires, embers, flaming arrows, the sun disc — actually
+  // glow. Runs before the grade's tone-map, in linear, which is where bloom belongs.
   private buildComposer() {
     this.composer = new EffectComposer(this.gl); // default HalfFloat target keeps highlights for the grade
     this.composer.setPixelRatio(this.quality);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    // threshold ABOVE bright sunlit surfaces (~1.5-2) so only the explicit HDR
+    // emissives — fires (2.6+), embers, shockwaves, the sun disc — bloom
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.6, 2.0);
+    this.composer.addPass(this.bloomPass);
     this.gradePass = new ShaderPass(CINEMATIC_GRADE as any);
     this.gradePass.renderToScreen = true;
     this.composer.addPass(this.gradePass);
@@ -330,6 +344,7 @@ export class Renderer {
     if (q === this.quality) return;
     this.quality = q; this.gl.setPixelRatio(q); this.gl.setSize(window.innerWidth, window.innerHeight);
     this.composer?.setPixelRatio(q); this.composer?.setSize(window.innerWidth, window.innerHeight);
+    if (this.bloomPass) this.bloomPass.enabled = q >= 0.8; // drop the extra blur passes on weak devices
   }
 
   private buildSky() {
@@ -608,20 +623,24 @@ export class Renderer {
       const rnd = (a: number, b: number) => a + Math.random() * (b - a);
       const boulderG: THREE.BufferGeometry[] = [], slitG: THREE.BufferGeometry[] = [];
       const boulder = (r: number, x: number, y: number, z: number) => {
-        const g = new THREE.IcosahedronGeometry(r, 0), p = g.attributes.position;
-        for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * rnd(0.75, 1.3), p.getY(i) * rnd(0.55, 1.0), p.getZ(i) * rnd(0.75, 1.3));
-        g.scale(1, 0.72, 1); g.rotateY(Math.random() * 3.14); g.translate(x, y, z); g.computeVertexNormals();
-        this.paint(g, new THREE.Color('#b3a789').multiplyScalar(0.72 + Math.random() * 0.42));
+        // subdivided ico + gentle jitter → a rounded stone (the level-0 ico with heavy
+        // jitter read as spiky facets with gaps). Flattened and set LOW so it sits
+        // half-buried in the turf, not perched on top.
+        const g = new THREE.IcosahedronGeometry(r, 1), p = g.attributes.position;
+        for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * rnd(0.86, 1.14), p.getY(i) * rnd(0.74, 1.0), p.getZ(i) * rnd(0.86, 1.14));
+        g.scale(1, 0.58, 1); g.rotateY(Math.random() * 3.14); g.translate(x, y, z); g.computeVertexNormals();
+        // warm weathered stone, tuned to the game's sandstone and never brighter than base
+        this.paint(g, new THREE.Color('#968870').multiplyScalar(0.6 + Math.random() * 0.28));
         return g;
       };
       for (let s = 0; s < CASTLE.length; s++) {
         const b = CASTLE[s]; if (b.kind === 'building' || b.kind === 'keep') continue;
         const w = b.x1 - b.x0, d = b.z1 - b.z0, cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
         if (b.kind === 'tower') {
-          const r = Math.max(w, d) / 2, nb = 10 + Math.floor(r * 1.4);
-          // two rings: a chunky embedded course hugging the foot + a looser outer scatter
-          for (let k = 0; k < nb; k++) { const a = Math.random() * 6.283, rr = r * rnd(0.92, 1.05); boulderG.push(boulder(rnd(1.2, 2.4), cx + Math.cos(a) * rr, rnd(0.0, 0.5), cz + Math.sin(a) * rr)); }
-          for (let k = 0; k < nb * 0.6; k++) { const a = Math.random() * 6.283, rr = r * rnd(1.05, 1.4); boulderG.push(boulder(rnd(0.6, 1.4), cx + Math.cos(a) * rr, rnd(0.1, 0.5), cz + Math.sin(a) * rr)); }
+          const r = Math.max(w, d) / 2, nb = 12 + Math.floor(r * 1.6);
+          // two overlapping rings hugging the foot → a continuous embedded skirt
+          for (let k = 0; k < nb; k++) { const a = Math.random() * 6.283, rr = r * rnd(0.9, 1.02); boulderG.push(boulder(rnd(1.3, 2.5), cx + Math.cos(a) * rr, rnd(-0.55, -0.05), cz + Math.sin(a) * rr)); }
+          for (let k = 0; k < nb * 0.7; k++) { const a = Math.random() * 6.283, rr = r * rnd(1.0, 1.32); boulderG.push(boulder(rnd(0.6, 1.4), cx + Math.cos(a) * rr, rnd(-0.4, 0.05), cz + Math.sin(a) * rr)); }
           for (let k = 0; k < 4; k++) { const a = k / 4 * 6.283 + 0.5, sx = cx + Math.cos(a) * (r + 0.05), sz = cz + Math.sin(a) * (r + 0.05); slitG.push(new THREE.BoxGeometry(0.34, 2.3, 0.34).translate(sx, b.h * 0.55, sz)); }
         } else {
           const horiz = w > d, len = horiz ? w : d, outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
@@ -631,7 +650,7 @@ export class Renderer {
             const off = big ? rnd(0.2, 1.0) : rnd(1.0, 2.4); // big stones hug the foot, smaller ones tumble out
             const px = horiz ? cx + tv * len + rnd(-2, 2) : cx + outer * (w / 2 + off);
             const pz = horiz ? cz + outer * (d / 2 + off) : cz + tv * len + rnd(-2, 2);
-            boulderG.push(boulder(big ? rnd(1.4, 2.8) : rnd(0.7, 1.5), px, rnd(0.0, 0.55), pz));
+            boulderG.push(boulder(big ? rnd(1.4, 2.8) : rnd(0.7, 1.5), px, big ? rnd(-0.55, -0.05) : rnd(-0.35, 0.1), pz));
           }
           if (b.kind === 'wall') { // loopholes on the outer face (skip gates)
             const ns = Math.max(1, Math.round(len / 16));
@@ -1152,6 +1171,104 @@ export class Renderer {
     }
   }
 
+  // ---- TIER 3 atmosphere: brazier fires + embers, impact shockwaves, a sun disc,
+  // and banners rising over the host. All bloom-driven (HDR emissives). ----
+  private buildAtmosphere() {
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    // brazier / fire-pot positions along the battlements (tower tops + gate flanks)
+    const bowls: THREE.BufferGeometry[] = [];
+    for (const b of CASTLE) {
+      const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+      if (b.kind === 'tower' && Math.random() < 0.72) this.braziers.push({ x: cx, y: b.h + 1.4, z: cz, ph: Math.random() * 6.28 });
+      else if (b.kind === 'gate') { this.braziers.push({ x: b.x0 + 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28 }); this.braziers.push({ x: b.x1 - 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28 }); }
+    }
+    for (const p of this.braziers) {
+      bowls.push(new THREE.CylinderGeometry(1.0, 0.6, 0.7, 8).translate(p.x, p.y - 0.4, p.z));
+      for (let k = 0; k < 3; k++) { const a = k / 3 * 6.28; bowls.push(new THREE.CylinderGeometry(0.09, 0.09, 1.5, 4).translate(p.x + Math.cos(a) * 0.5, p.y - 1.25, p.z + Math.sin(a) * 0.5)); }
+      this.smokeSources.push({ x: p.x, y: p.y + 0.9, z: p.z, s: 1.1, rate: 0.2, dark: 0.5, t: Math.random() });
+    }
+    if (bowls.length) this.scene.add(new THREE.Mesh(mergeGeometries(bowls, false), this.stone('#2a2320')));
+    const fmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    fmat.color.setRGB(3.2, 2.0, 0.95);
+    this.brazierMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2.6, 3.4), fmat, Math.max(1, this.braziers.length));
+    this.brazierMesh.frustumCulled = false; this.scene.add(this.brazierMesh);
+
+    // embers (recycled pool)
+    const emat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    emat.color.setRGB(3.0, 1.4, 0.45);
+    this.emberMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.34, 0.34), emat, 90);
+    this.emberMesh.frustumCulled = false; this.scene.add(this.emberMesh);
+    for (let i = 0; i < 90; i++) this.embers.push({ x: 0, y: -1000, z: 0, vy: 0, life: 0, max: 1 });
+
+    // impact shockwave rings (fade via per-instance colour)
+    const smat = new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    this.shockMesh = new THREE.InstancedMesh(new THREE.RingGeometry(0.62, 1.0, 32).rotateX(-Math.PI / 2), smat, 12);
+    this.shockMesh.frustumCulled = false; this.scene.add(this.shockMesh);
+    for (let i = 0; i < 12; i++) this.shocks.push({ x: 0, y: -1000, z: 0, life: 0, max: 1, scale: 1 });
+
+    // a soft sun disc in the sky — blooms into an atmospheric flare
+    const sc = document.createElement('canvas'); sc.width = sc.height = 128; const sx = sc.getContext('2d')!;
+    const sg = sx.createRadialGradient(64, 64, 2, 64, 64, 64); sg.addColorStop(0, 'rgba(255,246,220,1)'); sg.addColorStop(0.3, 'rgba(255,222,155,0.55)'); sg.addColorStop(1, 'rgba(255,205,130,0)');
+    sx.fillStyle = sg; sx.fillRect(0, 0, 128, 128);
+    const stex = new THREE.CanvasTexture(sc); stex.colorSpace = THREE.SRGBColorSpace;
+    const spmat = new THREE.SpriteMaterial({ map: stex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    spmat.color.setRGB(2.9, 2.4, 1.7);
+    this.sunGlow = new THREE.Sprite(spmat); this.sunGlow.scale.set(150, 150, 1);
+    this.sunGlow.position.copy(this.sun.position.clone().normalize().multiplyScalar(560));
+    this.scene.add(this.sunGlow);
+
+    // banners rising over the attacking host (perceived scale — standards above the
+    // crowd). Muted campaign cloth, not the bright heraldry tint, so they read as
+    // wind-worn banners and don't catch the bloom.
+    for (let i = 0; i < 6; i++) {
+      const bx = rnd(-LAYOUT.W * 0.42, LAYOUT.W * 0.42), bz = LAYOUT.D * 0.5 + rnd(30, 76);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 11, 6), this.stone('#5a3f22'));
+      pole.position.set(bx, 5.5, bz); pole.castShadow = true; this.scene.add(pole);
+      this.scene.add(this.makeBanner(bx + 0.18, 9.6, bz, 2.4, 1.5, '#7c2b22'));
+    }
+  }
+
+  private spawnEmber(x: number, y: number, z: number) {
+    const e = this.embers[this.emberHead]; this.emberHead = (this.emberHead + 1) % this.embers.length;
+    e.x = x + (Math.random() - 0.5) * 1.2; e.y = y; e.z = z + (Math.random() - 0.5) * 1.2;
+    e.vy = 3 + Math.random() * 4; e.max = 1.1 + Math.random() * 1.2; e.life = e.max;
+  }
+  private spawnShock(x: number, z: number, scale: number) {
+    const s = this.shocks[this.shockHead]; this.shockHead = (this.shockHead + 1) % this.shocks.length;
+    s.x = x; s.z = z; s.max = 0.5; s.life = s.max; s.scale = scale;
+  }
+
+  private updateAtmosphere(dt: number) {
+    if (this.brazierMesh) {
+      for (let i = 0; i < this.braziers.length; i++) {
+        const b = this.braziers[i]; b.ph += dt * (6 + Math.random() * 2);
+        const fl = 0.85 + Math.sin(b.ph) * 0.12 + Math.random() * 0.12;
+        this.dummy.position.set(b.x, b.y + Math.sin(b.ph * 0.7) * 0.14, b.z); this.dummy.quaternion.copy(this.billboard);
+        this.dummy.scale.set(fl, fl * 1.25, fl); this.dummy.updateMatrix(); this.brazierMesh.setMatrixAt(i, this.dummy.matrix);
+        if (Math.random() < 0.14) this.spawnEmber(b.x, b.y + 0.7, b.z);
+      }
+      this.brazierMesh.instanceMatrix.needsUpdate = true;
+    }
+    if (this.emberMesh) {
+      for (let i = 0; i < this.embers.length; i++) {
+        const e = this.embers[i];
+        if (e.life > 0) { e.life -= dt; e.y += e.vy * dt; e.vy -= dt * 1.2; e.x += Math.sin(e.life * 7 + i) * dt * 0.8; const k = Math.max(0, e.life / e.max), s = 0.28 * k + 0.06; this.dummy.position.set(e.x, e.y, e.z); this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(s, s, s); }
+        else { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); }
+        this.dummy.updateMatrix(); this.emberMesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.emberMesh.instanceMatrix.needsUpdate = true;
+    }
+    if (this.shockMesh) {
+      for (let i = 0; i < this.shocks.length; i++) {
+        const s = this.shocks[i];
+        if (s.life > 0) { s.life -= dt; const k = 1 - s.life / s.max, rad = (0.5 + k * 4.6) * s.scale; this.dummy.position.set(s.x, 0.4, s.z); this.dummy.quaternion.identity(); this.dummy.scale.set(rad, 1, rad); const b = (1 - k) * 2.3; this._col.setRGB(b, b * 0.9, b * 0.7); this.shockMesh.setColorAt(i, this._col); }
+        else { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); }
+        this.dummy.updateMatrix(); this.shockMesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.shockMesh.instanceMatrix.needsUpdate = true; if (this.shockMesh.instanceColor) this.shockMesh.instanceColor.needsUpdate = true;
+    }
+  }
+
   // Begin the collapse: debris + dust burst; the box sinks over ~0.7s (render()).
   private crumble(s: number) {
     const v = this.segVis[s]; if (!v || v.crumbling > 0) return;
@@ -1168,6 +1285,7 @@ export class Renderer {
     for (const e of v.extras) e.visible = false;
     this.spawnDebris(v.box.position.x, v.h * 0.5, v.box.position.z, 16);
     this.spawnDust(v.box.position.x, v.h * 0.5, v.box.position.z, 9, 6);
+    this.spawnShock(v.box.position.x, v.box.position.z, 2.4); this.shake(1.0); // the wall comes down
   }
 
   // A persistent pile of tumbled ashlar at a breach — center-heavy, spilling along
@@ -1284,7 +1402,11 @@ export class Renderer {
     const fg = fx.createRadialGradient(16, 16, 1, 16, 16, 15); fg.addColorStop(0, 'rgba(255,240,180,1)'); fg.addColorStop(0.4, 'rgba(255,150,40,0.9)'); fg.addColorStop(1, 'rgba(255,80,0,0)');
     fx.fillStyle = fg; fx.fillRect(0, 0, 32, 32);
     const ftex = new THREE.CanvasTexture(fc); ftex.colorSpace = THREE.SRGBColorSpace;
-    this.fireMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.6, 1.6), new THREE.MeshBasicMaterial({ map: ftex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 450);
+    this.fireTex = ftex;
+    // HDR-bright (color > 1, toneMapped off) so flaming arrows punch through the bloom threshold and glow
+    const fireMat = new THREE.MeshBasicMaterial({ map: ftex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    fireMat.color.setRGB(2.6, 1.7, 0.85);
+    this.fireMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.6, 1.6), fireMat, 450);
     this.fireMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.fireMesh.frustumCulled = false; this.scene.add(this.fireMesh);
   }
 
@@ -1542,6 +1664,7 @@ export class Renderer {
       else if (seg.hp < v.prevHp) {
         this.spawnDust(v.box.position.x, v.h * 0.62, v.box.position.z, 5, 2);
         this.spawnDebris(v.box.position.x, v.h * 0.62, v.box.position.z, 3);
+        if (v.prevHp - seg.hp > 28) { this.spawnShock(v.box.position.x, v.box.position.z, 1.3); this.shake(0.5); } // a trebuchet stone landed
         const ratio = Math.max(0, seg.hp / v.maxhp);
         v.mat.color.copy(v.base).lerp(this.dmgColor, 1 - ratio);
       }
@@ -1630,6 +1753,7 @@ export class Renderer {
     this.updateFlags();
     this.updateMotes(dt);
     this.updateEffects(dt);
+    this.updateAtmosphere(dt);
 
     this.uTime.value = this.time * 9; // advance the shader bob clock
     const shOn = this.shadowsOn;
