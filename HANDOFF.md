@@ -1,5 +1,8 @@
 # Castle Hassle — Project Handoff
 
+> **Current work state lives in `HANDOFF-SESSION.md`** (July 2026) — read that
+> first; this file is the original project intro and some of it is stale.
+
 A 2.5D medieval **siege** game. You command an army storming a castle: ~2,200
 soldiers fight at once, flooding through a gate and a breached wall while archers
 rain from the battlements. Soft, chunky, flat-shaded "house style" (same art
