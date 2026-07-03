@@ -1,9 +1,53 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
 import { Biome } from './campaign';
 import { makeSoldierTexture, makeArrowTexture, spriteAspect, SpriteKind } from './sprites';
 import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
+
+// ── Cinematic colour-grade ────────────────────────────────────────────────
+// One cheap fullscreen pass that turns the storybook-bright frame into a
+// dustier, filmic one — the biggest perceived-quality jump per GPU cycle.
+// We take tone-mapping fully in-shader (the renderer runs NoToneMapping when
+// the composer is on) so ACES → grade → sRGB happens exactly once, with no
+// version-dependent double-encode. Grade acts in display-referred space
+// (after ACES) so the knobs stay intuitive: desaturate a touch, nudge
+// contrast, warm the shadows toward dusk, and vignette the corners.
+const CINEMATIC_GRADE = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    uExposure: { value: 1.19 },
+    uSat: { value: 0.83 },
+    uContrast: { value: 1.05 },
+    uWarm: { value: new THREE.Vector3(0.038, 0.014, -0.01) }, // shadow tint (warm brown)
+    uCool: { value: new THREE.Vector3(-0.01, 0.0, 0.018) },   // highlight tint (cool)
+    uVignette: { value: 0.1 }, // gentle — a CSS #vignette already darkens the frame edges
+  },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `
+    varying vec2 vUv;
+    uniform sampler2D tDiffuse;
+    uniform float uExposure, uContrast, uVignette, uSat;
+    uniform vec3 uWarm, uCool;
+    vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+    void main(){
+      vec3 c = texture2D(tDiffuse, vUv).rgb * uExposure;
+      c = aces(c);                                            // HDR → display-referred 0..1
+      float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(L), c, uSat);                              // gentle desaturate
+      float sh = 1.0 - smoothstep(0.0, 0.55, L);             // shadow mask
+      float hi = smoothstep(0.55, 1.0, L);                   // highlight mask
+      c += uWarm * sh + uCool * hi;                          // split-tone toward dusk
+      c = (c - 0.5) * uContrast + 0.5;                       // filmic contrast
+      c = clamp(c, 0.0, 1.0);
+      float d = distance(vUv, vec2(0.5));
+      c *= 1.0 - uVignette * smoothstep(0.42, 0.9, d);       // corner falloff
+      gl_FragColor = vec4(pow(c, vec3(1.0/2.2)), 1.0);       // sRGB encode
+    }`,
+};
 
 // Per-region siege scenery: sky, fog, light, ground and the horizon ring of
 // hills/mountains/dunes — so a battle looks like where it is in the world.
@@ -117,6 +161,7 @@ export class Renderer {
   private ramPhase = 0;
   private flags: { mesh: THREE.Mesh; base: Float32Array; amp: number; ph: number }[] = [];
   private sun!: THREE.DirectionalLight;
+  private composer!: EffectComposer; private gradePass!: ShaderPass;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private smokeMesh!: THREE.InstancedMesh; private smoke: { x: number; y: number; z: number; s: number; life: number; max: number }[] = []; private smokeHead = 0;
@@ -162,10 +207,11 @@ export class Renderer {
     this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.gl.setSize(window.innerWidth, window.innerHeight);
     this.gl.setPixelRatio(1);
-    // Filmic tone mapping — the single biggest "real game" upgrade: warm highlight
-    // rolloff + richer contrast, matching the icon's golden, punchy look.
-    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1.14;
+    // Tone mapping now lives in the cinematic-grade pass (buildComposer), so the
+    // scene renders linear HDR into the composer target and ACES is applied once,
+    // in-shader, alongside the grade. Leaving this at NoToneMapping avoids a
+    // double tone-map when the frame flows through the composer.
+    this.gl.toneMapping = THREE.NoToneMapping;
     // Real sun shadows. Only the (few, merged, mostly-static) structures cast — not
     // the 2000 sprite soldiers — so it stays cheap on mobile while giving the field
     // genuine 3D form. A soft PCF kernel keeps the chunky art from getting jaggy.
@@ -214,6 +260,7 @@ export class Renderer {
     this.buildBallistae();
     this.buildEffects();
     this.buildMotes();
+    this.buildComposer();
 
     const ringGeo = new THREE.RingGeometry(2.6, 3.4, 40); ringGeo.rotateX(-Math.PI / 2);
     this.selRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85 }));
@@ -253,9 +300,21 @@ export class Renderer {
     window.addEventListener('resize', () => this.onResize());
   }
 
+  // The post chain: render the scene (linear HDR) → cinematic grade → screen.
+  private buildComposer() {
+    this.composer = new EffectComposer(this.gl); // default HalfFloat target keeps highlights for the grade
+    this.composer.setPixelRatio(this.quality);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.gradePass = new ShaderPass(CINEMATIC_GRADE as any);
+    this.gradePass.renderToScreen = true;
+    this.composer.addPass(this.gradePass);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
+  }
+
   private onResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight; this.camera.updateProjectionMatrix();
     this.gl.setSize(window.innerWidth, window.innerHeight);
+    this.composer?.setSize(window.innerWidth, window.innerHeight);
   }
 
   // Adaptive resolution: render the 3D buffer at `q`× screen pixels (HUD is DOM,
@@ -265,6 +324,7 @@ export class Renderer {
     q = Math.max(0.6, Math.min(1, Math.round(q * 100) / 100));
     if (q === this.quality) return;
     this.quality = q; this.gl.setPixelRatio(q); this.gl.setSize(window.innerWidth, window.innerHeight);
+    this.composer?.setPixelRatio(q); this.composer?.setSize(window.innerWidth, window.innerHeight);
   }
 
   private buildSky() {
@@ -422,7 +482,9 @@ export class Renderer {
     // limestone, reddish stone — with slate / terracotta / lead roofs to match.
     const ph = Math.abs((LAYOUT.W * 131 + LAYOUT.D * 71 + LAYOUT.towers.length * 997 + Math.round(LAYOUT.gate.x * 37)) | 0);
     const STONE_TINT = ['#ffffff', '#cdd4d0', '#f2e2bc', '#e6c6a0', '#ece7d8', '#d6ccb4', '#c8ccc6'];
-    const ROOFS = ['#c8643f', '#7f838a', '#9a5638', '#8c9488', '#b8602f', '#6d5340'];
+    // Weathered clay/slate/lead — the terracottas pulled back from fire-engine red
+    // toward aged, sun-baked tile so the frame stops reading candy-bright.
+    const ROOFS = ['#9d5a3e', '#7f838a', '#875039', '#8c9488', '#95563a', '#6d5340'];
     const stoneTint = new THREE.Color(STONE_TINT[ph % STONE_TINT.length]);
     const roofHex = LAYOUT.palisade ? '#7a4a26' : ROOFS[(ph >> 3) % ROOFS.length];
     const coneRoofTex = this.texRoof.clone(); coneRoofTex.wrapS = coneRoofTex.wrapT = THREE.RepeatWrapping; coneRoofTex.repeat.set(5, 3); coneRoofTex.needsUpdate = true;
@@ -1557,7 +1619,7 @@ export class Renderer {
     this.projMesh.count = 3200; this.boulderMesh.count = 60; this.fireMesh.count = 450;
     this.projMesh.instanceMatrix.needsUpdate = true; this.boulderMesh.instanceMatrix.needsUpdate = true; this.fireMesh.instanceMatrix.needsUpdate = true;
 
-    this.updateCamera(); this.gl.render(this.scene, this.camera);
+    this.updateCamera(); this.composer.render();
   }
 
   raycastGround(nx: number, ny: number): THREE.Vector3 | null {
