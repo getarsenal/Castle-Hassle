@@ -146,7 +146,14 @@ function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
   sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, currentVet ?? vetMulArray());
   (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
-  renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal });
+  // every siege gets an hour of its own, seeded by the castle so it's stable per
+  // stronghold: mostly daylight, dawn/dusk often, the rare night storm.
+  // localStorage 'castlehassle.tod' (dawn|noon|dusk|night) overrides — for QA and
+  // for filming promos at a chosen hour with Director Mode.
+  const TODS = ['noon', 'dawn', 'noon', 'dusk', 'noon', 'dawn', 'dusk', 'night'] as const;
+  let tod = TODS[(currentSeed >>> 3) % 8] as (typeof TODS)[number];
+  try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
+  renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod });
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
@@ -277,7 +284,7 @@ function updateTools() {
   }
 }
 
-startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); });
+startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); renderer.cinematicIntro(); });
 restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if (activeCastle || activeRaid) openMap(); else { buildMuster(); $('muster').classList.add('show'); } });
 
 function showEnd() {
@@ -396,6 +403,7 @@ function showEnd() {
   }
   if (win) {
     battleAudio.victory(); renderer.focusKeep(sim.keepX, sim.keepZ); renderer.shake(1.4);
+    renderer.heroVictory(); // the garrison's banner falls; yours climbs the keep
     setTimeout(() => { banner.classList.add('show'); feedback.reward(); }, 850);
   } else {
     battleAudio.defeat(); renderer.shake(0.8);
@@ -407,6 +415,7 @@ function showEnd() {
 const pointers = new Map<number, { x: number; y: number }>();
 let gesture: 'none' | 'orbit' | 'command' | 'camera' = 'none';
 let downAt = { x: 0, y: 0, t: 0 }; let moved = false;
+let lastCamInput = performance.now(); // idle timer — the auto-director takes the camera when the player rests
 let cmdP0: THREE.Vector3 | null = null, cmdP1: THREE.Vector3 | null = null;
 let pinchDist = 0, panMid = { x: 0, y: 0 };
 
@@ -425,6 +434,7 @@ function bindInput() {
   pointers.clear(); gesture = 'none';
   const el = renderer.gl.domElement;
   el.addEventListener('pointerdown', (e) => {
+    lastCamInput = performance.now(); renderer.introT = 0; // the player's hand always beats the director's
     el.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) { const p = [...pointers.values()]; pinchDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); panMid = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 }; gesture = 'camera'; cmdP0 = null; renderer.setPreview(null); return; }
     downAt = { x: e.clientX, y: e.clientY, t: performance.now() }; moved = false;
@@ -457,7 +467,7 @@ function bindInput() {
     else if (pointers.size === 1) { pinchDist = 0; gesture = selected >= 0 ? 'command' : 'orbit'; }
   };
   el.addEventListener('pointerup', endPointer); el.addEventListener('pointercancel', endPointer);
-  el.addEventListener('wheel', (e) => { renderer.camDist *= 1 + Math.sign(e.deltaY) * 0.12; renderer.clampTarget(); }, { passive: true });
+  el.addEventListener('wheel', (e) => { lastCamInput = performance.now(); renderer.introT = 0; renderer.camDist *= 1 + Math.sign(e.deltaY) * 0.12; renderer.clampTarget(); }, { passive: true });
 }
 
 function handleTap(cx: number, cy: number) {
@@ -998,6 +1008,9 @@ function frame(now: number) {
     const r = sim.unitRange(rep.id);
     renderer.setRangeFans(sim.divCompanies(selected).filter(u => u.alive > 0).map(u => ({ x: u.cx, z: u.cz, r })));
   } else renderer.setRangeFans(null);
+
+  // when the player's hand has been off the camera a while, drift toward the action
+  if (sim.phase === 'battle' && !paused && performance.now() - lastCamInput > 7000) renderer.autoDirect(dt);
 
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
   // title or splash) — no point drawing two WebGL scenes at once.

@@ -51,6 +51,20 @@ Promo-recording toolkit, done and verified headless on both scenes.
 - Note: this session was branched onto `claude/castle-route-trumpet-fix-zwj0gf`
   off the design branch (the assigned branch started empty off `main`).
 
+## Battle-beauty batch (July 2026, after Director Mode)
+Grade/stonework/atmosphere passes are all in `render.ts` (see git history).
+Notables for future sessions:
+- **Time of day**: each castle rolls dawn/noon/dusk/night from its seed
+  (`newGame` in main.ts). Override with localStorage `castlehassle.tod` =
+  `dawn|noon|dusk|night` — for QA and Director-Mode promo filming.
+- Sim exposes `clashes`/`fireLands` (flat x,z pairs, drained by render) for
+  melee sparks + town ignition — pure output logs, determinism untouched.
+- Auto-director drifts the camera to the freshest breach / thickest melee after
+  ~7s of no input; any pointer/wheel input cancels (also cancels the assault
+  intro crane, `renderer.cinematicIntro()`).
+- `renderer.heroVictory()`: keep banner swap on win. Burning houses capped at 6.
+- Adaptive score: audio.ts drives drum gain from siege heat, cries from melee.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

@@ -44,6 +44,10 @@ class BattleAudioImpl {
   private dinStarted = false;
   private procDin!: GainNode;   // synthesised crowd din (fallback)
   private sampleDin!: GainNode; // recorded battle-cries + siege-drum loop
+  // adaptive-score layers: the drums follow the BOMBARDMENT, the cries follow the
+  // MELEE — so the bed swells with what's actually happening on the field
+  private criesGain?: GainNode; private drumGain?: GainNode;
+  private siegeHeat = 0;
 
   private _t0 = 0; // scheduling offset, used only when rendering an offline preview
 
@@ -76,8 +80,9 @@ class BattleAudioImpl {
     const cries = this.buffers.cries, drum = this.buffers.drum;
     if (!cries || !drum) return;                 // wait until both are ready
     this.dinStarted = true; const t = this.now();
-    const cs = this.ctx.createBufferSource(); cs.buffer = cries; cs.loop = true; cs.connect(this.gWith(0.95, this.sampleDin)); cs.start(t);
-    const ds = this.ctx.createBufferSource(); ds.buffer = drum; ds.loop = true; ds.connect(this.gWith(0.6, this.sampleDin)); ds.start(t);
+    this.criesGain = this.gWith(0.75, this.sampleDin); this.drumGain = this.gWith(0.42, this.sampleDin);
+    const cs = this.ctx.createBufferSource(); cs.buffer = cries; cs.loop = true; cs.connect(this.criesGain); cs.start(t);
+    const ds = this.ctx.createBufferSource(); ds.buffer = drum; ds.loop = true; ds.connect(this.drumGain); ds.start(t);
     this.procDin.gain.setTargetAtTime(0, t, 0.5);
     this.sampleDin.gain.setTargetAtTime(1, t, 0.5);
   }
@@ -376,6 +381,15 @@ class BattleAudioImpl {
     if (e.melee > 0) { this.clang(0.5 + Math.min(0.45, e.melee / 45)); if (e.melee > 55 && Math.random() < 0.4) this.clang(0.45); }
     if (e.melee > 0) this.heat = Math.min(1.2, this.heat + e.melee * 0.005);
     this.heat *= Math.pow(0.5, dt / 0.9);
+    // the score follows the battle: siege heat (engines working) swells the DRUMS,
+    // melee heat swells the CRIES — a bombardment thunders, a wall-fight roars
+    this.siegeHeat = Math.min(1.2, this.siegeHeat + (e.boulders * 0.25 + e.hits * 0.18 + e.breaches * 0.6));
+    this.siegeHeat *= Math.pow(0.5, dt / 2.4);
+    if (this.criesGain && this.drumGain) {
+      const t = this.now();
+      this.criesGain.gain.setTargetAtTime(0.55 + 0.45 * Math.min(1, this.heat), t, 0.7);
+      this.drumGain.gain.setTargetAtTime(0.3 + 0.6 * Math.min(1, this.siegeHeat), t, 0.9);
+    }
     if (this.ambBase > 0) {
       const lvl = this.ambBase * (0.5 + 0.5 * Math.min(1, intensity)) + this.ambBase * Math.min(1, this.heat);
       this.ambGain.gain.setTargetAtTime(Math.max(0, lvl), this.now(), 0.35);

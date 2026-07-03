@@ -92,7 +92,9 @@ const SOLDIER_VERT = `
     float sc = iScale * 0.95;
     float cyaw = cos(iYaw), syaw = sin(iYaw);
     vec2 q = position.xy * sc;
-    wp = vec3(iPos.x + q.x * cyaw - q.y * syaw, 0.13, iPos.z + q.x * syaw + q.y * cyaw);
+    // a fallen man lies flat at ground level; an old corpse sinks away via a
+    // negative iPos.y written CPU-side (the field slowly reclaims its dead)
+    wp = vec3(iPos.x + q.x * cyaw - q.y * syaw, 0.13 + min(0.0, iPos.y), iPos.z + q.x * syaw + q.y * cyaw);
   } else {
     float moving = step(0.5, iState);
     float stretch = 1.0 + moving * abs(w) * 0.06;
@@ -115,6 +117,33 @@ const SOLDIER_VERT = `
 
 const COL_ATTACK = new THREE.Color('#e0552f');
 const COL_DEFEND = new THREE.Color('#3f86d8');
+
+// ── Time of day ───────────────────────────────────────────────────────────
+// Each siege happens at an hour of its own — dawn assaults, dusk bombardments
+// and the occasional night storm where the braziers carry the scene. The biome
+// palette is overridden per-hour, the sun moves, and the colour grade re-tunes.
+export type TimeOfDay = 'dawn' | 'noon' | 'dusk' | 'night';
+interface TodCfg {
+  sky?: Partial<Pick<BiomeCfg, 'bg' | 'skyTop' | 'skyBot' | 'fog' | 'hemiSky' | 'hemiGround' | 'sun' | 'amb'>>;
+  sunPos: [number, number, number]; sunInt: number; hemiInt: number; ambInt: number;
+  exposure: number; balance: [number, number, number]; sat: number;
+  glow: [number, number, number]; glowScale: number; stars: boolean;
+}
+const TOD: Record<TimeOfDay, TodCfg> = {
+  noon:  { sunPos: [96, 132, 64], sunInt: 1, hemiInt: 0.78, ambInt: 0.18,
+    exposure: 1.17, balance: [1.028, 1.004, 0.965], sat: 0.93, glow: [2.9, 2.4, 1.7], glowScale: 150, stars: false },
+  dawn:  { sky: { skyTop: '#a3b4d8', skyBot: '#f4cfa4', fog: '#d3c3ab', bg: '#b3b6cf', sun: '#ffc98e', hemiSky: '#eedbC8', amb: '#e8d4bd' },
+    sunPos: [-150, 52, 55], sunInt: 0.92, hemiInt: 0.62, ambInt: 0.2,
+    exposure: 1.13, balance: [1.05, 1.0, 0.96], sat: 0.9, glow: [2.9, 2.2, 1.5], glowScale: 175, stars: false },
+  dusk:  { sky: { skyTop: '#8fa0c6', skyBot: '#efb280', fog: '#c9b394', bg: '#a9a7bd', sun: '#ff9f5e', hemiSky: '#e5cdb4', amb: '#d9c3ac' },
+    sunPos: [152, 44, -34], sunInt: 0.88, hemiInt: 0.56, ambInt: 0.2,
+    exposure: 1.12, balance: [1.07, 1.0, 0.93], sat: 0.92, glow: [3.0, 2.0, 1.2], glowScale: 190, stars: false },
+  night: { sky: { skyTop: '#0d1526', skyBot: '#233150', fog: '#1c2438', bg: '#141c2e', sun: '#a8bce4', hemiSky: '#48587c', hemiGround: '#262b38', amb: '#525f7e' },
+    // the moon sits HIGH on the camera side (like the day sun) so the walls the
+    // player actually sees catch the blue wash — readable game-night, not a void
+    sunPos: [58, 140, 88], sunInt: 0.52, hemiInt: 0.58, ambInt: 0.36,
+    exposure: 1.3, balance: [0.93, 0.99, 1.12], sat: 0.85, glow: [1.5, 1.7, 2.3], glowScale: 82, stars: true },
+};
 
 // Soldier fragment: keep the baked detail (steel/leather/skin/weapon) and tint ONLY
 // the green-keyed surcoat/shield with the per-instance faction colour (vColor). The
@@ -162,6 +191,25 @@ export class Renderer {
   private emberMesh?: THREE.InstancedMesh; private embers: { x: number; y: number; z: number; vy: number; life: number; max: number }[] = []; private emberHead = 0;
   private shockMesh?: THREE.InstancedMesh; private shocks: { x: number; y: number; z: number; life: number; max: number; scale: number }[] = []; private shockHead = 0;
   private sunGlow?: THREE.Sprite;
+  // drifting battlefield haze — big soft sheets on the wind
+  private hazeMesh?: THREE.InstancedMesh; private haze: { x: number; y: number; z: number; s: number }[] = [];
+  // melee clash sparks (fed by sim.drainClashes())
+  private sparkMesh?: THREE.InstancedMesh; private sparks: { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number }[] = []; private sparkHead = 0;
+  // the town burns — houses ignited by fire arrows / breaches
+  private houses: { x: number; z: number; h: number }[] = []; private burning: { x: number; z: number; h: number; ph: number }[] = [];
+  private flameMesh?: THREE.InstancedMesh;
+  // auto-director points of interest
+  private lastBreach = { x: 0, z: 0, t: -1e9 };
+  private clashPoi = { x: 0, z: 0, heat: 0 };
+  // cinematic intro sweep (assault start) — 1→0, lerping from → to
+  introT = 0;
+  private introFrom = { tx: 0, tz: 0, d: 0, yaw: 0, pitch: 0 };
+  private introTo = { tx: 0, tz: 0, d: 0, yaw: 0, pitch: 0 };
+  // rout tint + corpse decay
+  private routFlag?: Uint8Array; private corpseAge?: Float32Array;
+  // victory hero moment
+  private victT = 0; private victOld?: THREE.Mesh; private victNew?: THREE.Mesh;
+  private keepFlag?: THREE.Mesh; private keepTop = { x: 0, y: 0, z: 0 };
   private segVis: (SegVis | null)[] = [];
   private trebs: Treb[] = [];
   private ladderMeshes: THREE.Mesh[] = [];
@@ -210,8 +258,12 @@ export class Renderer {
 
   private biomeCfg: BiomeCfg = BIOMES.britain;
   private coastal = false;
-  constructor(private sim: Sim, canvasParent: HTMLElement, env?: { biome: Biome; coastal: boolean }) {
-    this.biomeCfg = BIOMES[env?.biome ?? 'britain']; this.coastal = !!env?.coastal;
+  private tod: TimeOfDay = 'noon'; private todCfg: TodCfg = TOD.noon;
+  constructor(private sim: Sim, canvasParent: HTMLElement, env?: { biome: Biome; coastal: boolean; tod?: TimeOfDay }) {
+    this.tod = env?.tod ?? 'noon'; this.todCfg = TOD[this.tod];
+    // fold the hour's sky/light palette over the biome's (biome sets the land, the hour sets the light)
+    this.biomeCfg = { ...BIOMES[env?.biome ?? 'britain'], ...(this.todCfg.sky ?? {}) };
+    this.coastal = !!env?.coastal;
     (window as any).__r = this; // console/QA access (like __sim / __map / __audio)
     // Mobile is fill-rate + draw-call bound. Render at device-pixel 1 (the HUD
     // is DOM so text stays crisp) and skip MSAA — the chunky art doesn't need it.
@@ -237,9 +289,10 @@ export class Renderer {
     this.scene.fog = new THREE.Fog(B.fog, B.fogNear, B.fogFar);
     this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 1400);
 
-    // Warm raking key light (low golden sun) + cool sky fill so shadows stay alive.
-    this.scene.add(new THREE.HemisphereLight(B.hemiSky, B.hemiGround, 0.78));
-    const sun = new THREE.DirectionalLight(B.sun, B.sunInt); sun.position.set(96, 132, 64);
+    // Warm raking key light (the sun at this siege's hour) + sky fill so shadows stay alive.
+    const T = this.todCfg;
+    this.scene.add(new THREE.HemisphereLight(B.hemiSky, B.hemiGround, T.hemiInt));
+    const sun = new THREE.DirectionalLight(B.sun, B.sunInt * T.sunInt); sun.position.set(...T.sunPos);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1536, 1536); // frozen + re-baked rarely, so 1536 stays crisp on the big static structures at a fraction of 2048's memory/bake cost
     const sc = sun.shadow.camera as THREE.OrthographicCamera;
@@ -249,8 +302,8 @@ export class Renderer {
     // only re-rendered when a wall is being damaged/crumbling — near-zero cost on mobile.
     sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = true; this.sun = sun;
     this.scene.add(sun); this.scene.add(sun.target); // target defaults to the castle centre (origin)
-    const fill = new THREE.DirectionalLight('#aac6e4', 0.3); fill.position.set(-70, 55, -45); this.scene.add(fill);
-    this.scene.add(new THREE.AmbientLight(B.amb, 0.18));
+    const fill = new THREE.DirectionalLight(this.tod === 'night' ? '#5a6d94' : '#aac6e4', this.tod === 'night' ? 0.22 : 0.3); fill.position.set(-70, 55, -45); this.scene.add(fill);
+    this.scene.add(new THREE.AmbientLight(B.amb, T.ambInt));
 
     this.sscale = new Float32Array(sim.n);
     for (let i = 0; i < sim.n; i++) this.sscale[i] = 0.9 + jit(i, 1) * 0.28;
@@ -289,6 +342,8 @@ export class Renderer {
     arrow.rotation.x = Math.PI; arrow.position.y = 5; arrow.name = 'arrow';
     this.moveMarker.add(mr, arrow); this.moveMarker.visible = false; this.scene.add(this.moveMarker);
     this.corpse = new Uint8Array(sim.n);
+    this.routFlag = new Uint8Array(sim.n);
+    this.corpseAge = new Float32Array(sim.n);
 
     // range fans — one per COMPANY (translucent disc + edge ring), so a spread-out
     // arm shows the area its men actually cover, not a single circle from the centre
@@ -322,10 +377,13 @@ export class Renderer {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // threshold ABOVE bright sunlit surfaces (~1.5-2) so only the explicit HDR
     // emissives — fires (2.6+), embers, shockwaves, the sun disc — bloom
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.6, 2.0);
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.6, 2.25);
     this.composer.addPass(this.bloomPass);
     this.gradePass = new ShaderPass(CINEMATIC_GRADE as any);
     this.gradePass.renderToScreen = true;
+    // re-tune the grade for the siege's hour (dawn warm-soft, dusk amber, night cool)
+    const T = this.todCfg, u = this.gradePass.uniforms as any;
+    u.uExposure.value = T.exposure; u.uSat.value = T.sat; u.uBalance.value.set(...T.balance);
     this.composer.addPass(this.gradePass);
     this.composer.setSize(window.innerWidth, window.innerHeight);
   }
@@ -354,6 +412,17 @@ export class Renderer {
     for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 640) * 1.4 + 0.25)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
+    if (this.todCfg.stars) { // a field of stars over a night assault (HDR → they twinkle in the bloom)
+      const sp: number[] = [];
+      for (let i = 0; i < 320; i++) {
+        const az = Math.random() * Math.PI * 2, el = 0.12 + Math.random() * 1.4, r2 = 600;
+        sp.push(Math.cos(az) * Math.cos(el) * r2, Math.sin(el) * r2, Math.sin(az) * Math.cos(el) * r2);
+      }
+      const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+      const sm = new THREE.PointsMaterial({ size: 1.7, sizeAttenuation: false, transparent: true, opacity: 0.85, fog: false, toneMapped: false });
+      sm.color.setRGB(1.9, 1.9, 2.2);
+      this.scene.add(new THREE.Points(sg, sm));
+    }
   }
 
   private buildGround() {
@@ -585,7 +654,9 @@ export class Renderer {
         for (const [wx, wy] of [[-3, 8], [3, 8], [-3, 13], [3, 13]] as const) keepTimberGeos.push(this.boxG(1, 1.6, 0.3, cx + wx, wy, b.z1));
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6), timber); pole.position.set(cx, b.h + 15, cz); pole.castShadow = true; this.scene.add(pole);
         const flag = this.makeBanner(cx + 0.26, b.h + 16.4, cz, 4.2, 2.5, COL_DEFEND); this.scene.add(flag);
+        this.keepFlag = flag; this.keepTop = { x: cx, y: b.h + 16.4, z: cz }; // the banner that falls on victory
       } else if (b.kind === 'building') {
+        this.houses.push({ x: cx, z: cz, h: b.h }); // ignition candidates for the burning-town pass
         // half-timbered plaster house + tiled gabled roof — colour baked into
         // vertex colours so every house merges into one mesh yet varies.
         const tone = 0.84 + jit(s, 7) * 0.26;
@@ -623,26 +694,40 @@ export class Renderer {
       const rnd = (a: number, b: number) => a + Math.random() * (b - a);
       const boulderG: THREE.BufferGeometry[] = [], slitG: THREE.BufferGeometry[] = [];
       const boulder = (r: number, x: number, y: number, z: number) => {
-        // subdivided ico + gentle jitter → a rounded stone (the level-0 ico with heavy
-        // jitter read as spiky facets with gaps). Flattened and set LOW so it sits
-        // half-buried in the turf, not perched on top.
+        // IcosahedronGeometry is NON-INDEXED (verts duplicated per face), so any
+        // per-vertex random jitter moves coincident corners apart and TEARS the
+        // mesh (the visible gaps between triangles). Displace by a hash of the
+        // vertex POSITION instead — identical position → identical offset → the
+        // stone deforms organically but stays watertight.
         const g = new THREE.IcosahedronGeometry(r, 1), p = g.attributes.position;
-        for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * rnd(0.86, 1.14), p.getY(i) * rnd(0.74, 1.0), p.getZ(i) * rnd(0.86, 1.14));
-        g.scale(1, 0.58, 1); g.rotateY(Math.random() * 3.14); g.translate(x, y, z); g.computeVertexNormals();
+        const seed = x * 7.13 + z * 3.71;
+        const h = (px: number, py: number, pz: number, k: number) => {
+          const v = Math.sin(px * 12.9898 + py * 78.233 + pz * 37.719 + seed + k * 53.7) * 43758.5453;
+          return (v - Math.floor(v)) - 0.5;
+        };
+        for (let i = 0; i < p.count; i++) {
+          const px = p.getX(i), py = p.getY(i), pz = p.getZ(i);
+          p.setXYZ(i, px * (1 + h(px, py, pz, 1) * 0.24), py * (1 + h(px, py, pz, 2) * 0.2), pz * (1 + h(px, py, pz, 3) * 0.24));
+        }
+        g.scale(1, 0.58, 1); g.rotateY((seed * 977) % 3.14); g.translate(x, y, z); g.computeVertexNormals();
         // warm weathered stone, tuned to the game's sandstone and never brighter than base
         this.paint(g, new THREE.Color('#968870').multiplyScalar(0.6 + Math.random() * 0.28));
         return g;
       };
+      // keep the approach to every gate clear — no stones for the ram or the host to trip on
+      const gates = CASTLE.filter(b => b.kind === 'gate').map(b => ({ x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, r: Math.max(b.x1 - b.x0, b.z1 - b.z0) / 2 + 7 }));
+      const nearGate = (px: number, pz: number) => gates.some(g2 => (px - g2.x) * (px - g2.x) + (pz - g2.z) * (pz - g2.z) < g2.r * g2.r);
+      const pushBoulder = (r: number, px: number, py: number, pz: number) => { if (!nearGate(px, pz)) boulderG.push(boulder(r, px, py, pz)); };
       for (let s = 0; s < CASTLE.length; s++) {
         const b = CASTLE[s]; if (b.kind === 'building' || b.kind === 'keep') continue;
         const w = b.x1 - b.x0, d = b.z1 - b.z0, cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
         if (b.kind === 'tower') {
           const r = Math.max(w, d) / 2, nb = 12 + Math.floor(r * 1.6);
           // two overlapping rings hugging the foot → a continuous embedded skirt
-          for (let k = 0; k < nb; k++) { const a = Math.random() * 6.283, rr = r * rnd(0.9, 1.02); boulderG.push(boulder(rnd(1.3, 2.5), cx + Math.cos(a) * rr, rnd(-0.55, -0.05), cz + Math.sin(a) * rr)); }
-          for (let k = 0; k < nb * 0.7; k++) { const a = Math.random() * 6.283, rr = r * rnd(1.0, 1.32); boulderG.push(boulder(rnd(0.6, 1.4), cx + Math.cos(a) * rr, rnd(-0.4, 0.05), cz + Math.sin(a) * rr)); }
+          for (let k = 0; k < nb; k++) { const a = Math.random() * 6.283, rr = r * rnd(0.9, 1.02); pushBoulder(rnd(1.3, 2.5), cx + Math.cos(a) * rr, rnd(-0.55, -0.05), cz + Math.sin(a) * rr); }
+          for (let k = 0; k < nb * 0.7; k++) { const a = Math.random() * 6.283, rr = r * rnd(1.0, 1.32); pushBoulder(rnd(0.6, 1.4), cx + Math.cos(a) * rr, rnd(-0.4, 0.05), cz + Math.sin(a) * rr); }
           for (let k = 0; k < 4; k++) { const a = k / 4 * 6.283 + 0.5, sx = cx + Math.cos(a) * (r + 0.05), sz = cz + Math.sin(a) * (r + 0.05); slitG.push(new THREE.BoxGeometry(0.34, 2.3, 0.34).translate(sx, b.h * 0.55, sz)); }
-        } else {
+        } else if (b.kind === 'wall') { // no stones at all under a gate — the approach stays clear
           const horiz = w > d, len = horiz ? w : d, outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
           const nb = Math.max(5, Math.round(len / 4));
           for (let k = 0; k < nb; k++) {
@@ -650,7 +735,7 @@ export class Renderer {
             const off = big ? rnd(0.2, 1.0) : rnd(1.0, 2.4); // big stones hug the foot, smaller ones tumble out
             const px = horiz ? cx + tv * len + rnd(-2, 2) : cx + outer * (w / 2 + off);
             const pz = horiz ? cz + outer * (d / 2 + off) : cz + tv * len + rnd(-2, 2);
-            boulderG.push(boulder(big ? rnd(1.4, 2.8) : rnd(0.7, 1.5), px, big ? rnd(-0.55, -0.05) : rnd(-0.35, 0.1), pz));
+            pushBoulder(big ? rnd(1.4, 2.8) : rnd(0.7, 1.5), px, big ? rnd(-0.55, -0.05) : rnd(-0.35, 0.1), pz);
           }
           if (b.kind === 'wall') { // loopholes on the outer face (skip gates)
             const ns = Math.max(1, Math.round(len / 16));
@@ -1212,8 +1297,8 @@ export class Renderer {
     sx.fillStyle = sg; sx.fillRect(0, 0, 128, 128);
     const stex = new THREE.CanvasTexture(sc); stex.colorSpace = THREE.SRGBColorSpace;
     const spmat = new THREE.SpriteMaterial({ map: stex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-    spmat.color.setRGB(2.9, 2.4, 1.7);
-    this.sunGlow = new THREE.Sprite(spmat); this.sunGlow.scale.set(150, 150, 1);
+    spmat.color.setRGB(...this.todCfg.glow); // noon gold, dusk amber, night a cool moon
+    this.sunGlow = new THREE.Sprite(spmat); this.sunGlow.scale.set(this.todCfg.glowScale, this.todCfg.glowScale, 1);
     this.sunGlow.position.copy(this.sun.position.clone().normalize().multiplyScalar(560));
     this.scene.add(this.sunGlow);
 
@@ -1226,6 +1311,33 @@ export class Renderer {
       pole.position.set(bx, 5.5, bz); pole.castShadow = true; this.scene.add(pole);
       this.scene.add(this.makeBanner(bx + 0.18, 9.6, bz, 2.4, 1.5, '#7c2b22'));
     }
+
+    // drifting battlefield haze — a handful of very large, very faint smoke sheets
+    // riding a steady wind. This is what makes a still frame read as a LIVING field:
+    // the air itself moves, thickening near the burning castle.
+    const hc = document.createElement('canvas'); hc.width = hc.height = 64; const hx2 = hc.getContext('2d')!;
+    const hg = hx2.createRadialGradient(32, 32, 3, 32, 32, 31);
+    hg.addColorStop(0, 'rgba(214,204,186,0.5)'); hg.addColorStop(0.6, 'rgba(214,204,186,0.22)'); hg.addColorStop(1, 'rgba(214,204,186,0)');
+    hx2.fillStyle = hg; hx2.fillRect(0, 0, 64, 64);
+    const htex = new THREE.CanvasTexture(hc); htex.colorSpace = THREE.SRGBColorSpace;
+    const hmat = new THREE.MeshBasicMaterial({ map: htex, transparent: true, opacity: this.tod === 'night' ? 0.1 : 0.16, depthWrite: false });
+    hmat.color.set(this.tod === 'night' ? '#5a6580' : '#d9cfba');
+    this.hazeMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), hmat, 22);
+    this.hazeMesh.frustumCulled = false; this.hazeMesh.renderOrder = 3; this.scene.add(this.hazeMesh);
+    for (let i = 0; i < 22; i++) this.haze.push({ x: rnd(-190, 190), y: rnd(2.5, 9), z: rnd(-150, 190), s: rnd(26, 52) });
+
+    // melee clash sparks — brief steel-on-steel glints where the lines meet
+    const kmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    kmat.color.setRGB(2.5, 2.2, 1.5);
+    this.sparkMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.5, 0.5), kmat, 48);
+    this.sparkMesh.frustumCulled = false; this.scene.add(this.sparkMesh);
+    for (let i = 0; i < 48; i++) this.sparks.push({ x: 0, y: -1000, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1 });
+
+    // house fires (the town alight) — bigger flames than the braziers, capped
+    const gmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    gmat.color.setRGB(3.0, 1.8, 0.8);
+    this.flameMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.4, 4.6), gmat, 6);
+    this.flameMesh.frustumCulled = false; this.scene.add(this.flameMesh);
   }
 
   private spawnEmber(x: number, y: number, z: number) {
@@ -1267,6 +1379,117 @@ export class Renderer {
       }
       this.shockMesh.instanceMatrix.needsUpdate = true; if (this.shockMesh.instanceColor) this.shockMesh.instanceColor.needsUpdate = true;
     }
+    // ---- drifting haze: ride the wind, wrap at the field edge, thicken near fires ----
+    if (this.hazeMesh) {
+      const wx = 2.1, wz = 0.8; // the prevailing wind
+      for (let i = 0; i < this.haze.length; i++) {
+        const p = this.haze[i];
+        p.x += wx * dt; p.z += wz * dt; p.y += Math.sin(this.time * 0.4 + i * 2.1) * dt * 0.25;
+        if (p.x > 220) { // respawn upwind — a third of the sheets seeded near a live fire so smoke pools where it should
+          p.x = -220; p.z = Math.random() * 340 - 150; p.y = 2.5 + Math.random() * 7; p.s = 26 + Math.random() * 26;
+          const src = this.smokeSources.length && Math.random() < 0.33 ? this.smokeSources[(Math.random() * this.smokeSources.length) | 0] : null;
+          if (src) { p.x = src.x - 30 - Math.random() * 40; p.z = src.z + (Math.random() - 0.5) * 30; }
+        }
+        this.dummy.position.set(p.x, p.y, p.z); this.dummy.quaternion.copy(this.billboard);
+        this.dummy.scale.set(p.s, p.s * 0.55, 1); this.dummy.updateMatrix(); this.hazeMesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.hazeMesh.instanceMatrix.needsUpdate = true;
+    }
+    // ---- melee clash sparks + the rolling clash centroid (auto-director POI) ----
+    const clashes = this.sim.drainClashes();
+    this.clashPoi.heat *= Math.exp(-dt / 3);
+    for (let c = 0; c + 1 < clashes.length; c += 2) {
+      const cx = clashes[c], cz = clashes[c + 1];
+      this.clashPoi.heat = Math.min(1.5, this.clashPoi.heat + 0.04);
+      this.clashPoi.x += (cx - this.clashPoi.x) * 0.08; this.clashPoi.z += (cz - this.clashPoi.z) * 0.08;
+      if (Math.random() < 0.3) { // don't spark EVERY blow — glints, not a fireworks show
+        const s = this.sparks[this.sparkHead]; this.sparkHead = (this.sparkHead + 1) % this.sparks.length;
+        s.x = cx + (Math.random() - 0.5); s.y = 1.0 + Math.random() * 0.7; s.z = cz + (Math.random() - 0.5);
+        s.vx = (Math.random() - 0.5) * 4; s.vy = 1.5 + Math.random() * 2.5; s.vz = (Math.random() - 0.5) * 4;
+        s.max = 0.16 + Math.random() * 0.18; s.life = s.max;
+      }
+      if (Math.random() < 0.06) this.spawnDust(cx, 0.8, cz, 2.2, 1); // scuffed earth under the melee
+    }
+    if (this.sparkMesh) {
+      for (let i = 0; i < this.sparks.length; i++) {
+        const s = this.sparks[i];
+        if (s.life > 0) { s.life -= dt; s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt; s.vy -= 14 * dt; const k = Math.max(0, s.life / s.max), sc = 0.5 + 0.7 * k; this.dummy.position.set(s.x, s.y, s.z); this.dummy.quaternion.copy(this.billboard); this.dummy.scale.set(sc, sc, sc); }
+        else { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); }
+        this.dummy.updateMatrix(); this.sparkMesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.sparkMesh.instanceMatrix.needsUpdate = true;
+    }
+    // ---- the town alight: flaming arrows that come down beside a house ignite it ----
+    const lands = this.sim.drainFireLands();
+    for (let c = 0; c + 1 < lands.length; c += 2) this.igniteHouse(lands[c], lands[c + 1], 9);
+    if (this.flameMesh) {
+      for (let i = 0; i < 6; i++) {
+        const b = this.burning[i];
+        if (b) {
+          b.ph += dt * (5 + (i % 3));
+          const fl = 0.9 + Math.sin(b.ph) * 0.14 + Math.random() * 0.1;
+          this.dummy.position.set(b.x, b.h + 1.6 + Math.sin(b.ph * 0.6) * 0.2, b.z); this.dummy.quaternion.copy(this.billboard);
+          this.dummy.scale.set(fl, fl * 1.3, fl); this.dummy.updateMatrix(); this.flameMesh.setMatrixAt(i, this.dummy.matrix);
+          if (Math.random() < 0.2) this.spawnEmber(b.x, b.h + 2.2, b.z);
+        } else { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.flameMesh.setMatrixAt(i, this.dummy.matrix); }
+      }
+      this.flameMesh.instanceMatrix.needsUpdate = true;
+    }
+    // ---- the victory beat: the garrison's banner falls, yours rises over the keep ----
+    if (this.victT > 0) {
+      this.victT = Math.max(0, this.victT - dt / 3.2);
+      const k = 1 - this.victT;
+      if (this.keepFlag) this.keepFlag.scale.y = Math.max(0.001, 1 - k * 2.4);            // theirs drops fast
+      if (this.victNew) this.victNew.scale.y = Math.min(1, Math.max(0.001, (k - 0.4) / 0.45)); // yours climbs the pole
+      if (Math.random() < 0.5) this.spawnEmber(this.keepTop.x + (Math.random() - 0.5) * 3, this.keepTop.y - 2, this.keepTop.z);
+    }
+  }
+
+  // A flaming arrow (or a collapse) sets the nearest thatched house alight — capped
+  // so the town smoulders dramatically without turning into a bonfire wall.
+  private igniteHouse(x: number, z: number, radius: number) {
+    if (this.burning.length >= 6) return;
+    let best = -1, bd = radius * radius;
+    for (let i = 0; i < this.houses.length; i++) {
+      const h = this.houses[i], d = (h.x - x) * (h.x - x) + (h.z - z) * (h.z - z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best < 0) return;
+    const h = this.houses.splice(best, 1)[0]; // a house burns once
+    this.burning.push({ ...h, ph: Math.random() * 6.28 });
+    this.smokeSources.push({ x: h.x, y: h.h + 1.5, z: h.z, s: 2.6, rate: 0.55, dark: 0.72, t: Math.random() * 0.3 });
+    this.spawnDust(h.x, h.h, h.z, 4, 3);
+  }
+
+  // The hero beat on victory — called by main when the day is won.
+  heroVictory() {
+    if (this.victT > 0 || !this.keepFlag) return;
+    this.victT = 1;
+    this.victNew = this.makeBanner(this.keepTop.x + 0.26, this.keepTop.y, this.keepTop.z, 4.2, 2.5, COL_ATTACK);
+    this.victNew.scale.y = 0.001; this.scene.add(this.victNew);
+    this.spawnShock(this.keepTop.x, this.keepTop.z, 2.0);
+  }
+
+  // Cinematic assault opening: start low behind the host, crane up and back to
+  // wherever the player had framed the deploy. Any camera input cancels (introT=0).
+  cinematicIntro() {
+    this.introTo = { tx: this.camTarget.x, tz: this.camTarget.z, d: this.camDist, yaw: this.camYaw, pitch: this.camPitch };
+    this.introFrom = { tx: LAYOUT.gate.x * 0.5, tz: LAYOUT.D * 0.5 + 58, d: 48, yaw: this.camYaw * 0.25, pitch: 0.34 };
+    this.introT = 1;
+  }
+
+  // During player idle, drift gently toward where the battle actually is — the
+  // freshest breach first, else the thick of the melee. Cancelled by any input.
+  autoDirect(dt: number) {
+    if (this.introT > 0 || this.victT > 0) return;
+    const poi = (this.time - this.lastBreach.t < 14) ? this.lastBreach
+      : (this.clashPoi.heat > 0.25 ? this.clashPoi : null);
+    if (!poi) return;
+    const k = Math.min(1, dt * 0.35);
+    this.camTarget.x += (poi.x - this.camTarget.x) * k * 0.5;
+    this.camTarget.z += (poi.z + 8 - this.camTarget.z) * k * 0.5;
+    this.camYaw += dt * 0.014; // the slow cinematic orbit of a director's crane
+    this.clampTarget();
   }
 
   // Begin the collapse: debris + dust burst; the box sinks over ~0.7s (render()).
@@ -1286,6 +1509,8 @@ export class Renderer {
     this.spawnDebris(v.box.position.x, v.h * 0.5, v.box.position.z, 16);
     this.spawnDust(v.box.position.x, v.h * 0.5, v.box.position.z, 9, 6);
     this.spawnShock(v.box.position.x, v.box.position.z, 2.4); this.shake(1.0); // the wall comes down
+    this.lastBreach = { x: v.box.position.x, z: v.box.position.z, t: this.time }; // the auto-director looks here
+    if (Math.random() < 0.6) this.igniteHouse(v.box.position.x, v.box.position.z, 16); // collapses scatter fire into the town
   }
 
   // A persistent pile of tumbled ashlar at a breach — center-heavy, spilling along
@@ -1530,7 +1755,7 @@ export class Renderer {
   private makeBanner(x: number, y: number, z: number, len: number, h: number, color: THREE.ColorRepresentation): THREE.Mesh {
     const geo = new THREE.PlaneGeometry(len, h, 9, 2); geo.translate(len / 2, 0, 0); // pole at local x=0
     // a slim gold valance along the top edge for a richer, period look
-    const col: number[] = []; const c = new THREE.Color(color), gold = new THREE.Color('#e6bb52');
+    const col: number[] = []; const c = new THREE.Color(color), gold = new THREE.Color('#b8923e'); // muted old-gold so full sun never pushes it over the bloom threshold
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) { const top = pos.getY(i) > h * 0.32; const cc = top ? gold : c; col.push(cc.r, cc.g, cc.b); }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -1742,6 +1967,12 @@ export class Renderer {
     const sim = this.sim;
     this.time += dt;
     this.shakeAmt *= Math.exp(-dt * 7); // camera-shake decay
+    if (this.introT > 0) { // the assault-opening crane shot: low behind the host → the player's framing
+      this.introT = Math.max(0, this.introT - dt / 3.4);
+      const k = 1 - this.introT, s = k * k * (3 - 2 * k), f = this.introFrom, o = this.introTo;
+      this.camTarget.x = f.tx + (o.tx - f.tx) * s; this.camTarget.z = f.tz + (o.tz - f.tz) * s;
+      this.camDist = f.d + (o.d - f.d) * s; this.camYaw = f.yaw + (o.yaw - f.yaw) * s; this.camPitch = f.pitch + (o.pitch - f.pitch) * s;
+    }
     if (this.focusT > 0) { // ease the camera in over the keep on victory
       this.focusT = Math.max(0, this.focusT - dt / 1.6); const k = (1 - this.focusT) * 0.06;
       this.camTarget.x += (this.focusX - this.camTarget.x) * k; this.camTarget.z += (this.focusZ + 14 - this.camTarget.z) * k;
@@ -1768,14 +1999,28 @@ export class Renderer {
       const slot = sim.slot[i], b3 = slot * 3;
       const ip = this.iPosA[t].array as Float32Array, ist = this.iStateA[t].array as Float32Array;
       if (!sim.alive[i]) {
-        if (this.corpse![i]) continue;     // already a body — its instance is frozen
+        if (this.corpse![i]) {             // a settled body: after ~22s the field reclaims it (sink away)
+          const age = (this.corpseAge![i] += dt);
+          if (age > 22 && age < 36) { ip[b3 + 1] = -(age - 22) * 0.055; posD[t] = true; }
+          continue;
+        }
         this.corpse![i] = 1; anyLive = true;
         this._col.setRGB(0.17, 0.16, 0.15); this.meshes[t].setColorAt(slot, this._col); this.colorDirty[t] = true; // grey out
         (this.iYawA[t].array as Float32Array)[slot] = jit(i, 6) * 6.283;
-        ip[b3] = sim.px[i]; ip[b3 + 1] = sim.py[i]; ip[b3 + 2] = sim.pz[i];
+        ip[b3] = sim.px[i]; ip[b3 + 1] = 0; ip[b3 + 2] = sim.pz[i]; // y=0: the sink-away pass writes negatives from here
         ist[slot] = 2; posD[t] = true; this.iYawA[t].needsUpdate = true;
         if (shOn) sa[i * 16 + 13] = -1000; continue;
       }
+      // a breaking company reads broken: desaturate + dim its men while they rout
+      const routing = sim.units[sim.unit[i]].routing ? 1 : 0;
+      if (routing !== this.routFlag![i]) {
+        this.routFlag![i] = routing;
+        const bse = sim.fac[i] === Faction.Attacker ? COL_ATTACK : COL_DEFEND, br = 0.82 + jit(i, 2) * 0.32;
+        this._col.setRGB(bse.r * br * (0.95 + jit(i, 3) * 0.1), bse.g * br, bse.b * br * (0.95 + jit(i, 4) * 0.1));
+        if (routing) { const l = (this._col.r + this._col.g + this._col.b) / 3; this._col.lerp(new THREE.Color(l, l, l), 0.62).multiplyScalar(0.78); }
+        this.meshes[t].setColorAt(slot, this._col); this.colorDirty[t] = true;
+      }
+      if (routing && Math.random() < 0.002) this.spawnDust(sim.px[i], 0.5, sim.pz[i], 1.6, 1); // panicked heels kick dust
       ip[b3] = sim.px[i]; ip[b3 + 1] = sim.py[i]; ip[b3 + 2] = sim.pz[i];
       ist[slot] = (Math.abs(sim.vx[i]) + Math.abs(sim.vz[i]) > 0.5) ? 1 : 0;
       posD[t] = true;

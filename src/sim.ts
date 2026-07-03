@@ -561,6 +561,12 @@ export class Sim {
   // per-frame sound-effect tallies; main drains these to drive procedural audio
   sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 };
   drainSfx() { const s = this.sfx; this.sfx = { arrows: 0, bolts: 0, boulders: 0, breaches: 0, melee: 0, deaths: 0, hits: 0, cavalry: 0 }; return s; }
+  // per-frame event POSITIONS (flat x,z pairs) for render-side FX — pure output
+  // logs like sfx: writers never read them, so determinism is untouched.
+  clashes: number[] = [];    // where melee blows landed (clash sparks)
+  fireLands: number[] = [];  // where flaming arrows came down (igniting thatch)
+  drainClashes() { const c = this.clashes; this.clashes = []; return c; }
+  drainFireLands() { const f = this.fireLands; this.fireLands = []; return f; }
   keepX = 0; keepZ = 0; private captureR = 20;
   n = 0;
   units: Unit[] = [];
@@ -1340,7 +1346,7 @@ export class Sim {
           // once it's inside it fights/chases normally to clear the bailey.
           const assaultingOut = u.faction === Faction.Attacker && (u.objKind === 'storm' || u.objKind === 'breach') && !this.insideWalls(this.px[i], this.pz[i]);
           if (nearest >= 0 && dist <= mrng) {
-            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg * this.defenseMul(nearest); this.cd[i] = ATKCD[t]; this.sfx.melee++; if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) { this.kill(nearest, this.units[this.unit[nearest]]); if (u.faction === Faction.Attacker) this.creditAtkKill(t); } }
+            if (this.cd[i] <= 0) { this.hp[nearest] -= mdmg * this.defenseMul(nearest); this.cd[i] = ATKCD[t]; this.sfx.melee++; if (this.clashes.length < 96) this.clashes.push(this.px[nearest], this.pz[nearest]); if (t === UType.Cavalry && u.faction === Faction.Attacker) this.sfx.cavalry++; if (this.hp[nearest] <= 0) { this.kill(nearest, this.units[this.unit[nearest]]); if (u.faction === Faction.Attacker) this.creditAtkKill(t); } }
             if (assaultingOut) { this.assaultMove(i, u, t); dx = this._dir[0]; dz = this._dir[1]; } // press on up the wall even while trading blows
           } else if (nearest >= 0 && dist < ENGAGE && !u.hold && !assaultingOut && !pathBlocked(this.px[i], this.pz[i], this.px[nearest], this.pz[nearest])
                      && (u.faction !== Faction.Attacker || (u.cx - u.ax) ** 2 + (u.cz - u.az) ** 2 < CHASE_LEASH * CHASE_LEASH)) {
@@ -2007,6 +2013,7 @@ export class Sim {
           if (best >= 0) this.applyRangedHit(best, p.dmg, false);
         }
         this._shotCredit = -1;
+        if (p.fire && this.fireLands.length < 24) this.fireLands.push(p.x, p.z); // a burning shaft came down
         p.active = false;
       }
     }
