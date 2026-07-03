@@ -18,6 +18,14 @@ function injectStyles() {
   .menuScreen .menuLogo{width:min(88vw,420px);height:auto;display:block;margin:6px auto 2px;filter:drop-shadow(0 8px 20px rgba(0,0,0,.6))}
   .menuScreen .msub{font-size:13px;font-style:italic;color:#c7a86e;margin-bottom:20px;text-align:center}
   .menuWrap{width:min(94vw,440px);display:flex;flex-direction:column;gap:12px}
+  @media (orientation:landscape) and (max-height:480px){
+    /* landscape phones: the crest shrinks and the three campaigns sit abreast */
+    .menuScreen .menuLogo{width:auto;height:24vh;margin:2px auto 0}
+    .menuScreen .msub{margin-bottom:8px}
+    .menuWrap{width:min(96vw,920px);flex-direction:row;align-items:stretch}
+    .slotCard{flex:1;padding:11px 12px}
+    .menuStats{flex-wrap:wrap}
+  }
   .slotCard{border:1px solid var(--leather-edge,#7a5e2e);border-radius:14px;padding:15px 16px;
     background:var(--grain),linear-gradient(180deg,rgba(74,54,28,0.85),rgba(36,26,14,0.9));box-shadow:var(--sh-2,0 6px 18px rgba(0,0,0,.5))}
   .slotCard .st{display:flex;align-items:center;justify-content:space-between;gap:10px}

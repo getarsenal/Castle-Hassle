@@ -196,6 +196,20 @@ The map got the siege treatment. Everything below is in `worldmap3d.ts`:
 - Still open (need product/backend decisions): cloud save, New Game+, enemy
   variety, app icon swap (user asset).
 
+## Landscape phone pass (July 2026 — 'unplayable' report fixed)
+All in the `@media (orientation:landscape) and (max-height:480px)` blocks —
+NOTE the index.dev.html block sits at the END of the stylesheet on purpose
+(it must out-cascade the base rules; it was silently losing before).
+- Battle: hint bar docked under the top bar (was dead-centre of the field);
+  topHud pads by --safe-left/right (the notch is on the SIDE in landscape).
+- Muster: compact header, roster two-abreast (#rosterRows grid 1fr 1fr).
+- Main menu (menu.ts): crest 24vh, three campaign slots side by side.
+- Map castle panel (worldmap3d.ts): two-column grid — schematic left
+  (grid-row span), intel right, March/Close row STICKY at the panel bottom.
+- Battle report: .bannerCard capped at 100vh-20 and scrolls.
+Verified at 844x390 (iPhone 12-15 landscape) headless: title, menu, map,
+panel, muster, battle w/ tools all fit and reachable.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

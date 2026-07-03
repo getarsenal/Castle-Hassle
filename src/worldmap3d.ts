@@ -1050,6 +1050,26 @@ export class WorldMap3D {
     .castlePanel .gbar i{display:block;height:100%}
     .castlePanel .glegend{display:flex;justify-content:center;gap:14px;font-size:10.5px;color:#bda981;margin-bottom:13px}
     .castlePanel .glegend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+    @media (orientation:landscape) and (max-height:480px){
+      /* landscape phones: schematic left, intel right — the March button stays in reach */
+      .castlePanel{width:min(94vw,640px);max-height:calc(100vh - 16px);bottom:8px;padding:12px 16px 12px;
+        display:grid;grid-template-columns:200px 1fr;gap:0 16px;align-items:start;text-align:left}
+      .castlePanel.show{display:grid}
+      .castlePanel h3,.castlePanel .reg,.castlePanel .row{grid-column:1/-1;text-align:center}
+      .castlePanel h3{font-size:19px;margin-bottom:2px}
+      .castlePanel .reg{margin-bottom:6px}
+      .castlePanel .cmap{grid-column:1;grid-row:3/span 8;width:100%;margin:0;padding:8px 9px 6px}
+      .castlePanel .blurb,.castlePanel .obreak{text-align:left;margin-left:0;margin-right:0;font-size:12.5px}
+      .castlePanel .blurb{margin-bottom:6px}
+      .castlePanel .obreak{margin-bottom:8px}
+      .castlePanel .gbar,.castlePanel .glegend{margin-left:0;margin-right:0}
+      .castlePanel .glegend{justify-content:flex-start;margin-bottom:8px}
+      .castlePanel .stats{margin:0 0 10px;max-width:none}
+      .castlePanel .stat{padding:4.5px 2px;font-size:12.5px}
+      /* the March button must never hide below the fold */
+      .castlePanel .row{margin-top:2px;position:sticky;bottom:-12px;padding:8px 0 12px;margin-bottom:-12px;
+        background:linear-gradient(transparent,#1a1109 34%)}
+    }
     .marchHint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:7;
       background:#000a;color:#f3e6cf;padding:7px 14px;border-radius:20px;font:600 13px 'EB Garamond',Georgia,serif;display:none}
     .marchHint.show{display:block}`;
