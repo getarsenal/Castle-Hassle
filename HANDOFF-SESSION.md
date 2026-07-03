@@ -164,6 +164,14 @@ Hooks: `__r __map __sim __balance __raids __surveyCastle __audio`.
 hit the 32MB request cap and could not read any image by the end).
 
 ## Open items
+0. **Pages deploy from main needs one settings change**: the game history is
+   promoted to `main` (fast-forward) and deploy.yml now only deploys `main`.
+   CI build + typecheck pass, but the `github-pages` environment still has a
+   deployment-branch policy from the claude/** era that rejects `main` — the
+   deploy job dies in 2s with no runner. Fix: repo Settings → Environments →
+   github-pages → Deployment branches and tags → allow `main` (or "No
+   restriction"), then re-run the failed "Deploy web build to GitHub Pages"
+   run from the Actions tab.
 1. User to try Director Mode (Settings → Director Mode, or add `#director` to the
    URL) and confirm the chip/controls feel right for filming.
 2. User to eyeball the new campaign route on the map (the fix for their circled
