@@ -19,16 +19,16 @@ import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } 
 const CINEMATIC_GRADE = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
-    uExposure: { value: 1.2 },
-    // Warm "golden sun" white balance applied in scene-linear (before ACES) so the
-    // whole frame reads sun-baked — the dry, warm light in the reference sieges —
-    // with the highlight rolloff keeping it from going orange.
-    uBalance: { value: new THREE.Vector3(1.075, 1.005, 0.88) },
-    uSat: { value: 0.86 },
-    uContrast: { value: 1.05 },
-    uWarm: { value: new THREE.Vector3(0.05, 0.02, -0.014) },  // shadow tint (warm earth)
-    uHigh: { value: new THREE.Vector3(0.024, 0.01, -0.022) }, // highlight tint (golden)
-    uVignette: { value: 0.1 }, // gentle — a CSS #vignette already darkens the frame edges
+    uExposure: { value: 1.17 },
+    // A restrained warm balance — clear naturalistic daylight, not a golden-hour
+    // wash. Just enough warmth to feel sunlit; the stone and grass keep their real
+    // colour. (Reference tone: clear, raw, overcast-bright.)
+    uBalance: { value: new THREE.Vector3(1.028, 1.004, 0.965) },
+    uSat: { value: 0.93 },      // keep colour real — only a hair of desaturation
+    uContrast: { value: 1.08 }, // a touch more bite for a crisp, raw read
+    uWarm: { value: new THREE.Vector3(0.028, 0.012, -0.004) },  // shadow tint (subtle earth)
+    uHigh: { value: new THREE.Vector3(0.008, 0.004, -0.008) },  // highlight tint (barely warm)
+    uVignette: { value: 0.08 }, // gentle — a CSS #vignette already darkens the frame edges
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
@@ -63,8 +63,8 @@ interface BiomeCfg {
 // Palette note: grounds/hills/trees are kept SOMBER — desaturated, slightly darker
 // greens — so the field reads clear, defined and medieval rather than candy-bright.
 const BIOMES: Record<Biome, BiomeCfg> = {
-  britain: { bg: '#b8cade', skyTop: '#b7ccdf', skyBot: '#ecddc0', fog: '#cdd2c4', fogNear: 430, fogFar: 1060, hemiSky: '#f7ebd2', hemiGround: '#6d6a3a', sun: '#f9d79c', sunInt: 1.98, amb: '#f3e4cb', ground: '#94914f', sand: false, hill: '#5f6339', hillTop: '#86864e', snow: false, hillH: 62, dune: false, tree: '#3c4b26' },
-  france:  { bg: '#bccbdd', skyTop: '#bcccdd', skyBot: '#eddfc6', fog: '#d1d1c1', fogNear: 450, fogFar: 1080, hemiSky: '#f7edd6', hemiGround: '#726f39', sun: '#f9daa2', sunInt: 1.98, amb: '#f3e6cd', ground: '#9c9752', sand: false, hill: '#67703c', hillTop: '#8b8b4f', snow: false, hillH: 40, dune: false, tree: '#42552a' },
+  britain: { bg: '#b8cade', skyTop: '#b7ccdf', skyBot: '#ecddc0', fog: '#cdd2c4', fogNear: 430, fogFar: 1060, hemiSky: '#f7ebd2', hemiGround: '#767041', sun: '#fbdca6', sunInt: 2.02, amb: '#f3e4cb', ground: '#a2a15a', sand: false, hill: '#666a3d', hillTop: '#909054', snow: false, hillH: 62, dune: false, tree: '#3f4f28' },
+  france:  { bg: '#bccbdd', skyTop: '#bcccdd', skyBot: '#eddfc6', fog: '#d1d1c1', fogNear: 450, fogFar: 1080, hemiSky: '#f7edd6', hemiGround: '#79763f', sun: '#fbddaa', sunInt: 2.02, amb: '#f3e6cd', ground: '#a9a660', sand: false, hill: '#6e753f', hillTop: '#959457', snow: false, hillH: 40, dune: false, tree: '#455829' },
   alpine:  { bg: '#bacfe4', skyTop: '#b2cbe6', skyBot: '#dee5e8', fog: '#d1dbe2', fogNear: 470, fogFar: 1120, hemiSky: '#eef2f8', hemiGround: '#57653c', sun: '#f7ddb4', sunInt: 1.9, amb: '#e6eaf3', ground: '#7c944e', sand: false, hill: '#4f5f3c', hillTop: '#b8bfba', snow: true, hillH: 205, dune: false, tree: '#2e4526' },
   med:     { bg: '#c2ccce', skyTop: '#b2c5cd', skyBot: '#e6dcba', fog: '#d9d1b6', fogNear: 410, fogFar: 1040, hemiSky: '#f5e8c4', hemiGround: '#7d7443', sun: '#f5d494', sunInt: 2.05, amb: '#f3e4c1', ground: '#93925a', sand: false, hill: '#7b7043', hillTop: '#968a57', snow: false, hillH: 58, dune: false, tree: '#505e30' },
   desert:  { bg: '#d6ccb2', skyTop: '#c3cac4', skyBot: '#e8dab6', fog: '#ded1b2', fogNear: 430, fogFar: 1060, hemiSky: '#f5e6bd', hemiGround: '#a2874f', sun: '#f5d89b', sunInt: 2.1, amb: '#f3e4c3', ground: '#bda471', sand: true, hill: '#b7a071', hillTop: '#c9b485', snow: false, hillH: 42, dune: true, tree: '#6d7039' },
@@ -783,9 +783,32 @@ export class Renderer {
         cart.push(new THREE.CylinderGeometry(0.72, 0.72, 0.24, 9).rotateZ(1.5708).rotateY(ry).translate(wx, 0.72, wz));
       }
     };
-    // a soft elliptical ground decal (dug earth / scorch), laid flat on the meadow
-    const flatE = (r1: number, r2: number, x: number, z: number, ry: number, y = 0.035) =>
-      new THREE.CircleGeometry(1, 10).rotateX(-Math.PI / 2).scale(r1, 1, r2).rotateY(ry).translate(x, y, z);
+    // A ground stain that reads as churned/scorched earth, NOT a stamped circle: an
+    // irregular lobed outline, and — crucially — a radial ALPHA falloff (opaque core →
+    // transparent rim) baked into vertex colours, so every patch feathers softly into
+    // the surrounding grass instead of cutting a hard disc. RGB stays white so the
+    // decal material's colour/texture shows through; alpha carries the blend. World-UV
+    // keeps the dirt texture tiling continuously beneath the merged patches.
+    const flatE = (r1: number, r2: number, x: number, z: number, ry: number, y = 0.035) => {
+      const SEG = 20, ph = Math.sin(x * 12.9 + z * 7.3) * 6.283, cr = Math.cos(ry), sr = Math.sin(ry);
+      const verts: number[] = [x, y, z], cols: number[] = [1, 1, 1, 0.9], uvs: number[] = [x * 0.05, z * 0.05], idx: number[] = [];
+      for (let k = 0; k < SEG; k++) {
+        const a = (k / SEG) * Math.PI * 2;
+        // layered lobes → an organic, non-circular rim (never the same twice)
+        const lobe = 0.64 + 0.2 * Math.sin(a * 3 + ph) + 0.12 * Math.sin(a * 5 + ph * 1.7 + 1.1) + 0.09 * Math.sin(a * 2 - ph * 0.7);
+        const lx = Math.cos(a) * r1 * lobe, lz = Math.sin(a) * r2 * lobe;
+        const wx = x + lx * cr - lz * sr, wz = z + lx * sr + lz * cr;
+        verts.push(wx, y, wz); cols.push(1, 1, 1, 0); uvs.push(wx * 0.05, wz * 0.05); // rim alpha 0 → fades out
+      }
+      for (let k = 0; k < SEG; k++) idx.push(0, 1 + k, 1 + ((k + 1) % SEG));
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 4));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(verts.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+      g.setIndex(idx);
+      return g;
+    };
     // a smooth half-buried spoil mound (dug earth is rounded, never boxy)
     const mound = (r: number, x: number, z: number, squash = 0.55) =>
       new THREE.SphereGeometry(r, 7, 5).scale(1, squash, 1).translate(x, r * 0.16, z);
@@ -927,7 +950,7 @@ export class Renderer {
     cluster(ga - 1.25, 3); cluster(ga + 1.25, 3); cluster(back - 0.6, 3); cluster(back + 0.6, 3); cluster(back, 2);
 
     const add = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.castShadow = m.receiveShadow = true; this.scene.add(m); } };
-    const dirt = (hex: string, col: string) => { const t = dirtTexture(hex); t.wrapS = t.wrapT = THREE.RepeatWrapping; return new THREE.MeshLambertMaterial({ map: t, color: col }); };
+    const dirt = (hex: string, col: string) => { const t = dirtTexture(hex); t.wrapS = t.wrapT = THREE.RepeatWrapping; return new THREE.MeshLambertMaterial({ map: t, color: col, vertexColors: true, transparent: true, depthWrite: false }); };
     const decal = (geos: THREE.BufferGeometry[], mat: THREE.Material) => { if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.receiveShadow = true; m.renderOrder = 1; this.scene.add(m); } };
     // the continuous earthwork ribbons (vertex-coloured, smooth-shaded)
     if (worksG.length) { const m = new THREE.Mesh(mergeGeometries(worksG, false), new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
