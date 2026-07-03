@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
@@ -187,7 +187,7 @@ export class Renderer {
   private boulderMesh!: THREE.InstancedMesh;
   private fireMesh!: THREE.InstancedMesh;
   private fireTex!: THREE.CanvasTexture;
-  private brazierMesh?: THREE.InstancedMesh; private braziers: { x: number; y: number; z: number; ph: number }[] = [];
+  private brazierMesh?: THREE.InstancedMesh; private braziers: { x: number; y: number; z: number; ph: number; seg: number }[] = [];
   private emberMesh?: THREE.InstancedMesh; private embers: { x: number; y: number; z: number; vy: number; life: number; max: number }[] = []; private emberHead = 0;
   private shockMesh?: THREE.InstancedMesh; private shocks: { x: number; y: number; z: number; life: number; max: number; scale: number }[] = []; private shockHead = 0;
   private sunGlow?: THREE.Sprite;
@@ -223,7 +223,7 @@ export class Renderer {
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private smokeMesh!: THREE.InstancedMesh; private smoke: { x: number; y: number; z: number; s: number; life: number; max: number }[] = []; private smokeHead = 0;
-  private smokeSources: { x: number; y: number; z: number; s: number; rate: number; dark: number; t: number }[] = []; // castle fires + camp fires
+  private smokeSources: { x: number; y: number; z: number; s: number; rate: number; dark: number; t: number; seg?: number }[] = []; // castle fires + camp fires (seg-linked ones die with their wall)
   private dmgColor = new THREE.Color('#8f8166'); // wall colour at near-zero hp
   private shadowDirtyT = -1; // >0: a collapse is settling; refresh the shadow map ONCE when it elapses
   private selRing: THREE.Mesh;
@@ -287,7 +287,7 @@ export class Renderer {
     // light, far biome haze so the horizon hills read with depth without the old
     // wall of fog swallowing the field
     this.scene.fog = new THREE.Fog(B.fog, B.fogNear, B.fogFar);
-    this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 1400);
+    this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 2800); // far covers the enlarged sky dome at full zoom-out
 
     // Warm raking key light (the sun at this siege's hour) + sky fill so shadows stay alive.
     const T = this.todCfg;
@@ -406,10 +406,12 @@ export class Renderer {
   }
 
   private buildSky() {
-    const geo = new THREE.SphereGeometry(640, 24, 16);
+    // dome sized so the fully zoomed-out camera (dist ≤440 + target offset) never exits it
+    const R = 1200;
+    const geo = new THREE.SphereGeometry(R, 24, 16);
     const top = new THREE.Color(this.biomeCfg.skyTop), bot = new THREE.Color(this.biomeCfg.skyBot);
     const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / 640) * 1.4 + 0.25)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
+    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / R) * 1.4 + 0.25)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
     if (this.todCfg.stars) { // a field of stars over a night assault (HDR → they twinkle in the bloom)
@@ -694,21 +696,19 @@ export class Renderer {
       const rnd = (a: number, b: number) => a + Math.random() * (b - a);
       const boulderG: THREE.BufferGeometry[] = [], slitG: THREE.BufferGeometry[] = [];
       const boulder = (r: number, x: number, y: number, z: number) => {
-        // IcosahedronGeometry is NON-INDEXED (verts duplicated per face), so any
-        // per-vertex random jitter moves coincident corners apart and TEARS the
-        // mesh (the visible gaps between triangles). Displace by a hash of the
-        // vertex POSITION instead — identical position → identical offset → the
-        // stone deforms organically but stays watertight.
-        const g = new THREE.IcosahedronGeometry(r, 1), p = g.attributes.position;
+        // IcosahedronGeometry is NON-INDEXED (verts duplicated per face) and its
+        // subdivision computes shared edge midpoints per-face, so displacing the
+        // raw geometry can still tear hairline gaps between triangles. WELD it
+        // into an indexed mesh first — shared vertices become literally the same
+        // vertex — then displace freely: an indexed mesh cannot split at a seam.
+        // (strip normals/uvs first — mergeVertices only welds verts whose EVERY
+        // attribute matches, and the per-face normals would defeat the weld)
+        const raw = new THREE.IcosahedronGeometry(r, 1); raw.deleteAttribute('normal'); raw.deleteAttribute('uv');
+        const g = mergeVertices(raw, 1e-3), p = g.attributes.position;
         const seed = x * 7.13 + z * 3.71;
-        const h = (px: number, py: number, pz: number, k: number) => {
-          const v = Math.sin(px * 12.9898 + py * 78.233 + pz * 37.719 + seed + k * 53.7) * 43758.5453;
-          return (v - Math.floor(v)) - 0.5;
-        };
-        for (let i = 0; i < p.count; i++) {
-          const px = p.getX(i), py = p.getY(i), pz = p.getZ(i);
-          p.setXYZ(i, px * (1 + h(px, py, pz, 1) * 0.24), py * (1 + h(px, py, pz, 2) * 0.2), pz * (1 + h(px, py, pz, 3) * 0.24));
-        }
+        const h = (i: number, k: number) => { const v = Math.sin(i * 12.9898 + seed + k * 53.7) * 43758.5453; return (v - Math.floor(v)) - 0.5; };
+        for (let i = 0; i < p.count; i++)
+          p.setXYZ(i, p.getX(i) * (1 + h(i, 1) * 0.24), p.getY(i) * (1 + h(i, 2) * 0.2), p.getZ(i) * (1 + h(i, 3) * 0.24));
         g.scale(1, 0.58, 1); g.rotateY((seed * 977) % 3.14); g.translate(x, y, z); g.computeVertexNormals();
         // warm weathered stone, tuned to the game's sandstone and never brighter than base
         this.paint(g, new THREE.Color('#968870').multiplyScalar(0.6 + Math.random() * 0.28));
@@ -1260,19 +1260,22 @@ export class Renderer {
   // and banners rising over the host. All bloom-driven (HDR emissives). ----
   private buildAtmosphere() {
     const rnd = (a: number, b: number) => a + Math.random() * (b - a);
-    // brazier / fire-pot positions along the battlements (tower tops + gate flanks)
-    const bowls: THREE.BufferGeometry[] = [];
-    for (const b of CASTLE) {
-      const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
-      if (b.kind === 'tower' && Math.random() < 0.72) this.braziers.push({ x: cx, y: b.h + 1.4, z: cz, ph: Math.random() * 6.28 });
-      else if (b.kind === 'gate') { this.braziers.push({ x: b.x0 + 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28 }); this.braziers.push({ x: b.x1 - 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28 }); }
+    // brazier / fire-pot positions along the battlements (tower tops + gate flanks).
+    // Each remembers its CASTLE segment so the whole pyre — bowl, flame, smoke —
+    // falls with the wall instead of hovering over the breach.
+    for (let s = 0; s < CASTLE.length; s++) {
+      const b = CASTLE[s], cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+      if (b.kind === 'tower' && Math.random() < 0.72) this.braziers.push({ x: cx, y: b.h + 1.4, z: cz, ph: Math.random() * 6.28, seg: s });
+      else if (b.kind === 'gate') { this.braziers.push({ x: b.x0 + 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28, seg: s }); this.braziers.push({ x: b.x1 - 2.5, y: b.h + 1.2, z: cz, ph: Math.random() * 6.28, seg: s }); }
     }
+    const bowlMat = this.stone('#2a2320');
     for (const p of this.braziers) {
-      bowls.push(new THREE.CylinderGeometry(1.0, 0.6, 0.7, 8).translate(p.x, p.y - 0.4, p.z));
+      const bowls: THREE.BufferGeometry[] = [new THREE.CylinderGeometry(1.0, 0.6, 0.7, 8).translate(p.x, p.y - 0.4, p.z)];
       for (let k = 0; k < 3; k++) { const a = k / 3 * 6.28; bowls.push(new THREE.CylinderGeometry(0.09, 0.09, 1.5, 4).translate(p.x + Math.cos(a) * 0.5, p.y - 1.25, p.z + Math.sin(a) * 0.5)); }
-      this.smokeSources.push({ x: p.x, y: p.y + 0.9, z: p.z, s: 1.1, rate: 0.2, dark: 0.5, t: Math.random() });
+      const bowl = new THREE.Mesh(mergeGeometries(bowls, false), bowlMat); this.scene.add(bowl);
+      this.segVis[p.seg]?.extras.push(bowl); // crumble() hides a section's extras — the bowl goes down with it
+      this.smokeSources.push({ x: p.x, y: p.y + 0.9, z: p.z, s: 1.1, rate: 0.2, dark: 0.5, t: Math.random(), seg: p.seg });
     }
-    if (bowls.length) this.scene.add(new THREE.Mesh(mergeGeometries(bowls, false), this.stone('#2a2320')));
     const fmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     fmat.color.setRGB(3.2, 2.0, 0.95);
     this.brazierMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2.6, 3.4), fmat, Math.max(1, this.braziers.length));
@@ -1353,7 +1356,12 @@ export class Renderer {
   private updateAtmosphere(dt: number) {
     if (this.brazierMesh) {
       for (let i = 0; i < this.braziers.length; i++) {
-        const b = this.braziers[i]; b.ph += dt * (6 + Math.random() * 2);
+        const b = this.braziers[i];
+        if ((this.segVis[b.seg]?.crumbling ?? 0) > 0 || CASTLE[b.seg]?.dead) { // its wall fell — the pyre went down with it
+          this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001);
+          this.dummy.updateMatrix(); this.brazierMesh.setMatrixAt(i, this.dummy.matrix); continue;
+        }
+        b.ph += dt * (6 + Math.random() * 2);
         const fl = 0.85 + Math.sin(b.ph) * 0.12 + Math.random() * 0.12;
         this.dummy.position.set(b.x, b.y + Math.sin(b.ph * 0.7) * 0.14, b.z); this.dummy.quaternion.copy(this.billboard);
         this.dummy.scale.set(fl, fl * 1.25, fl); this.dummy.updateMatrix(); this.brazierMesh.setMatrixAt(i, this.dummy.matrix);
@@ -1809,6 +1817,7 @@ export class Renderer {
       const s = this.shakeAmt * this.camDist * 0.012;
       this.camera.position.x += (Math.random() - 0.5) * s; this.camera.position.y += (Math.random() - 0.5) * s; this.camera.position.z += (Math.random() - 0.5) * s;
     }
+    if (this.camera.position.y < 1.1) this.camera.position.y = 1.1; // anywhere but underground
     const dir = new THREE.Vector3().subVectors(this.camera.position, this.camTarget);
     const ang = Math.atan2(dir.x, dir.z);
     this.billboard.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ang); // dust/projectiles still use the quaternion
@@ -1938,6 +1947,7 @@ export class Renderer {
     if (!this.smokeMesh) return;
     const fog = new THREE.Color(this.biomeCfg.fog), wind = 1.6;
     for (const src of this.smokeSources) {
+      if (src.seg !== undefined && ((this.segVis[src.seg]?.crumbling ?? 0) > 0 || CASTLE[src.seg]?.dead)) continue; // its wall fell — the fire is out
       src.t -= dt;
       if (src.t <= 0) {
         src.t += src.rate;
@@ -2113,7 +2123,10 @@ export class Renderer {
   clampTarget() {
     this.camTarget.x = Math.max(WORLD.minX, Math.min(WORLD.maxX, this.camTarget.x));
     this.camTarget.z = Math.max(WORLD.minZ - 10, Math.min(WORLD.maxZ + 10, this.camTarget.z));
-    this.camDist = Math.max(30, Math.min(252, this.camDist));
-    this.camPitch = Math.max(0.3, Math.min(1.46, this.camPitch));
+    // free-range camera: right down among the soldiers, out to a full theatre
+    // view, and low enough to skim the grass — anywhere but underground
+    // (updateCamera floors the eye at y=1.1).
+    this.camDist = Math.max(11, Math.min(440, this.camDist));
+    this.camPitch = Math.max(0.07, Math.min(1.46, this.camPitch));
   }
 }
