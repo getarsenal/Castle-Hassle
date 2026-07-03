@@ -95,6 +95,32 @@ any combat change; naive-assault baseline ~6/8 wins, 56s-185s durations).
   manifest 'any' + short-height CSS. Battle report: kills/MVP/surgeons in the
   Butcher's Bill; telemetry at localStorage castlehassle.blog.v1.
 
+## Combat expansion II (the '10 more' batch)
+- Horizon: ground folds to a 300m disc under a hill ring reaching the sky dome
+  (r0 250 → r1 1150), feet brightness-matched; coastal sea 2400x1500.
+- Weather per battle (seed roll, override localStorage 'castlehassle.weather'):
+  rain (weak bows, no fire, mud, dim+rain streaks), mist (range 0.75, thick fog),
+  wind (arrow drift, fast haze/flags, eager fire spread). Footing: mud ring at
+  walls (MUD_RING) slows all, bogs charges (0.55 dmg, no knockback). Battlement
+  archers get HIGH_GROUND 1.15.
+- Banner bearers: u.bearer (first man of fighting companies); alive = fear x0.6,
+  killed = -18 morale + fear x1.3. Pennants = render pennantMesh (200 cap).
+- Facing: sim.faceDiv(div, delta) + Wheel/About Face tools (hold-ground only).
+- Assault works (per-siege equipment, muster 'Siege Works' row; reset in
+  enterCastle/enterRaid): towers 250g x3 (dock = 3 permanent ladders), covered
+  ram 300g (rams hard, roof = arrow/oil cover 4.2m). Pushed by the host (3
+  nearby = full speed, else crawl), burnable (fire x3), ballistae target them
+  FIRST. sim.assaultWorks / render workModels.
+- Barricades: low 'gate' segs (h<=3) 13m inside real gates — bashed fast, ONE
+  plug company, no oil/treb/ram targeting (h>3 filters real gates).
+- Sorties: aggressive/cunning castellans send 2 light companies out through an
+  open breach at your engines (~26s raid, then recall).
+- Fire spreads house-to-house downwind (never in rain); slow-mo (0.32x, 1.3s)
+  on first breach + garrison break, tap skips.
+- Balance state: naive assault 4/8 wins avg; equipment converts stall seeds
+  (17283: bare STALL → towers+ram WIN); rain flips it back. Plug discipline:
+  keep guard exempt from plugs, barricades rate 1 company.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

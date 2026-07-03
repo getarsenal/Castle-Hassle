@@ -193,10 +193,12 @@ export class Renderer {
   private sunGlow?: THREE.Sprite;
   // drifting battlefield haze — big soft sheets on the wind
   private hazeMesh?: THREE.InstancedMesh; private haze: { x: number; y: number; z: number; s: number }[] = [];
+  private rainMesh?: THREE.InstancedMesh; private rain: { x: number; y: number; z: number; v: number }[] = [];
+  private pennantMesh?: THREE.InstancedMesh; // one small standard per company, above its bearer
   // melee clash sparks (fed by sim.drainClashes())
   private sparkMesh?: THREE.InstancedMesh; private sparks: { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number }[] = []; private sparkHead = 0;
   // the town burns — houses ignited by fire arrows / breaches
-  private houses: { x: number; z: number; h: number }[] = []; private burning: { x: number; z: number; h: number; ph: number }[] = [];
+  private houses: { x: number; z: number; h: number }[] = []; private burning: { x: number; z: number; h: number; ph: number; spreadT?: number }[] = [];
   private flameMesh?: THREE.InstancedMesh;
   // auto-director points of interest
   private lastBreach = { x: 0, z: 0, t: -1e9 };
@@ -259,8 +261,10 @@ export class Renderer {
   private biomeCfg: BiomeCfg = BIOMES.britain;
   private coastal = false;
   private tod: TimeOfDay = 'noon'; private todCfg: TodCfg = TOD.noon;
-  constructor(private sim: Sim, canvasParent: HTMLElement, env?: { biome: Biome; coastal: boolean; tod?: TimeOfDay }) {
+  private weather: 'clear' | 'rain' | 'mist' | 'wind' = 'clear';
+  constructor(private sim: Sim, canvasParent: HTMLElement, env?: { biome: Biome; coastal: boolean; tod?: TimeOfDay; weather?: 'clear' | 'rain' | 'mist' | 'wind' }) {
     this.tod = env?.tod ?? 'noon'; this.todCfg = TOD[this.tod];
+    this.weather = env?.weather ?? 'clear';
     // fold the hour's sky/light palette over the biome's (biome sets the land, the hour sets the light)
     this.biomeCfg = { ...BIOMES[env?.biome ?? 'britain'], ...(this.todCfg.sky ?? {}) };
     this.coastal = !!env?.coastal;
@@ -286,13 +290,16 @@ export class Renderer {
     this.scene.background = new THREE.Color(B.bg);
     // light, far biome haze so the horizon hills read with depth without the old
     // wall of fog swallowing the field
-    this.scene.fog = new THREE.Fog(B.fog, B.fogNear, B.fogFar);
+    let fogNear = B.fogNear, fogFar = B.fogFar, fogCol = B.fog;
+    if (this.weather === 'mist') { fogNear = 90; fogFar = 420; fogCol = '#cfd3cd'; }       // the field swims in murk
+    else if (this.weather === 'rain') { fogNear = B.fogNear * 0.6; fogFar = B.fogFar * 0.7; }
+    this.scene.fog = new THREE.Fog(fogCol, fogNear, fogFar);
     this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 2800); // far covers the enlarged sky dome at full zoom-out
 
     // Warm raking key light (the sun at this siege's hour) + sky fill so shadows stay alive.
     const T = this.todCfg;
     this.scene.add(new THREE.HemisphereLight(B.hemiSky, B.hemiGround, T.hemiInt));
-    const sun = new THREE.DirectionalLight(B.sun, B.sunInt * T.sunInt); sun.position.set(...T.sunPos);
+    const sun = new THREE.DirectionalLight(B.sun, B.sunInt * T.sunInt * (this.weather === 'rain' ? 0.72 : 1)); sun.position.set(...T.sunPos);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1536, 1536); // frozen + re-baked rarely, so 1536 stays crisp on the big static structures at a fraction of 2048's memory/bake cost
     const sc = sun.shadow.camera as THREE.OrthographicCamera;
@@ -324,6 +331,7 @@ export class Renderer {
     this.buildBallistae();
     this.buildEffects();
     this.buildMotes();
+    this.buildAssaultWorks();
     this.buildAtmosphere();
     this.buildComposer();
 
@@ -1264,6 +1272,50 @@ export class Renderer {
     }
   }
 
+  // ---- the mobile assault works: siege towers & the covered ram ----
+  private workModels: { grp: THREE.Group; smoked: boolean }[] = [];
+  private buildAssaultWorks() {
+    const timber = this.stone('#77552f'), dark = this.stone('#54381e'), hide = this.stone('#6b4f33');
+    for (const e of this.sim.assaultWorks) {
+      const g = new THREE.Group();
+      if (e.kind === 'tower') {
+        const parts: THREE.BufferGeometry[] = [
+          new THREE.BoxGeometry(3.4, 8.8, 3.6).translate(0, 4.4, 0),
+          new THREE.BoxGeometry(4.0, 0.5, 4.2).translate(0, 8.9, 0),         // fighting top
+        ];
+        for (const sx of [-1.7, 1.7]) for (const k of [-1, 1]) parts.push(new THREE.BoxGeometry(0.5, 0.9, 0.5).translate(sx, 9.4, k * 1.6)); // crenels
+        g.add(new THREE.Mesh(mergeGeometries(parts, false), timber));
+        const plate = new THREE.Mesh(new THREE.BoxGeometry(3.6, 7.6, 0.3), hide); plate.position.set(0, 4.2, -1.9); g.add(plate); // hide-clad face
+        for (const [wx, wz] of [[-1.6, -1.4], [1.6, -1.4], [-1.6, 1.4], [1.6, 1.4]] as const) {
+          const w = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.4, 10).rotateZ(Math.PI / 2), dark); w.position.set(wx, 0.7, wz); g.add(w);
+        }
+      } else {
+        const roofL = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.25, 5.4).rotateZ(0.5), hide); roofL.position.set(-1.05, 2.4, 0); g.add(roofL);
+        const roofR = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.25, 5.4).rotateZ(-0.5), hide); roofR.position.set(1.05, 2.4, 0); g.add(roofR);
+        for (const pz2 of [-2.2, 0, 2.2]) for (const px2 of [-1.6, 1.6]) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.4, 0.35), timber); p.position.set(px2, 1.2, pz2); g.add(p); }
+        const log = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 4.6, 8).rotateX(Math.PI / 2), dark); log.position.set(0, 1.5, 0); g.add(log);
+        for (const [wx, wz] of [[-1.7, -1.9], [1.7, -1.9], [-1.7, 1.9], [1.7, 1.9]] as const) {
+          const w = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.35, 10).rotateZ(Math.PI / 2), dark); w.position.set(wx, 0.6, wz); g.add(w);
+        }
+      }
+      g.traverse(o => { o.castShadow = true; });
+      g.position.set(e.x, 0, e.z);
+      this.scene.add(g); this.workModels.push({ grp: g, smoked: false });
+    }
+  }
+  private updateAssaultWorks() {
+    for (let i = 0; i < this.workModels.length; i++) {
+      const e = this.sim.assaultWorks[i], m = this.workModels[i]; if (!e) continue;
+      m.grp.position.x = e.x; m.grp.position.z = e.z;
+      m.grp.rotation.y = Math.atan2(-e.x, -e.z); // face the castle centre as it rolls
+      if (e.state === 'dead') { // burned: keel over, smoulder once
+        m.grp.rotation.z = Math.min(0.5, m.grp.rotation.z + 0.01);
+        if (!m.smoked) { m.smoked = true; this.smokeSources.push({ x: e.x, y: 2, z: e.z, s: 2.4, rate: 0.5, dark: 0.7, t: 0 }); this.igniteFlash(e.x, e.z); }
+      } else if (e.hp < e.maxhp * 0.45 && !m.smoked) { m.smoked = true; this.smokeSources.push({ x: e.x, y: 3, z: e.z, s: 1.6, rate: 0.4, dark: 0.6, t: 0 }); }
+    }
+  }
+  private igniteFlash(x: number, z: number) { this.spawnDust(x, 2, z, 4, 3); for (let k = 0; k < 6; k++) this.spawnEmber(x, 2.5, z); }
+
   // ---- TIER 3 atmosphere: brazier fires + embers, impact shockwaves, a sun disc,
   // and banners rising over the host. All bloom-driven (HDR emissives). ----
   private buildAtmosphere() {
@@ -1323,6 +1375,13 @@ export class Renderer {
       this.scene.add(this.makeBanner(bx + 0.18, 9.6, bz, 2.4, 1.5, '#7c2b22'));
     }
 
+    if (this.weather === 'rain') { // driving rain: instanced streaks recycled through a volume around the camera target
+      const rmat = new THREE.MeshBasicMaterial({ color: '#9fb4c8', transparent: true, opacity: 0.34, depthWrite: false });
+      this.rainMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.05, 2.6), rmat, 420);
+      this.rainMesh.frustumCulled = false; this.scene.add(this.rainMesh);
+      for (let i = 0; i < 420; i++) this.rain.push({ x: rnd(-180, 180), y: rnd(0, 60), z: rnd(-150, 200), v: rnd(26, 40) });
+    }
+
     // drifting battlefield haze — a handful of very large, very faint smoke sheets
     // riding a steady wind. This is what makes a still frame read as a LIVING field:
     // the air itself moves, thickening near the burning castle.
@@ -1337,6 +1396,18 @@ export class Renderer {
     this.hazeMesh.frustumCulled = false; this.hazeMesh.renderOrder = 3; this.scene.add(this.hazeMesh);
     for (let i = 0; i < 22; i++) this.haze.push({ x: rnd(-190, 190), y: rnd(2.5, 9), z: rnd(-150, 190), s: rnd(26, 52) });
 
+    // company standards: a small pennant above each living bearer — the fights
+    // read as COMPANIES with hearts, and you can see whose standard has fallen
+    {
+      const pc = document.createElement('canvas'); pc.width = 32; pc.height = 32; const px2 = pc.getContext('2d')!;
+      px2.fillStyle = '#caa84a'; px2.fillRect(14, 2, 3, 30);                      // staff
+      px2.fillStyle = '#fff'; px2.beginPath(); px2.moveTo(17, 3); px2.lineTo(31, 7); px2.lineTo(17, 12); px2.fill(); // swallowtail (tinted per instance)
+      const ptex = new THREE.CanvasTexture(pc); ptex.colorSpace = THREE.SRGBColorSpace;
+      const pmat = new THREE.MeshBasicMaterial({ map: ptex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
+      this.pennantMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2.0, 2.0), pmat, 200);
+      this.pennantMesh.frustumCulled = false; this.scene.add(this.pennantMesh);
+    }
+
     // melee clash sparks — brief steel-on-steel glints where the lines meet
     const kmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     kmat.color.setRGB(2.5, 2.2, 1.5);
@@ -1347,7 +1418,7 @@ export class Renderer {
     // house fires (the town alight) — bigger flames than the braziers, capped
     const gmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     gmat.color.setRGB(3.0, 1.8, 0.8);
-    this.flameMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.4, 4.6), gmat, 16);
+    this.flameMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.4, 4.6), gmat, 20);
     this.flameMesh.frustumCulled = false; this.scene.add(this.flameMesh);
   }
 
@@ -1395,9 +1466,20 @@ export class Renderer {
       }
       this.shockMesh.instanceMatrix.needsUpdate = true; if (this.shockMesh.instanceColor) this.shockMesh.instanceColor.needsUpdate = true;
     }
+    if (this.rainMesh) { // rain falls through the world volume and recycles
+      for (let i = 0; i < this.rain.length; i++) {
+        const p = this.rain[i];
+        p.y -= p.v * dt; p.x += dt * 6; // slanted by the storm wind
+        if (p.y < 0.2) { p.y = 55 + Math.random() * 10; p.x = this.camTarget.x + (Math.random() - 0.5) * 320; p.z = this.camTarget.z + (Math.random() - 0.5) * 300; }
+        this.dummy.position.set(p.x, p.y, p.z); this.dummy.quaternion.copy(this.billboard);
+        this.dummy.updateMatrix(); this.rainMesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.rainMesh.instanceMatrix.needsUpdate = true;
+    }
     // ---- drifting haze: ride the wind, wrap at the field edge, thicken near fires ----
     if (this.hazeMesh) {
-      const wx = 2.1, wz = 0.8; // the prevailing wind
+      const windK = this.weather === 'wind' ? 2.6 : 1;
+      const wx = 2.1 * windK, wz = 0.8 * windK; // the prevailing wind
       for (let i = 0; i < this.haze.length; i++) {
         const p = this.haze[i];
         p.x += wx * dt; p.z += wz * dt; p.y += Math.sin(this.time * 0.4 + i * 2.1) * dt * 0.25;
@@ -1410,6 +1492,21 @@ export class Renderer {
         this.dummy.scale.set(p.s, p.s * 0.55, 1); this.dummy.updateMatrix(); this.hazeMesh.setMatrixAt(i, this.dummy.matrix);
       }
       this.hazeMesh.instanceMatrix.needsUpdate = true;
+    }
+    if (this.pennantMesh) { // pennants track their bearers; a fallen standard simply vanishes
+      const sim = this.sim; let pi = 0;
+      for (const u of sim.units) {
+        if (pi >= 200) break;
+        if (u.bearer < 0 || !sim.alive[u.bearer]) continue;
+        const b = u.bearer;
+        this.dummy.position.set(sim.px[b], sim.py[b] + 3.1 + Math.sin(this.time * 2 + b) * 0.1, sim.pz[b]);
+        this.dummy.quaternion.copy(this.billboard); this.dummy.scale.setScalar(1);
+        this.dummy.updateMatrix(); this.pennantMesh.setMatrixAt(pi, this.dummy.matrix);
+        this._col.copy(sim.fac[b] === 0 ? COL_ATTACK : COL_DEFEND).multiplyScalar(u.shaken ? 0.6 : 1);
+        this.pennantMesh.setColorAt(pi, this._col); pi++;
+      }
+      for (let k = pi; k < 200; k++) { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.pennantMesh.setMatrixAt(k, this.dummy.matrix); }
+      this.pennantMesh.instanceMatrix.needsUpdate = true; if (this.pennantMesh.instanceColor) this.pennantMesh.instanceColor.needsUpdate = true;
     }
     // ---- melee clash sparks + the rolling clash centroid (auto-director POI) ----
     const clashes = this.sim.drainClashes();
@@ -1446,10 +1543,27 @@ export class Renderer {
       for (let k = 0; k < 4; k++) this.spawnEmber(pours[c], 6, pours[c + 1]);
     }
     if (this.flameMesh) {
-      // slots 6..15 render the sim's burning-pitch patches (incendiary trebuchet ammo)
+      // FIRE SPREADS: every so often a burning roof gifts its flame downwind
+      // (east, with the prevailing wind — twice as eager in a gale, never in rain)
+      if (this.weather !== 'rain') {
+        for (const b of this.burning) {
+          if (b.spreadT === undefined) b.spreadT = this.time + 7 + Math.random() * 5;
+          if (this.time < b.spreadT || this.burning.length >= 8) continue;
+          b.spreadT = this.time + 8 + Math.random() * 6;
+          if (Math.random() > (this.weather === 'wind' ? 0.85 : 0.45)) continue;
+          let best = -1, bd = 15 * 15;
+          for (let h = 0; h < this.houses.length; h++) {
+            const dx = this.houses[h].x - b.x, dz = this.houses[h].z - b.z;
+            const d = dx * dx + dz * dz + (dx < 0 ? 60 : 0); // downwind (east) neighbours catch first
+            if (d < bd) { bd = d; best = h; }
+          }
+          if (best >= 0) this.igniteHouse(this.houses[best].x, this.houses[best].z, 3);
+        }
+      }
+      // slots 8..19 render the sim's burning-pitch patches (incendiary trebuchet ammo)
       const patches = (this.sim as any).burnPatches ?? [];
-      for (let i = 6; i < 16; i++) {
-        const p = patches[i - 6];
+      for (let i = 8; i < 20; i++) {
+        const p = patches[i - 8];
         if (p && p.life > 0) {
           const fl = (0.7 + Math.sin(this.time * 6 + i) * 0.12) * Math.min(1, p.life / 1.5);
           this.dummy.position.set(p.x, 1.4, p.z); this.dummy.quaternion.copy(this.billboard);
@@ -1457,7 +1571,7 @@ export class Renderer {
           if (Math.random() < 0.25) this.spawnEmber(p.x + (Math.random() - 0.5) * 3, 1.2, p.z + (Math.random() - 0.5) * 3);
         } else { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.flameMesh.setMatrixAt(i, this.dummy.matrix); }
       }
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 8; i++) {
         const b = this.burning[i];
         if (b) {
           b.ph += dt * (5 + (i % 3));
@@ -1482,7 +1596,8 @@ export class Renderer {
   // A flaming arrow (or a collapse) sets the nearest thatched house alight — capped
   // so the town smoulders dramatically without turning into a bonfire wall.
   private igniteHouse(x: number, z: number, radius: number) {
-    if (this.burning.length >= 6) return;
+    if (this.weather === 'rain') return; // soaked thatch won't take
+    if (this.burning.length >= 8) return;
     let best = -1, bd = radius * radius;
     for (let i = 0; i < this.houses.length; i++) {
       const h = this.houses[i], d = (h.x - x) * (h.x - x) + (h.z - z) * (h.z - z);
@@ -1511,6 +1626,10 @@ export class Renderer {
     this.introFrom = { tx: LAYOUT.gate.x * 0.5, tz: LAYOUT.D * 0.5 + 58, d: 48, yaw: this.camYaw * 0.25, pitch: 0.34 };
     this.introT = 1;
   }
+
+  // Did a wall/gate section come down within the last half-second? (drives the
+  // decisive-moment slow-mo in main)
+  hasFreshBreach(): boolean { return this.lastBreach.t > 0 && this.time - this.lastBreach.t < 0.5; }
 
   // During player idle, drift gently toward where the battle actually is — the
   // freshest breach first, else the thick of the melee. Cancelled by any input.
@@ -1800,7 +1919,7 @@ export class Renderer {
   }
   // ripple every banner in the wind (cheap: a handful of small segmented planes)
   private updateFlags() {
-    const t = this.time * 2.4;
+    const t = this.time * (this.weather === 'wind' ? 3.6 : 2.4);
     for (const f of this.flags) {
       if (!f.mesh.visible) continue;
       const p = f.mesh.geometry.attributes.position, a = p.array as Float32Array, b = f.base;
@@ -2020,6 +2139,7 @@ export class Renderer {
     this.updateFlags();
     this.updateMotes(dt);
     this.updateEffects(dt);
+    this.updateAssaultWorks();
     this.updateAtmosphere(dt);
 
     this.uTime.value = this.time * 9; // advance the shader bob clock

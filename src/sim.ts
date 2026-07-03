@@ -95,6 +95,13 @@ const CHARGE_STUN = 0.7;                      // extra attack delay on a knocked
 // through it. (Same-faction stays a soft shove so ranks can still flow.)
 const ENEMY_BLOCK_R = 1.6, ENEMY_BLOCK_F = 2.4;
 const WOUND_FRAC = 0.3, WOUND_MULT = 0.72;    // badly wounded men strike weaker blows
+// ---- WEATHER & FOOTING ----
+export type Weather = 'clear' | 'rain' | 'mist' | 'wind';
+const MUD_RING = 12;        // churned ground hugging the walls (the siege has been here a while)
+const MUD_SPEED = 0.8;      // speed multiplier in the churn
+const RAIN_BOW = 0.85;      // wet strings loose weaker
+const MIST_RANGE = 0.75;    // archers can't mark targets in the murk
+const HIGH_GROUND = 1.15;   // plunging fire from the battlements bites harder
 const CAPTURE_TIME = 11;   // seconds holding the keep to raise your banner
 // A gate is forced by a single RAM, not by sheer numbers: once a crew (a handful
 // of men) is on it, it takes a FIXED amount of damage per second regardless of how
@@ -123,7 +130,7 @@ export interface WallLine { x0: number; z0: number; x1: number; z1: number; hori
 export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
 // A scaling ladder raised against a wall section. Attackers queue at the foot
 // and climb it single-file; `raise` animates it swinging up (0..1).
-export interface Ladder { seg: number; along: number; bx: number; bz: number; horiz: boolean; outer: number; raise: number; }
+export interface Ladder { seg: number; along: number; bx: number; bz: number; horiz: boolean; outer: number; raise: number;  dead?: boolean; }
 // A defensive ballista emplacement on a stretch of wall: it shoots bolts at the
 // attackers and is knocked out when the wall section under it (`seg`) is destroyed.
 export interface Ballista { x: number; z: number; y: number; seg: number; horiz: boolean; outer: number; }
@@ -527,6 +534,7 @@ export interface Unit {
   rallyCd: number;     // seconds until this company can answer another rally horn
   tight: boolean;      // close-order (breach plugs): tighter files, harder to shove
   firepot: boolean;    // trebuchet battery loaded with incendiaries (needs the upgrade)
+  bearer: number;      // the company's standard bearer (soldier index; -1 = fallen/none)
   crewFor: number;     // unit id of the engine battery this company crews (-1 = none)
   goal: number;            // flow-field goal cell (for long-range routing to the anchor)
   ax: number; az: number;  // formation anchor (centre)
@@ -636,8 +644,11 @@ export class Sim {
   // The defending commander's temperament — seeded per castle, so each siege
   // defends differently, and difficulty scales BEHAVIOUR as well as headcount.
   cmd = { name: 'Castellan', kind: 'steady' as 'aggressive' | 'stubborn' | 'cunning' | 'steady', sortieRange: 38, wallAbandon: 40, plugCompanies: 2, moraleGrit: 0, oilCd: 6.5 };
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF, vet: number[] = [1, 1, 1, 1, 1]) {
+  weather: Weather = 'clear';
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF, vet: number[] = [1, 1, 1, 1, 1], env?: { weather?: Weather; towers?: number; ram?: boolean }) {
     this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; this.atk = atk;
+    this.weather = env?.weather ?? 'clear';
+    this.equipTowers = Math.max(0, Math.min(3, env?.towers ?? 0)); this.equipRam = !!env?.ram;
     for (let i = 0; i < 5; i++) this.vetMul[i] = vet[i] ?? 1;
     generateCastle(seed, style);
     // pick the castellan: temperament from the castle's seed; sharper at higher difficulty
@@ -658,6 +669,15 @@ export class Sim {
   private aSpd(t: number) { return this.atk.spdA?.[t] ?? 1; }
   private aCd(t: number) { return (t === UType.Siege ? this.atk.reload : 1) * (this.atk.cdA?.[t] ?? 1); }
   private aRng(t: number) { return this.atk.rngA?.[t] ?? 1; }
+  equipTowers = 0; equipRam = false; // per-siege assault works (bought at muster)
+  // How firm the ground is underfoot (1 = firm): the churned ring at the walls is
+  // heavy going, and rain turns the whole field soft. Horses feel it most.
+  footing(x: number, z: number): number {
+    const dw = Math.max(Math.abs(x) - LAYOUT.W, Math.abs(z) - LAYOUT.D);
+    let f = dw > 0 && dw < MUD_RING ? MUD_SPEED : 1;
+    if (this.weather === 'rain') f *= 0.88;
+    return f;
+  }
   // per-arm veterancy combat multiplier (attacker only), indexed by UType. Lifts both
   // hp at spawn and the arm's damage. Defaults to 1 (a green, unranked host).
   vetMul = [1, 1, 1, 1, 1];
@@ -724,6 +744,7 @@ export class Sim {
       id: this.units.length, faction, type, div: opts.div ?? -1, s0, count, alive: count,
       morale: 100, routing: false, hold: !!opts.hold,
       shaken: false, recentLoss: 0, rallyCd: 0, tight: false, firepot: false, crewFor: opts.crewFor ?? -1,
+      bearer: (type !== UType.Siege && (opts.crewFor ?? -1) < 0 && count >= 12) ? s0 : -1, // fighting companies carry a standard
       goal: opts.goal ?? cellOf(ax, az),
       ax, az,
       facing: Math.atan2(0 - ax, 0 - az), // face the castle (origin) by default
@@ -834,6 +855,11 @@ export class Sim {
         { name: 'Engine Crews', div: UType.Siege, crewFor: battery.id });
     }
 
+    // the purchased assault works roll up behind the host
+    this.assaultWorks = [];
+    for (let k = 0; k < this.equipTowers; k++) this.assaultWorks.push({ kind: 'tower', x: (k - (this.equipTowers - 1) / 2) * 34, z: F + 98, hp: 2800, maxhp: 2800, state: 'advance', seg: -1, ladders: [] });
+    if (this.equipRam) this.assaultWorks.push({ kind: 'ram', x: L.gate.x, z: F + 92, hp: 2000, maxhp: 2000, state: 'advance', seg: -1, ladders: [] });
+
     // wall archers, then flaming tower archers on every tower top
     this.addUnit(Faction.Defender, UType.Archer, S(wallPts.length), (i) => wallPts[i], { hold: true, name: 'Wall Archers' });
     this.addUnit(Faction.Defender, UType.Archer, S(NT * 4), (i) => {
@@ -872,6 +898,25 @@ export class Sim {
     // last ring and outnumber its guard); a lone keep, by holding the courtyard
     // immediately around it; a town, by storming its whole centre.
     this.captureR = citd ? Math.max(20, (citd.x1 - citd.x0) / 2 + 4) : LAYOUT.palisade ? Math.max(28, Math.min(W, D) - 4) : 20;
+    // BARRICADES: timber barriers thrown across the lanes inside each gate — the
+    // post-breach fight is house-to-house work, not an open sprint to the keep.
+    // They ride the GATE mechanics (bashed through by a crew in ~10s, defenders
+    // pre-form behind them when threatened) but stand low and weak, and no
+    // engine ever wastes a stone on one (filters check h > 3 for real gates).
+    if (!L.palisade) {
+      for (let s2 = CASTLE.length - 1; s2 >= 0; s2--) {
+        const g = CASTLE[s2]; if (g.kind !== 'gate' || g.h <= 3) continue;
+        const gcx = (g.x0 + g.x1) / 2, gcz = (g.z0 + g.z1) / 2;
+        const kx = this.keepX - gcx, kz = this.keepZ - gcz, kl = Math.hypot(kx, kz) || 1;
+        const bx = gcx + kx / kl * 13, bz = gcz + kz / kl * 13;
+        if (blockedAt(bx, bz)) continue; // a house sits there — the lane is its own barricade
+        const horiz = Math.abs(kx) < Math.abs(kz), w2 = Math.min(5, (g.x1 - g.x0) / 2 + 1);
+        CASTLE.push(horiz
+          ? { x0: bx - w2, x1: bx + w2, z0: bz - 0.7, z1: bz + 0.7, h: 2.2, kind: 'gate', hp: 300, maxhp: 300, dead: false }
+          : { x0: bx - 0.7, x1: bx + 0.7, z0: bz - w2, z1: bz + w2, h: 2.2, kind: 'gate', hp: 300, maxhp: 300, dead: false });
+      }
+      rebuildBlocked();
+    }
     // defensive ballistae from the layout (staggered initial reload)
     this.ballistae = LAYOUT.ballistae.map(b => ({ x: b.x, z: b.z, y: b.y, seg: b.seg, cd: this.rnd() * BALLISTA_CD, recoil: 0, horiz: b.horiz, outer: b.outer, aimX: b.x, aimZ: b.z + b.outer * 40 }));
     // ...each manned by a two-man crew standing at the piece on the battlements —
@@ -1282,6 +1327,7 @@ export class Sim {
           if (v === u || v.faction !== u.faction || !v.routing || v.alive <= 0) continue;
           if ((v.cx - u.cx) ** 2 + (v.cz - u.cz) ** 2 < 25 * 25 && ++fear >= 3) break;
         }
+        if (u.bearer >= 0) fear *= 0.6; else if (u.count >= 12 && u.type !== UType.Siege && u.crewFor < 0) fear *= 1.3; // the standard steadies men; its absence haunts them
         if (!u.routing) {
           u.morale = Math.min(100, Math.max(0, u.morale - fear * MOR_FEAR * dt + (inContact ? 0 : MOR_RECOVER * dt)));
           u.shaken = u.morale < MOR_SHAKEN;
@@ -1357,7 +1403,7 @@ export class Sim {
       if (!this.alive[i]) continue;
       const u = this.units[this.unit[i]];
       const t = this.typ[i] as UType;
-      const spd = SPEED[t] * this.speedMul(u) * (u.faction === Faction.Attacker ? this.aSpd(t) : 1);
+      const spd = SPEED[t] * this.speedMul(u) * (u.faction === Faction.Attacker ? this.aSpd(t) : 1) * (this.py[i] < 1 ? this.footing(this.px[i], this.pz[i]) : 1);
       let dx = 0, dz = 0;       // desired direction
       this.cd[i] -= dt;
 
@@ -1365,7 +1411,7 @@ export class Sim {
       const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((this.pz[i] - WORLD.minZ) / this.hCell)));
 
       // ---- nearest reachable enemy (skipped during deploy & for siege) ----
-      let nearest = -1, nd2 = SENSE[t] * SENSE[t];
+      let nearest = -1; const senseR = SENSE[t] * (this.weather === 'mist' && t === UType.Archer ? MIST_RANGE : 1); let nd2 = senseR * senseR;
       if (!deploy && t !== UType.Siege) {
         const isMelee = t === UType.Heavy || t === UType.Light || t === UType.Cavalry;
         const my = this.py[i];
@@ -1467,7 +1513,7 @@ export class Sim {
           const settled = dx * dx + dz * dz < 0.5; // within ~1.7m of its slot
           const vol = u.stance === 'volley'; // aimed massed volley: longer, harder, slower
           const abuff = u.faction === Faction.Attacker;
-          if (settled && this.cd[i] <= 0 && nearest >= 0 && dist <= RANGE[t] * (vol ? 1.28 : 1) * (abuff ? this.aRng(t) : 1) && !u.holdFire && this.focusOk(u, nearest) && this.losClear(i, nearest)) {
+          if (settled && this.cd[i] <= 0 && nearest >= 0 && dist <= RANGE[t] * (vol ? 1.28 : 1) * (abuff ? this.aRng(t) : 1) * (this.weather === 'mist' ? MIST_RANGE : 1) && !u.holdFire && this.focusOk(u, nearest) && this.losClear(i, nearest)) {
             this.shoot(i, nearest, vol ? 1.7 : 1); this.cd[i] = ATKCD[t] * (vol ? 1.85 : 1) * (abuff ? this.aCd(t) : 1); this.ammo[i]--;
           }
         } else {
@@ -1605,7 +1651,7 @@ export class Sim {
     }
 
     _p.main += performance.now() - _t; _t = performance.now();
-    if (!deploy) { this.battleT += dt; if (this.pushT > 0) this.pushT = Math.max(0, this.pushT - dt); this.stepBurning(dt); this.stepDefence(dt); this.stepRams(dt); this.stepBallistae(dt); this.stepProjectiles(dt); this.checkVictory(); }
+    if (!deploy) { this.battleT += dt; if (this.pushT > 0) this.pushT = Math.max(0, this.pushT - dt); this.stepWorks(dt); this.stepBurning(dt); this.stepDefence(dt); this.stepRams(dt); this.stepBallistae(dt); this.stepProjectiles(dt); this.checkVictory(); }
     _p.post += performance.now() - _t; _p.steps++;
   }
 
@@ -1640,6 +1686,7 @@ export class Sim {
       u.alive = Math.max(0, u.alive - 1);
       u.morale = Math.max(0, u.morale - MOR_LOSS_K / u.count); // every fallen friend chips the company's nerve
       u.recentLoss += 1;
+      if (i === u.bearer) { u.bearer = -1; u.morale = Math.max(0, u.morale - 18); u.recentLoss += 2; } // the STANDARD falls
     }
   }
 
@@ -1669,10 +1716,12 @@ export class Sim {
         this.hp[i] -= MELEE[UType.Heavy] * 0.9;                    // — and take the spearpoints for trying
         if (this.hp[i] <= 0) { this.kill(i, u); return; }
       } else {
-        dmg *= (u.faction === Faction.Attacker ? this.atk.chargeMul ?? CHARGE_DMG : CHARGE_DMG);
-        // impact: the struck man is hurled back and staggered
-        this.vx[j] += adx * CHARGE_KNOCK; this.vz[j] += adz * CHARGE_KNOCK;
-        this.cd[j] = Math.max(this.cd[j], CHARGE_STUN);
+        const boggy = this.footing(this.px[i], this.pz[i]) < 0.95; // heavy ground robs the charge of its weight
+        dmg *= (u.faction === Faction.Attacker ? this.atk.chargeMul ?? CHARGE_DMG : CHARGE_DMG) * (boggy ? 0.55 : 1);
+        if (!boggy) { // impact: the struck man is hurled back and staggered
+          this.vx[j] += adx * CHARGE_KNOCK; this.vz[j] += adz * CHARGE_KNOCK;
+          this.cd[j] = Math.max(this.cd[j], CHARGE_STUN);
+        }
         u.chargeT = Math.max(0, u.chargeT - 0.25);                 // momentum spent on each body
       }
     }
@@ -1789,7 +1838,7 @@ export class Sim {
     const myAlong = horiz ? this.px[i] : this.pz[i];
     let best = -1, bd = 1e9, onSeg = 0;
     for (let l = 0; l < this.ladders.length; l++) {
-      const L = this.ladders[l]; if (L.seg !== seg) continue;
+      const L = this.ladders[l]; if (L.seg !== seg || L.dead) continue;
       onSeg++; const d = Math.abs(L.along - myAlong); if (d < bd) { bd = d; best = l; }
     }
     if (best >= 0 && bd < 5) { this._diag.ladReuse++; return best; }      // reuse a nearby ladder
@@ -1903,6 +1952,69 @@ export class Sim {
   // gate, boiling oil comes down on the ram crew on a timer — silence the gatehouse
   // (archer volleys, a trebuchet, escalade) before you commit the ram, or pay in men.
   private oilCds = new Map<number, number>();
+  // ---- mobile assault works (per-siege equipment): siege towers & the covered ram.
+  // Pushed by the host (they need attackers alongside to move), burnable, and
+  // priority targets for the wall ballistae.
+  assaultWorks: { kind: 'tower' | 'ram'; x: number; z: number; hp: number; maxhp: number; state: 'advance' | 'working' | 'dead'; seg: number; ladders: number[] }[] = [];
+  // Is this spot sheltered by the covered ram? (its hide roof turns arrows and oil)
+  private underCover(x: number, z: number): boolean {
+    for (const e of this.assaultWorks) if (e.kind === 'ram' && e.state !== 'dead' && (e.x - x) ** 2 + (e.z - z) ** 2 < 4.2 * 4.2) return true;
+    return false;
+  }
+  private stepWorks(dt: number) {
+    for (const e of this.assaultWorks) {
+      if (e.state === 'dead') continue;
+      if (e.hp <= 0) { e.state = 'dead'; for (const l of e.ladders) if (this.ladders[l]) this.ladders[l].dead = true; this.sfx.breaches++; continue; }
+      if (e.state === 'working') {
+        const g = CASTLE[e.seg];
+        if (e.kind === 'ram') {
+          if (!g || g.dead) { e.state = 'advance'; e.seg = -1; continue; }     // gate's down — find another (or rest)
+          g.ramCrew = (g.ramCrew || 0) + RAM_CREW;                              // the ram IS a crew
+          g.hp -= RAM_DPS * 0.55 * dt; g.ramT = this._frame;                    // and it hits harder than shoulders
+          if (g.hp <= 0) this.breach(e.seg);
+        } else if (g && g.dead) { for (const l of e.ladders) if (this.ladders[l]) this.ladders[l].dead = true; } // docked on rubble — the breach serves now
+        continue;
+      }
+      // advancing: find the work — towers make for a standing WALL, the ram for a GATE
+      if (e.seg < 0 || !CASTLE[e.seg] || CASTLE[e.seg].dead) {
+        let best = -1, bd = 1e9;
+        for (let s2 = 0; s2 < CASTLE.length; s2++) {
+          const g = CASTLE[s2]; if (g.dead || g.kind !== (e.kind === 'ram' ? 'gate' : 'wall') || (e.kind === 'ram' && g.h <= 3)) continue;
+          const cx = Math.max(g.x0, Math.min(g.x1, e.x)), cz = Math.max(g.z0, Math.min(g.z1, e.z));
+          const d2 = (cx - e.x) ** 2 + (cz - e.z) ** 2; if (d2 < bd) { bd = d2; best = s2; }
+        }
+        e.seg = best; if (best < 0) continue; // nothing left to assault
+      }
+      // it only rolls while the host pushes: needs 5 attackers alongside
+      let pushers = 0;
+      const hc = Math.min(this.hCols - 1, Math.max(0, Math.floor((e.x - WORLD.minX) / this.hCell)));
+      const hr = Math.min(this.hRows - 1, Math.max(0, Math.floor((e.z - WORLD.minZ) / this.hCell)));
+      for (let rr = hr - 3; rr <= hr + 3 && pushers < 3; rr++) for (let cc = hc - 3; cc <= hc + 3 && pushers < 3; cc++) {
+        if (rr < 0 || cc < 0 || rr >= this.hRows || cc >= this.hCols) continue;
+        const k = rr * this.hCols + cc, ke = this.hStart[k + 1];
+        for (let bi = this.hStart[k]; bi < ke; bi++) { const j = this.hItems[bi]; if (this.fac[j] === Faction.Attacker && this.py[j] < 1 && (this.px[j] - e.x) ** 2 + (this.pz[j] - e.z) ** 2 < 14 * 14) { if (++pushers >= 3) break; } }
+      }
+      const g = CASTLE[e.seg];
+      const cx = Math.max(g.x0, Math.min(g.x1, e.x)), cz = Math.max(g.z0, Math.min(g.z1, e.z));
+      const dx = cx - e.x, dz = cz - e.z, d = Math.hypot(dx, dz);
+      if (d <= T / 2 + 2.6) { // DOCK
+        e.state = 'working';
+        if (e.kind === 'tower') { // the ramp drops: a three-abreast permanent escalade
+          const horiz = (g.x1 - g.x0) >= (g.z1 - g.z0);
+          const along0 = horiz ? e.x : e.z;
+          for (const off of [-2.2, 0, 2.2]) {
+            const along = Math.max((horiz ? g.x0 : g.z0) + 1.2, Math.min((horiz ? g.x1 : g.z1) - 1.2, along0 + off));
+            this.ladders.push({ seg: e.seg, along, bx: horiz ? along : e.x, bz: horiz ? e.z : along, horiz, outer: (horiz ? Math.sign(e.z - (g.z0 + g.z1) / 2) : Math.sign(e.x - (g.x0 + g.x1) / 2)) || 1, raise: 1 });
+            e.ladders.push(this.ladders.length - 1);
+          }
+        }
+      } else {
+        // full pace with the host alongside; a grinding crawl without (it always arrives — escort makes it SOON)
+        const spd = (e.kind === 'ram' ? 2.9 : 2.3) * (pushers >= 3 ? 1 : 0.45) * this.footing(e.x, e.z) * dt;
+        e.x += dx / d * spd; e.z += dz / d * spd;
+      }
+    }
+  }
   oilPours: number[] = []; // x,z pairs this frame (render: steam + scald FX)
   // incendiary ground fire: patches of burning pitch that deny the ground they cover
   burnPatches: { x: number; z: number; life: number }[] = [];
@@ -1913,6 +2025,7 @@ export class Sim {
     for (let s = 0; s < CASTLE.length; s++) {
       const g = CASTLE[s]; if (g.kind !== 'gate') continue;
       if (!g.dead && (g.ramCrew || 0) >= RAM_CREW) {
+        if (g.h <= 3) { g.hp -= RAM_DPS * 1.6 * dt; g.ramT = this._frame; if (g.hp <= 0) this.breach(s); g.ramCrew = 0; continue; } // a barricade is TORN DOWN fast, no oil overhead
         g.hp -= RAM_DPS * (0.7 + 0.3 * this.atk.melee) * dt; g.ramT = this._frame; this.sfx.melee++;
         if (g.hp <= 0) { this.breach(s); continue; }
         // murder holes: timer per gate, only while the gatehouse is manned
@@ -1927,6 +2040,7 @@ export class Sim {
             for (let i = 0; i < this.n && scalded < 9; i++) {
               if (!this.alive[i] || this.fac[i] !== Faction.Attacker || this.py[i] > 2) continue;
               if ((this.px[i] - gcx) ** 2 + (this.pz[i] - gcz) ** 2 > 6 * 6) continue;
+              if (this.underCover(this.px[i], this.pz[i])) continue; // sheltered under the ram's roof
               scalded++;
               const vu = this.units[this.unit[i]];
               vu.morale = Math.max(0, vu.morale - 2.5);           // scalding breaks nerve as much as skin
@@ -1957,7 +2071,7 @@ export class Sim {
   // The nearest standing ladder within reach (any section), or -1.
   private nearestLadder(x: number, z: number, maxD: number): number {
     let best = -1, bd = maxD * maxD;
-    for (let l = 0; l < this.ladders.length; l++) { const L = this.ladders[l]; const d = (L.bx - x) ** 2 + (L.bz - z) ** 2; if (d < bd) { bd = d; best = l; } }
+    for (let l = 0; l < this.ladders.length; l++) { const L = this.ladders[l]; if (L.dead) continue; const d = (L.bx - x) ** 2 + (L.bz - z) ** 2; if (d < bd) { bd = d; best = l; } }
     return best;
   }
   private useLadder(i: number, seg = this.wallTowardGoal(i)) {
@@ -2058,7 +2172,7 @@ export class Sim {
     this.sfx.arrows++;
     const p = this.getProj();
     const atkShot = this.fac[i] === Faction.Attacker;
-    const fire = this.units[this.unit[i]].fireArrows || (atkShot && this.atk.fire);
+    const fire = (this.units[this.unit[i]].fireArrows || (atkShot && this.atk.fire)) && this.weather !== 'rain'; // wet shafts won't take a flame
     const sx = this.px[i], sz = this.pz[i], sy = this.py[i] + 1.6;
     const tx0 = this.px[target], tz0 = this.pz[target], ty = this.py[target] + 1.0; // aim at the body, at its height
     const d = Math.hypot(tx0 - sx, tz0 - sz) || 1;
@@ -2066,7 +2180,8 @@ export class Sim {
     // more at long range) so a volley fans across the enemies instead of every
     // shaft piling onto one man — and some fall short or wide and simply miss.
     const sc = 0.6 + d * 0.05;
-    const tx = tx0 + (this.rnd() - 0.5) * 2 * sc, tz = tz0 + (this.rnd() - 0.5) * 2 * sc;
+    const drift = this.weather === 'wind' ? d * 0.045 : 0; // a crosswind carries every shaft eastward
+    const tx = tx0 + (this.rnd() - 0.5) * 2 * sc + drift, tz = tz0 + (this.rnd() - 0.5) * 2 * sc + drift * 0.3;
     // Lob exactly as high as needed: sample the tallest obstacle between archer
     // and target and compare it to where a flat-ish shot would be there; only
     // raise the arc if a structure actually blocks it (so close shots stay flat).
@@ -2080,7 +2195,9 @@ export class Sim {
     }
     if (need > 0.5) tof = Math.max(tof, Math.sqrt(8 * (need + 2) / PROJ_G)); // apex (≈ g·tof²/8) clears the obstacle
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = this.fac[i] as Faction; p.src = this.typ[i];
-    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.aDmg(UType.Archer) * this.vetMul[this.typ[i]] : 1.25) * dmgMul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
+    let wmul = this.weather === 'rain' ? RAIN_BOW : 1;               // wet strings
+    if (this.py[i] > 4) wmul *= HIGH_GROUND;                          // plunging fire from the battlements
+    p.dmg = (fire ? ARCHER_PROJ_DMG * 1.7 : ARCHER_PROJ_DMG) * (atkShot ? this.aDmg(UType.Archer) * this.vetMul[this.typ[i]] : 1.25) * dmgMul * wmul; p.wall = -1; p.big = false; p.fire = fire; p.splash = 0; p.bolt = false;
     p.vx = (tx - sx) / tof; p.vz = (tz - sz) / tof; p.vy = (ty - sy) / tof + 0.5 * PROJ_G * tof; // ballistic arc to target height
   }
 
@@ -2089,7 +2206,7 @@ export class Sim {
     let best = -1, bd = range * range;
     for (let s = 0; s < CASTLE.length; s++) {
       const seg = CASTLE[s];
-      if (seg.dead || (seg.kind !== 'wall' && seg.kind !== 'gate')) continue;
+      if (seg.dead || (seg.kind !== 'wall' && seg.kind !== 'gate') || (seg.kind === 'gate' && seg.h <= 3)) continue;
       const cx = (seg.x0 + seg.x1) / 2, cz = (seg.z0 + seg.z1) / 2;
       const d2 = (cx - x) ** 2 + (cz - z) ** 2;
       if (d2 < bd) { bd = d2; best = s; }
@@ -2156,6 +2273,7 @@ export class Sim {
     const free = this.units.filter(u => u.faction === Faction.Defender && u.alive > 6 && u.hold && !u.routing
       && (u.type === UType.Light || u.type === UType.Heavy)
       && ((u.cx - tx) ** 2 + (u.cz - tz) ** 2) < 115 * 115
+      && ((u.cx - this.keepX) ** 2 + (u.cz - this.keepZ) ** 2) > 30 * 30 // the keep guard never leaves the prize
       && u.plug < 0);
     free.sort((a, b) => ((a.cx - tx) ** 2 + (a.cz - tz) ** 2) - ((b.cx - tx) ** 2 + (b.cz - tz) ** 2));
     const facing = Math.atan2(gcx - this.keepX, gcz - this.keepZ);    // face outward, toward the incomers
@@ -2218,6 +2336,14 @@ export class Sim {
     for (const u of this.units) if (u.faction === Faction.Attacker) { u.morale = Math.min(100, u.morale + 35); u.shaken = false; }
     return true;
   }
+  // Wheel an arm in place: every company pivots on its centre by delta radians
+  // (facing matters now — flanks and rears bleed). No effect on storming arms.
+  faceDiv(div: number, delta: number) {
+    for (const u of this.divCompanies(div)) {
+      if (u.type === UType.Siege || u.crewFor >= 0 || u.routing || u.assault) continue;
+      this.setAnchor(u, u.cx, u.cz, u.facing + delta, u.cols);
+    }
+  }
   // Load (or unload) incendiaries across a trebuchet battery.
   setFirepotDiv(div: number, on: boolean) { for (const u of this.divCompanies(div)) if (u.type === UType.Siege) u.firepot = on; }
   firepotOnDiv(div: number): boolean { return this.divCompanies(div).some(u => u.type === UType.Siege && u.firepot); }
@@ -2227,6 +2353,7 @@ export class Sim {
   // default response), counter-masses the garrison against attackers who get
   // inside, and (aggressive castellans) sorties at engines left unguarded.
   private defenceCd = 0;
+  private sortieCd = 45; private sortieUntil = 0; private sortieIds: number[] = [];
   private attInX = 0; private attInZ = 0; // live centroid of attackers inside the walls
   private stepDefence(dt: number) {
     this.defenceCd -= dt; if (this.defenceCd > 0) return;
@@ -2238,10 +2365,35 @@ export class Sim {
       const g = CASTLE[s]; if (g.kind !== 'wall' && g.kind !== 'gate') continue;
       const threatened = !g.dead && (g.hp < g.maxhp * 0.62 || (g.ramT !== undefined && this._frame - g.ramT < 45));
       if (!g.dead && !threatened) continue;
+      const barricade = g.kind === 'gate' && g.h <= 3; // a second line rates ONE company, not the whole reserve
       let assigned = 0;
       for (const u of this.units) if (u.faction === Faction.Defender && u.plug === s && u.alive > 6 && !u.routing) assigned++;
-      const want = LAYOUT.palisade ? 1 : this.cmd.plugCompanies;
+      const want = barricade || LAYOUT.palisade ? 1 : this.cmd.plugCompanies;
       if (assigned < want) this.assignPlugs(s, want - assigned);
+    }
+    // 1.5) the SALLY: an aggressive or cunning castellan, once a way is open,
+    //      sends light companies OUT through it to burn the siege engines —
+    //      picket your battery or lose it
+    if ((this.cmd.kind === 'aggressive' || this.cmd.kind === 'cunning') && this.battleT > this.sortieCd) {
+      if (this.sortieIds.length) { // recall when the raid has run its course
+        if (this.battleT > this.sortieUntil) {
+          for (const id of this.sortieIds) { const u = this.units[id]; if (u.alive > 0 && !u.routing) { this.setAnchor(u, this.keepX, this.keepZ, u.facing, u.cols); } }
+          this.sortieIds = []; this.sortieCd = this.battleT + 55;
+        }
+      } else {
+        const open = CASTLE.some(g => g.dead && (g.kind === 'wall' || g.kind === 'gate'));
+        // the prize: the nearest living siege engine or assault work
+        let tx = 0, tz = 0, found = false;
+        for (const e of this.assaultWorks) if (e.state !== 'dead') { tx = e.x; tz = e.z; found = true; break; }
+        if (!found) for (const u of this.units) if (u.faction === Faction.Attacker && u.type === UType.Siege && u.alive > 0) { tx = u.cx; tz = u.cz; found = true; break; }
+        if (open && found) {
+          const party = this.units.filter(u => u.faction === Faction.Defender && u.type === UType.Light && u.hold && !u.routing && u.plug < 0 && u.alive > 12).slice(0, 2);
+          if (party.length) {
+            for (const u of party) { this.setAnchor(u, tx, tz, Math.atan2(tx - u.cx, tz - u.cz), Math.max(4, Math.round(Math.sqrt(u.alive) * 1.4))); this.sortieIds.push(u.id); }
+            this.sortieUntil = this.battleT + 26;
+          } else this.sortieCd = this.battleT + 30;
+        } else this.sortieCd = this.battleT + 15;
+      }
     }
     // 2) attackers inside in force → mass the free garrison onto their centroid
     //    (the breach fight the player has to win, not walk past)
@@ -2275,6 +2427,7 @@ export class Sim {
   // unaffected — this only blunts arrows and bolts, and only for attackers on foot.)
   private applyRangedHit(j: number, dmg: number, bolt: boolean, fire = false) {
     if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5) dmg *= bolt ? 0.68 : 0.5;
+    if (this.fac[j] === Faction.Attacker && this.py[j] < 2.5 && this.underCover(this.px[j], this.pz[j])) dmg *= 0.45; // the ram's hide roof over them
     if (fire && this.typ[j] === UType.Siege) dmg *= 3; // timber engines BURN under flaming shafts
     dmg *= this.defenseMul(j); // a shield wall turns arrows too
     this.hp[j] -= dmg;
@@ -2296,14 +2449,15 @@ export class Sim {
       }
     }
   }
-  private fireBolt(e: Emplacement, target: number) {
+  private fireBolt(e: Emplacement, target: number) { this.fireBoltXY(e, this.px[target], this.pz[target]); }
+  private fireBoltXY(e: Emplacement, gx: number, gz: number) {
     this.sfx.bolts++;
     const p = this.getProj();
     const sx = e.x, sz = e.z, sy = e.y + 1.2;
-    const d0 = Math.hypot(this.px[target] - sx, this.pz[target] - sz) || 1;
+    const d0 = Math.hypot(gx - sx, gz - sz) || 1;
     // a tiny bit of scatter so a ballista doesn't snipe a man with every bolt
     const sc = 0.8 + d0 * 0.03;
-    const tx = this.px[target] + (this.rnd() - 0.5) * 2 * sc, tz = this.pz[target] + (this.rnd() - 0.5) * 2 * sc, ty = 1;
+    const tx = gx + (this.rnd() - 0.5) * 2 * sc, tz = gz + (this.rnd() - 0.5) * 2 * sc, ty = 1;
     const d = Math.hypot(tx - sx, tz - sz) || 1, tof = d / BOLT_SPEED;
     p.active = true; p.x = sx; p.y = sy; p.z = sz; p.tx = tx; p.tz = tz; p.ty = ty; p.fac = Faction.Defender; p.src = -1;
     p.dmg = BALLISTA_DMG; p.wall = -1; p.big = false; p.fire = false; p.bolt = true; p.splash = ARTY_SPLASH;
@@ -2339,6 +2493,17 @@ export class Sim {
       if (e.recoil > 0) e.recoil = Math.max(0, e.recoil - dt);
       e.cd -= dt; if (e.cd > 0) continue;
       if (!this.ballistaManned(e)) { e.cd = 1.2; continue; } // crew dead — the engine stands idle
+      { // an approaching tower or ram is the deadliest thing on the field — shoot IT first
+        let bw = -1, bwd = BALLISTA_RANGE * BALLISTA_RANGE;
+        for (let w = 0; w < this.assaultWorks.length; w++) {
+          const aw = this.assaultWorks[w]; if (aw.state === 'dead') continue;
+          const d2 = (aw.x - e.x) ** 2 + (aw.z - e.z) ** 2; if (d2 < bwd) { bwd = d2; bw = w; }
+        }
+        if (bw >= 0) {
+          const aw = this.assaultWorks[bw];
+          if (!pathBlocked(e.x + (aw.x - e.x) * 0.6, e.z + (aw.z - e.z) * 0.6, aw.x, aw.z)) { this.fireBoltXY(e, aw.x, aw.z); e.cd = BALLISTA_CD; e.recoil = 0.45; continue; }
+        }
+      }
       // nearest attacker on the ground within reach — search only the hash cells the
       // ballista can actually shoot into, not the whole army
       let best = -1, bd = BALLISTA_RANGE * BALLISTA_RANGE;
@@ -2367,6 +2532,10 @@ export class Sim {
       const dxz = Math.hypot(p.x - p.tx, p.z - p.tz);
       if (p.y <= 0 || dxz < 1.4) {
         this._shotCredit = p.fac === Faction.Attacker ? p.src : -1; // credit this shot's felling blows to the arm that loosed it
+        if (p.fac === Faction.Defender) for (const e of this.assaultWorks) { // shafts and bolts falling on the assault works
+          if (e.state === 'dead') continue;
+          if ((e.x - p.x) ** 2 + (e.z - p.z) ** 2 < 2.6 * 2.6) { e.hp -= p.dmg * (p.fire ? 3 : 1) * (p.bolt ? 1.2 : 0.5); break; }
+        }
         if (p.wall >= 0) {
           // Boulder: damage whatever solid section it actually comes down on —
           // walls AND towers are real objects, so a shot scattered onto a tower
@@ -2395,7 +2564,7 @@ export class Sim {
         }
         this._shotCredit = -1;
         if (p.fire && this.fireLands.length < 24) this.fireLands.push(p.x, p.z); // a burning shaft came down
-        if (p.fire && p.big) this.burnPatches.push({ x: p.x, z: p.z, life: 7 * (this.atk.burnMul ?? 1) }); // an incendiary pot shatters into burning pitch
+        if (p.fire && p.big) this.burnPatches.push({ x: p.x, z: p.z, life: 7 * (this.atk.burnMul ?? 1) * (this.weather === 'rain' ? 0.4 : 1) }); // an incendiary pot shatters into burning pitch (rain drowns it fast)
         p.active = false;
       }
     }

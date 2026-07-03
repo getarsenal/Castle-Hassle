@@ -112,11 +112,27 @@ function buildMuster() {
     });
     rows.appendChild(row);
   }
+  // ---- Siege Works: per-siege assault equipment (spent for THIS battle only) ----
+  if (!currentNoArtillery) {
+    const row = document.createElement('div'); row.className = 'rrow';
+    row.innerHTML = `<span class="ic" style="font-size:26px;line-height:44px;text-align:center">🗼</span>
+      <div class="info"><div class="nm">Siege Works</div><div class="dsc">Built for this siege alone: towers drop a three-abreast ramp on the wall; the covered ram shelters its crew from oil and arrows.</div>
+        <div class="own" data-skip id="worksOwn"></div></div>
+      <div class="qty"><button class="rbtn" id="buyTower">Tower 250g</button><button class="rbtn" id="buyRam">Ram 300g</button></div>`;
+    const own = row.querySelector('#worksOwn') as HTMLElement;
+    const refresh = () => { own.textContent = `This siege: ${currentTowers} tower${currentTowers === 1 ? '' : 's'}${currentRam ? ' · covered ram' : ''}`;
+      (row.querySelector('#buyTower') as HTMLButtonElement).disabled = currentTowers >= 3 || progress.gold < 250;
+      (row.querySelector('#buyRam') as HTMLButtonElement).disabled = currentRam || progress.gold < 300; };
+    row.querySelector('#buyTower')!.addEventListener('click', () => { if (currentTowers >= 3 || progress.gold < 250) return; progress.gold -= 250; currentTowers++; saveProgress(progress); refresh(); updateMuster(); });
+    row.querySelector('#buyRam')!.addEventListener('click', () => { if (currentRam || progress.gold < 300) return; progress.gold -= 300; currentRam = true; saveProgress(progress); refresh(); updateMuster(); });
+    refresh();
+    rows.appendChild(row);
+  }
   updateMuster();
 }
 function updateMuster() {
   for (const el of Array.from(document.querySelectorAll('#rosterRows .ct')) as HTMLElement[]) el.textContent = String((comp as any)[el.dataset.k!]);
-  for (const el of Array.from(document.querySelectorAll('#rosterRows .own')) as HTMLElement[]) {
+  for (const el of Array.from(document.querySelectorAll('#rosterRows .own:not([data-skip])')) as HTMLElement[]) {
     const k = el.dataset.k as ArmyKey;
     const levy = k === 'light' ? LEVY_LIGHT : 0; // always a flat +250 on top of your standing foot
     const free = k === 'siege' ? currentExtraTrebs : 0;
@@ -147,7 +163,12 @@ let currentDiscount = 1, currentExtraTrebs = 0, currentNoArtillery = false;
 let currentVet: number[] | null = null;
 function newGame() {
   if (renderer) { renderer.gl.dispose(); app.innerHTML = ''; }
-  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, currentVet ?? vetMulArray());
+  // the siege's weather, rolled from the castle seed (override: localStorage
+  // 'castlehassle.weather' = clear|rain|mist|wind — QA + Director filming)
+  const WX = ['clear', 'clear', 'clear', 'clear', 'clear', 'rain', 'rain', 'mist', 'mist', 'wind'] as const;
+  let weather = WX[(currentSeed >>> 7) % WX.length] as (typeof WX)[number];
+  try { const o = localStorage.getItem('castlehassle.weather'); if (o && (WX as readonly string[]).includes(o)) weather = o as typeof weather; } catch { /* private mode */ }
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, currentVet ?? vetMulArray(), { weather, towers: currentTowers, ram: currentRam });
   (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
   // every siege gets an hour of its own, seeded by the castle so it's stable per
   // stronghold: mostly daylight, dawn/dusk often, the rare night storm.
@@ -156,11 +177,12 @@ function newGame() {
   const TODS = ['noon', 'dawn', 'noon', 'dusk', 'noon', 'dawn', 'dusk', 'night'] as const;
   let tod = TODS[(currentSeed >>> 3) % 8] as (typeof TODS)[number];
   try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
-  renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod });
+  renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod, weather });
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
   banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
+  slowmoT = 0; sawBreach = false; sawBreak = false;
   hintEl.classList.remove('dismissed'); // a fresh battle brings its guidance back
   battleAudio.stopAmbience(); // silence any prior battle's din behind the new setup
   buildCards(); updateHint(); updateTools();
@@ -219,7 +241,12 @@ function updateHint() {
   else if (a && a.type === UType.Siege) hintText.textContent = 'Trebuchets: TAP A WALL to batter it · TAP ENEMY TROOPS to bombard them · drag to reposition';
   else if (a && a.type === UType.Archer) hintText.textContent = 'Archers: TAP to focus-fire · ADVANCE to move up · drag to reposition';
   else if (a) hintText.textContent = 'Tap the KEEP to storm · tap a WALL to break in there · tap ground to move · drag to set a line';
-  else if (sim.phase === 'deploy') hintText.textContent = 'DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.';
+  else if (sim.phase === 'deploy') {
+    const wline = sim.weather === 'rain' ? '  Rain soaks the field: bows weak, fires die, heavy going.'
+      : sim.weather === 'mist' ? '  Mist shrouds the field: archers see barely three-quarters their reach.'
+      : sim.weather === 'wind' ? '  A hard east wind: every shaft drifts with it.' : '';
+    hintText.textContent = `DEPLOY: place your arms, then Begin Battle. Each arm holds until you order its assault.${wline}`;
+  }
   else hintText.textContent = 'Select an arm, then tap the keep to storm or a gate to break in — engines batter the walls on their own.';
 }
 // keep the cavalry charge button's label/state live (cooldown ticks every frame)
@@ -254,6 +281,14 @@ function updateTools() {
     ab.textContent = a.type === UType.Archer ? (on ? 'Advancing' : 'Advance') : (on ? 'Storming' : 'Storm Keep');
     ab.addEventListener('click', () => { sim.toggleAssaultDiv(selected); refreshCards(); updateTools(); });
     toolsEl.appendChild(ab);
+  }
+  // Wheel the arm's facing (flanks matter now) — only while it holds ground
+  if (sim.phase === 'battle' && a.type !== UType.Siege && !sim.assaultingDiv(selected)) {
+    for (const [lbl, d] of [['\u27f2 Wheel', Math.PI / 4], ['About Face', Math.PI], ['Wheel \u27f3', -Math.PI / 4]] as const) {
+      const wb = document.createElement('button'); wb.className = 'tool'; wb.textContent = lbl;
+      wb.addEventListener('click', () => { sim.faceDiv(selected, d); });
+      toolsEl.appendChild(wb);
+    }
   }
   // Rally — when an arm's nerve is going or gone, the horn brings it back
   if (sim.phase === 'battle' && sim.divMoraleState(selected) !== 'steady') {
@@ -477,6 +512,10 @@ const pointers = new Map<number, { x: number; y: number }>();
 let gesture: 'none' | 'orbit' | 'command' | 'camera' = 'none';
 let downAt = { x: 0, y: 0, t: 0 }; let moved = false;
 let lastCamInput = performance.now(); // idle timer — the auto-director takes the camera when the player rests
+// decisive-moment slow motion: 1.3s at one-third speed on the battle's turning
+// points (first breach; the garrison breaking). A tap skips it instantly.
+let slowmoT = 0, sawBreach = false, sawBreak = false;
+function slowMo() { if (slowmoT <= 0) { slowmoT = 1.3; battleAudio.horn('call'); } }
 let cmdP0: THREE.Vector3 | null = null, cmdP1: THREE.Vector3 | null = null;
 let pinchDist = 0, panMid = { x: 0, y: 0 };
 
@@ -496,7 +535,7 @@ function bindInput() {
   const el = renderer.gl.domElement;
   el.addEventListener('contextmenu', (e) => e.preventDefault());
   el.addEventListener('pointerdown', (e) => {
-    lastCamInput = performance.now(); renderer.introT = 0; // the player's hand always beats the director's
+    lastCamInput = performance.now(); renderer.introT = 0; slowmoT = 0; // the player's hand always beats the director's
     if (e.button === 2) { // right-click with an arm selected: detach its nearest company to the point
       if (selected >= 0 && sim.phase !== 'over') {
         const p = groundAt(e.clientX, e.clientY);
@@ -625,6 +664,7 @@ function applySettings() {
 }
 // fold the saved difficulty mode into the campaign scalars right away
 setDifficultyScalars(DIFFICULTY[profile.settings.difficulty].garrison, DIFFICULTY[profile.settings.difficulty].reward);
+let currentTowers = 0, currentRam = false; // per-siege assault works (bought at muster)
 let activeCastle: CampaignCastle | null = null;
 let activeRaid: Raid | null = null;
 let map: WorldMap3D | null = null;
@@ -699,6 +739,7 @@ function bringable(key: ArmyKey): number {
 }
 function enterCastle(c: CampaignCastle) {
   activeCastle = c; activeRaid = null; currentNoArtillery = false; currentVet = null;
+  currentTowers = 0; currentRam = false; // assault works are bought per siege
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
   currentSeed = c.seed; currentDifficulty = castleDifficulty(c.tier); currentStyle = c.style;
   currentBiome = biomeFor(c.region); currentCoastal = isCoastal(c.name);
@@ -718,6 +759,7 @@ function enterCastle(c: CampaignCastle) {
 // seed each time so the fort varies from raid to raid.
 function enterRaid(r: Raid) {
   activeRaid = r; activeCastle = null; currentVet = null;
+  currentTowers = 0; currentRam = false;
   // a palisade-town raid is an infantry affair — no siege train
   currentNoArtillery = !!r.style.palisade;
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
@@ -1034,6 +1076,12 @@ function frame(now: number) {
   const ts = performance.now();
   // Run the fixed-timestep sim at the chosen tempo: gameSpeed steps' worth of time
   // accrues per frame, stepped up to a hard cap so a slow frame can't death-spiral.
+  // decisive moments run at one-third speed for a breath (a tap skips)
+  if (slowmoT > 0) { slowmoT -= dt; dt *= 0.32; }
+  if (sim.phase === 'battle') {
+    if (!sawBreach && renderer.hasFreshBreach()) { sawBreach = true; slowMo(); }       // the FIRST wall comes down
+    else if (!sawBreak && sawBreach && !sim.units.some(u => u.faction === Faction.Defender && !u.routing && u.alive > 0)) { sawBreak = true; slowMo(); } // the garrison BREAKS
+  }
   acc += dt * gameSpeed;
   let steps = 0;
   // Time-budgeted catch-up: always advance once, but only run additional steps if
