@@ -22,33 +22,97 @@ function noise(ctx: CanvasRenderingContext2D, S: number, amt: number, alpha: num
   }
 }
 
-// ---- ashlar stone: courses of blocks with mortar joints (tileable) ----
+// Shared ashlar layout so the albedo and the normal map line up joint-for-joint.
+const STONE_S = 256, STONE_COURSES = 5, STONE_BRICKS = 4, STONE_JOINT = 5;
+
+// ---- ashlar stone: weathered courses of blocks with mortar joints (tileable) ----
 export function stoneTexture(base = '#dccaa0'): THREE.CanvasTexture {
-  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const S = STONE_S, c = document.createElement('canvas'); c.width = c.height = S;
   const ctx = c.getContext('2d')!;
-  // mortar (darker) shows through the joints
-  ctx.fillStyle = '#9c8a66'; ctx.fillRect(0, 0, S, S);
-  const courses = 4, ch = S / courses, joint = 3;
+  // mortar (darker, cool) shows through the joints
+  ctx.fillStyle = '#8b7c5e'; ctx.fillRect(0, 0, S, S);
+  const ch = S / STONE_COURSES, joint = STONE_JOINT, bw = S / STONE_BRICKS;
   const bc = new THREE.Color(base);
-  for (let r = 0; r < courses; r++) {
-    const bricks = 4, bw = S / bricks;
+  for (let r = 0; r < STONE_COURSES; r++) {
     const off = (r % 2) * bw / 2; // running bond
-    for (let k = -1; k <= bricks; k++) {
+    for (let k = -1; k <= STONE_BRICKS; k++) {
       const x = k * bw + off, y = r * ch;
-      // per-block tone variation
-      const v = 0.82 + Math.random() * 0.3;
+      const bx = x + joint / 2, by = y + joint / 2, bwi = bw - joint, bhi = ch - joint;
+      // per-block tone variation — some blocks noticeably paler / darker (patched masonry)
+      const v = 0.78 + Math.random() * 0.36;
       const col = bc.clone().multiplyScalar(v);
       ctx.fillStyle = `#${col.getHexString()}`;
-      ctx.fillRect(x + joint / 2, y + joint / 2, bw - joint, ch - joint);
-      // top-left highlight + bottom-right shade for a chiselled feel
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.fillRect(x + joint / 2, y + joint / 2, bw - joint, 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.16)';
-      ctx.fillRect(x + joint / 2, y + ch - joint / 2 - 2, bw - joint, 2);
+      ctx.fillRect(bx, by, bwi, bhi);
+      // chiselled bevel: top/left catch light, bottom/right fall to shade
+      ctx.fillStyle = 'rgba(255,248,232,0.14)'; ctx.fillRect(bx, by, bwi, 2); ctx.fillRect(bx, by, 2, bhi);
+      ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(bx, by + bhi - 2, bwi, 2); ctx.fillRect(bx + bwi - 2, by, 2, bhi);
+      // occasional spalled corner — a chip knocked off, mortar-coloured
+      if (Math.random() < 0.22) {
+        const cs = 3 + Math.random() * 5, cx = bx + (Math.random() < 0.5 ? 0 : bwi - cs), cy = by + (Math.random() < 0.5 ? 0 : bhi - cs);
+        ctx.fillStyle = 'rgba(120,106,80,0.75)'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + cs, cy); ctx.lineTo(cx, cy + cs); ctx.closePath(); ctx.fill();
+      }
+      // a hairline crack across some blocks
+      if (Math.random() < 0.14) {
+        ctx.strokeStyle = 'rgba(40,34,24,0.4)'; ctx.lineWidth = 1;
+        let px = bx + Math.random() * bwi, py = by + 2; ctx.beginPath(); ctx.moveTo(px, py);
+        for (let s = 0; s < 4; s++) { px += (Math.random() - 0.5) * 6; py += bhi / 4; ctx.lineTo(px, py); } ctx.stroke();
+      }
     }
   }
-  noise(ctx, S, 90, 0.5);
+  // WEATHERING overlays (don't need to match the normal map):
+  // dark grime streaks bleeding downward from random joints (rain-washed lime)
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * S, y = Math.random() * S, h = 14 + Math.random() * 46, w = 2 + Math.random() * 5;
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, 'rgba(48,40,28,0.32)'); g.addColorStop(1, 'rgba(48,40,28,0)');
+    ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  }
+  // moss / lichen creeping in the crevices — soft grey-green blotches
+  for (let i = 0; i < 40; i++) {
+    const x = Math.random() * S, y = Math.random() * S, rad = 2 + Math.random() * 6;
+    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(96,104,64,0.22)' : 'rgba(120,120,96,0.18)';
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+  }
+  noise(ctx, S, 84, 0.5);
   return tex(c);
+}
+
+// ---- matching tangent-space normal map: mortar joints recess, blocks stand proud
+// so real sunlight rakes across the coursing. Built by drawing a height field with
+// the SAME running-bond layout, softening the joints, then Sobel → normals. ----
+export function stoneNormalTexture(): THREE.CanvasTexture {
+  const S = STONE_S;
+  // 1) height canvas: blocks bright (proud), mortar dark (recessed), soft edges
+  const hc = document.createElement('canvas'); hc.width = hc.height = S; const hx = hc.getContext('2d')!;
+  hx.fillStyle = '#2c2c2c'; hx.fillRect(0, 0, S, S); // mortar = low
+  const ch = S / STONE_COURSES, joint = STONE_JOINT, bw = S / STONE_BRICKS;
+  for (let r = 0; r < STONE_COURSES; r++) {
+    const off = (r % 2) * bw / 2, y = r * ch;
+    for (let k = -1; k <= STONE_BRICKS; k++) {
+      const x = k * bw + off;
+      // block face high; a faint per-block height wobble so faces aren't dead flat
+      const v = 205 + Math.floor(Math.random() * 40);
+      hx.fillStyle = `rgb(${v},${v},${v})`;
+      hx.fillRect(x + joint / 2, y + joint / 2, bw - joint, ch - joint);
+    }
+  }
+  // soften joint edges into ramps (bevel) — this is what makes the light roll, not clip
+  hx.filter = 'blur(1.6px)'; hx.drawImage(hc, 0, 0); hx.filter = 'none';
+  const hd = hx.getImageData(0, 0, S, S).data;
+  const H = (x: number, y: number) => hd[(((y % S) + S) % S) * S * 4 + (((x % S) + S) % S) * 4] / 255;
+  // 2) Sobel → normal
+  const nc = document.createElement('canvas'); nc.width = nc.height = S; const nx = nc.getContext('2d')!;
+  const img = nx.createImageData(S, S), STR = 2.6;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const dx = (H(x + 1, y) - H(x - 1, y)) * STR, dy = (H(x, y + 1) - H(x, y - 1)) * STR;
+    let vx = -dx, vy = -dy, vz = 1; const il = 1 / Math.hypot(vx, vy, vz); vx *= il; vy *= il; vz *= il;
+    const i = (y * S + x) * 4;
+    img.data[i] = (vx * 0.5 + 0.5) * 255; img.data[i + 1] = (vy * 0.5 + 0.5) * 255; img.data[i + 2] = (vz * 0.5 + 0.5) * 255; img.data[i + 3] = 255;
+  }
+  nx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(nc);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.NoColorSpace; t.anisotropy = 4; t.needsUpdate = true;
+  return t;
 }
 
 // ---- terracotta roof tiles: scalloped rows (tileable) ----

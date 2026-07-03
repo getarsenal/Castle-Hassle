@@ -6,7 +6,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
 import { Biome } from './campaign';
 import { makeSoldierTexture, makeArrowTexture, spriteAspect, SpriteKind } from './sprites';
-import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
+import { stoneTexture, stoneNormalTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
 
 // ── Cinematic colour-grade ────────────────────────────────────────────────
 // One cheap fullscreen pass that turns the storybook-bright frame into a
@@ -191,6 +191,7 @@ export class Renderer {
   private rubbleMat = new THREE.MeshLambertMaterial({ color: '#a3987f' });
   // shared procedural textures (one GPU upload each; materials clone but keep the map)
   private texStone = stoneTexture();
+  private texStoneN = stoneNormalTexture(); // matching normal map — blocks catch real light
   private texRoof = roofTexture();
   private texPlaster = plasterTexture();
 
@@ -533,7 +534,7 @@ export class Renderer {
         // the gatehouse mass is dressed stone (or a timber frame in a palisade town);
         // the actual planked gate is added as detailed doors below.
         const mat = !wood ? tintStone(this.stone(b.kind === 'gate' ? '#cdb892' : '#e6d6af')) : this.stone(b.kind === 'gate' ? '#6e4a28' : '#8a5a31');
-        if (!wood) mat.map = this.texStone;
+        if (!wood) { mat.map = this.texStone; mat.normalMap = this.texStoneN; mat.normalScale.set(0.8, 0.8); }
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         if (b.kind === 'gate') this.addGateDoors(extras, cx, cz, w, d, b.h, horiz, outer, wood);
@@ -552,7 +553,7 @@ export class Renderer {
           for (const [ex, ez, ew, ed] of [[0, d / 2, w, 0.8], [0, -d / 2, w, 0.8], [w / 2, 0, 0.8, d], [-w / 2, 0, 0.8, d]] as const)
             parts.push(this.boxG(ew, 1.3, ed, ex, b.h + 0.6, ez));
         }
-        const mat = tintStone(this.stone('#dfcca2')); mat.map = this.texStone;
+        const mat = tintStone(this.stone('#dfcca2')); mat.map = this.texStone; mat.normalMap = this.texStoneN; mat.normalScale.set(0.8, 0.8);
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         // roof + pole + flag stay separate (different materials) and hide on crumble
@@ -599,6 +600,54 @@ export class Renderer {
       }
     }
 
+    // ---- BATTERED BASE + ARROW SLITS: the real-castle detailing ----
+    // A tumble of embedded boulders forms a battered plinth at every wall/tower
+    // foot (so the curtain grows OUT of the ground, not sits on it like a box), and
+    // narrow loopholes are cut down the tower drums + wall faces for the archers.
+    {
+      const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+      const boulderG: THREE.BufferGeometry[] = [], slitG: THREE.BufferGeometry[] = [];
+      const boulder = (r: number, x: number, y: number, z: number) => {
+        const g = new THREE.IcosahedronGeometry(r, 0), p = g.attributes.position;
+        for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * rnd(0.75, 1.3), p.getY(i) * rnd(0.55, 1.0), p.getZ(i) * rnd(0.75, 1.3));
+        g.scale(1, 0.72, 1); g.rotateY(Math.random() * 3.14); g.translate(x, y, z); g.computeVertexNormals();
+        this.paint(g, new THREE.Color('#b3a789').multiplyScalar(0.72 + Math.random() * 0.42));
+        return g;
+      };
+      for (let s = 0; s < CASTLE.length; s++) {
+        const b = CASTLE[s]; if (b.kind === 'building' || b.kind === 'keep') continue;
+        const w = b.x1 - b.x0, d = b.z1 - b.z0, cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+        if (b.kind === 'tower') {
+          const r = Math.max(w, d) / 2, nb = 10 + Math.floor(r * 1.4);
+          // two rings: a chunky embedded course hugging the foot + a looser outer scatter
+          for (let k = 0; k < nb; k++) { const a = Math.random() * 6.283, rr = r * rnd(0.92, 1.05); boulderG.push(boulder(rnd(1.2, 2.4), cx + Math.cos(a) * rr, rnd(0.0, 0.5), cz + Math.sin(a) * rr)); }
+          for (let k = 0; k < nb * 0.6; k++) { const a = Math.random() * 6.283, rr = r * rnd(1.05, 1.4); boulderG.push(boulder(rnd(0.6, 1.4), cx + Math.cos(a) * rr, rnd(0.1, 0.5), cz + Math.sin(a) * rr)); }
+          for (let k = 0; k < 4; k++) { const a = k / 4 * 6.283 + 0.5, sx = cx + Math.cos(a) * (r + 0.05), sz = cz + Math.sin(a) * (r + 0.05); slitG.push(new THREE.BoxGeometry(0.34, 2.3, 0.34).translate(sx, b.h * 0.55, sz)); }
+        } else {
+          const horiz = w > d, len = horiz ? w : d, outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
+          const nb = Math.max(5, Math.round(len / 4));
+          for (let k = 0; k < nb; k++) {
+            const tv = (k + 0.5) / nb - 0.5, big = Math.random() < 0.5;
+            const off = big ? rnd(0.2, 1.0) : rnd(1.0, 2.4); // big stones hug the foot, smaller ones tumble out
+            const px = horiz ? cx + tv * len + rnd(-2, 2) : cx + outer * (w / 2 + off);
+            const pz = horiz ? cz + outer * (d / 2 + off) : cz + tv * len + rnd(-2, 2);
+            boulderG.push(boulder(big ? rnd(1.4, 2.8) : rnd(0.7, 1.5), px, rnd(0.0, 0.55), pz));
+          }
+          if (b.kind === 'wall') { // loopholes on the outer face (skip gates)
+            const ns = Math.max(1, Math.round(len / 16));
+            for (let k = 0; k < ns; k++) {
+              const tv = (k + 0.5) / ns - 0.5;
+              const sx = horiz ? cx + tv * len : cx + outer * (w / 2 + 0.05);
+              const sz = horiz ? cz + outer * (d / 2 + 0.05) : cz + tv * len;
+              slitG.push(new THREE.BoxGeometry(horiz ? 0.42 : 0.3, 2.2, horiz ? 0.3 : 0.42).translate(sx, b.h * 0.52, sz));
+            }
+          }
+        }
+      }
+      if (boulderG.length) { const m = new THREE.Mesh(mergeGeometries(boulderG, false), new THREE.MeshLambertMaterial({ vertexColors: true })); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
+      if (slitG.length) this.scene.add(new THREE.Mesh(mergeGeometries(slitG, false), this.stone('#171310')));
+    }
+
     // ---- collapse the static batches into a handful of draw calls ----
     if (bodyGeos.length) {
       const m = new THREE.Mesh(mergeGeometries(bodyGeos, false), new THREE.MeshLambertMaterial({ map: this.texPlaster, vertexColors: true }));
@@ -609,7 +658,7 @@ export class Renderer {
       m.castShadow = true; this.scene.add(m);
     }
     if (doorGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(doorGeos, false), timber));
-    if (keepStoneGeos.length) { const km = tintStone(this.stone('#d6c499')); km.map = this.texStone; const m = new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
+    if (keepStoneGeos.length) { const km = tintStone(this.stone('#d6c499')); km.map = this.texStone; km.normalMap = this.texStoneN; km.normalScale.set(0.8, 0.8); const m = new THREE.Mesh(mergeGeometries(keepStoneGeos, false), km); m.castShadow = m.receiveShadow = true; this.scene.add(m); }
     if (keepTimberGeos.length) this.scene.add(new THREE.Mesh(mergeGeometries(keepTimberGeos, false), timber));
   }
 
@@ -1107,6 +1156,9 @@ export class Renderer {
   private crumble(s: number) {
     const v = this.segVis[s]; if (!v || v.crumbling > 0) return;
     v.crumbling = 0.0001; v.mat.color.copy(this.rubbleMat.color);
+    // a real collapse leaves a MOUND of fallen ashlar spilling from the breach
+    const seg = CASTLE[s], sw = seg.x1 - seg.x0, sd = seg.z1 - seg.z0;
+    this.spawnRubble(v.box.position.x, v.box.position.z, Math.max(sw, sd), v.h, sw >= sd);
     // Schedule ONE shadow-map refresh for just after the collapse settles. The
     // frozen map only needs re-baking once the rubble has stopped moving — doing
     // it per frame for 0.7s was re-rendering the whole scene depth ~40 times and
@@ -1116,6 +1168,32 @@ export class Renderer {
     for (const e of v.extras) e.visible = false;
     this.spawnDebris(v.box.position.x, v.h * 0.5, v.box.position.z, 16);
     this.spawnDust(v.box.position.x, v.h * 0.5, v.box.position.z, 9, 6);
+  }
+
+  // A persistent pile of tumbled ashlar at a breach — center-heavy, spilling along
+  // the wall's run, sharing the wall's stone material so it reads as the wall's own
+  // fallen blocks (not generic scree).
+  private rubbleStoneMat?: THREE.MeshLambertMaterial;
+  private spawnRubble(x: number, z: number, wid: number, h: number, horiz: boolean) {
+    if (!this.rubbleStoneMat) {
+      const m = this.stone('#bcb096'); m.map = this.texStone; m.normalMap = this.texStoneN; m.normalScale.set(0.7, 0.7); m.vertexColors = true;
+      this.rubbleStoneMat = m;
+    }
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    const geos: THREE.BufferGeometry[] = [];
+    const along = Math.max(6, wid * 0.55), n = 12 + Math.floor(wid / 2);
+    for (let i = 0; i < n; i++) {
+      const t = rnd(-1, 1), dcen = Math.abs(t);
+      const ox = horiz ? t * along : rnd(-4, 4), oz = horiz ? rnd(-4, 4) : t * along;
+      const s = rnd(1.1, 3.0) * (1 - dcen * 0.28);
+      const py = rnd(0.05, 0.4) + (1 - dcen) * h * 0.32 * Math.random(); // mounded toward the centre
+      const g = new THREE.BoxGeometry(s * rnd(0.8, 1.3), s * rnd(0.5, 0.9), s * rnd(0.8, 1.3))
+        .rotateX(rnd(-0.5, 0.5)).rotateZ(rnd(-0.5, 0.5)).rotateY(Math.random() * 3.14).translate(x + ox, py, z + oz);
+      this.paint(g, new THREE.Color('#bcb096').multiplyScalar(rnd(0.58, 1.02)));
+      geos.push(g);
+    }
+    const mesh = new THREE.Mesh(mergeGeometries(geos, false), this.rubbleStoneMat);
+    mesh.castShadow = mesh.receiveShadow = true; this.scene.add(mesh);
   }
 
   private buildSoldiers() {
@@ -1470,7 +1548,7 @@ export class Renderer {
       v.prevHp = seg.hp;
       if (v.crumbling > 0 && v.crumbling < 1) {
         v.crumbling = Math.min(1, v.crumbling + dt / 0.7);
-        const e = v.crumbling, k = 1 - 0.72 * e;
+        const e = v.crumbling, k = 1 - 0.84 * e;
         // merged section meshes have their origin at the ground, so collapse =
         // squash toward y=0 plus a small sink.
         v.box.scale.y = k; v.box.position.y = -0.5 * e; v.box.rotation.z = e * 0.12 * (s % 2 ? 1 : -1);
