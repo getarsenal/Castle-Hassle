@@ -151,6 +151,31 @@ headless map screenshot):
 - Known-and-accepted (LOW, not fixed): Director hot-corner discoverability, dev
   gold grant in debug, `(this.sim as any)` casts, pennant 200 cap.
 
+## Campaign map overhaul (July 2026 — 28 upgrades, worldmap3d.ts)
+The map got the siege treatment. Everything below is in `worldmap3d.ts`:
+- **Atmosphere**: drifting cumulus (the once-orphaned `cloudSprite()`) with
+  parallax ground shadows; sea sparkle points; river-mouth foam; crusade-progress
+  lighting (sun hardens/coppers as completed/total grows); `.mapVig` CSS vignette;
+  layered cartography — realm names fade IN past dist~150, castle labels fade out
+  (current always full).
+- **Life**: hearth smoke on held settlements (last 8 + objective); a siege camp
+  (tents/fire/smoke) pitched on dry ground outside the objective; ship wakes;
+  2 of 5 gull flocks orbit harbours; dust puffs behind the marching column.
+- **Roads/march**: `roadLegs` map keeps each A*-leg's world points — the march
+  animation WALKS THE ROAD now (sea legs still take the boat); marched legs render
+  gold-dust, the next leg pulses (`nextLegMat`).
+- **Input**: wheel zoom toward cursor, right-drag orbit (pitch clamped 0.5-1.28),
+  double-tap dive, WASD/QE/RF keys (guarded by cssW()>0), mouse hover = pointer
+  cursor + marker swell, LOCKED castles tappable (rumour panel: rounded strength,
+  'Beyond the frontier', no siege button), ⚑/🌍 chips under the compass glide via
+  `camTween` (cancelled by any manual input).
+- **Panel intel**: 'Skies at the siege' forecast row — SAME seed rolls as main.ts
+  newGame (WX[(seed>>>7)%10], TODS[(seed>>>3)%8]); keep in sync if those change.
+  Garrison composition bar (.gbar) + tactical weather note for the objective.
+- **Correctness**: frame() now advances on real dt (pulse 3/s) — was 2x speed on
+  120Hz phones; ships/birds/march-camera all dt-based; the 99-castle threat pass
+  pre-warms 1.1s after build so the first tap doesn't jank.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

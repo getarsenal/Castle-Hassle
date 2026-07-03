@@ -57,12 +57,12 @@ export class WorldMap3D {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
-  private raf = 0; private pulse = 0;
+  private raf = 0; private pulse = 0; private lastT = 0;
   private bb!: BB; private GW = 0; private GH = 0; private heights = new Float32Array(0);
   private fineH = new Float32Array(0); private TW = 0; private TH = 0; // upsampled relief grid
   private readonly K = 11; private lonMid = 0; private myMid = 0;
   private target = new THREE.Vector3(); private dist = 200; private azimuth = 0; private pitch = 52 * Math.PI / 180;
-  private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh }[] = [];
+  private markers: { node: CampaignCastle; pos: THREE.Vector3; ring?: THREE.Mesh; grp?: THREE.Group; baseS: number }[] = [];
   private flourish?: { grp: THREE.Group; ring: THREE.Mesh; glow: THREE.Sprite; t0: number };
   private labels: THREE.Sprite[] = [];
   private water?: THREE.Mesh; private waterBase?: Float32Array;
@@ -72,6 +72,18 @@ export class WorldMap3D {
   private maskRef!: Uint8Array; private cdistRef!: Uint8Array;
   private spots: { x: number; z: number; y: number }[] = []; // final (de-clumped) marker positions
   private compassEl?: HTMLElement; private panelEl?: HTMLElement; private styleEl?: HTMLElement;
+  private clouds: { sp: THREE.Sprite; sh: THREE.Sprite; y: number; spd: number }[] = [];
+  private sparkles: { sp: THREE.Sprite; phase: number; k: number }[] = [];
+  private smokes: { sp: THREE.Sprite; x: number; y0: number; z: number; phase: number; drift: number }[] = [];
+  private wakes: THREE.Mesh[] = [];
+  private realmSprites: THREE.Sprite[] = [];
+  private labelMeta: { sp: THREE.Sprite; current: boolean }[] = [];
+  private roadLegs = new Map<number, [number, number][]>();
+  private nextLegMat?: THREE.MeshBasicMaterial;
+  private camTween?: { x: number; z: number; dist: number; t: number; dur: number };
+  private keys = new Set<string>();
+  private hoverId = -1;
+  private vigEl?: HTMLElement; private chipsEl?: HTMLElement;
   private dragging = false; private lastX = 0; private lastY = 0; private moved = 0; private downX = 0; private downY = 0; private downT = 0; private pinchD = 0; private pinchA?: number; private azReset = false;
   private compassRose?: HTMLElement; private _tp = new THREE.Vector3(); private _np = new THREE.Vector3();
   private ready = false;
@@ -90,14 +102,18 @@ export class WorldMap3D {
     this.camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
     // dusk lighting: a low warm-gold sun rakes the relief, cool dusk sky fill, muted ambient
     this.scene.add(new THREE.HemisphereLight('#b9c2e6', '#4a3c28', 0.66));
-    const sun = new THREE.DirectionalLight('#ffce92', 1.55); sun.position.set(-150, 175, 120); this.scene.add(sun);
+    // the light hardens subtly as the crusade drives east: late campaigns sit
+    // under a fiercer, more coppery sun than the soft opening in Wales
+    const cp = Math.min(1, prog.completed.length / Math.max(1, nodes.length - 1));
+    const sun = new THREE.DirectionalLight(new THREE.Color('#ffce92').lerp(new THREE.Color('#ffb976'), cp * 0.8), 1.55 + cp * 0.22);
+    sun.position.set(-150, 175, 120); this.scene.add(sun);
     this.scene.add(new THREE.AmbientLight('#5a4e5e', 0.3));
     this.buildSkyDome();
     this.resize();
     this.bind();
     try { this.build(mapData as any); }   // data is bundled in — no fetch, no stale-asset risk
     catch (e: any) { const h = document.getElementById('mapHeader'); if (h) { h.textContent = 'MAP ERROR: ' + (e?.message || e); (h as HTMLElement).style.maxWidth = '90vw'; } }
-    const loop = () => { this.pulse += 0.05; this.frame(); this.raf = requestAnimationFrame(loop); };
+    const loop = () => { this.frame(); this.raf = requestAnimationFrame(loop); };
     loop();
     (window as any).__map = this;
   }
@@ -116,7 +132,11 @@ export class WorldMap3D {
       }
     });
     this.renderer.dispose(); this.renderer.forceContextLoss();
+    window.removeEventListener('keydown', this.keyDownBound);
+    window.removeEventListener('keyup', this.keyUpBound);
+    window.removeEventListener('blur', this.blurBound);
     this.compassEl?.remove(); this.panelEl?.remove(); (this as any).hintEl?.remove();
+    this.chipsEl?.remove(); this.vigEl?.remove();
     this.canvas.replaceWith(this.canvas.cloneNode(false));
   }
 
@@ -274,11 +294,17 @@ export class WorldMap3D {
     this.buildRealmLabels();
     this.buildBirds();
     this.buildAmbientShips();
+    this.buildClouds();
+    this.buildSparkles();
+    this.buildSmoke();
+    this.buildSiegeCamp();
     this.makeCompass();
     this.makePanel();
 
     this.frameOn(mask, this.nodes[Math.min(this.prog.unlocked, this.nodes.length - 1)]);
     this.ready = true;
+    // pre-warm the campaign-wide threat survey off the first tap's critical path
+    setTimeout(() => { try { if (this.nodes.length) this.starsFor(this.nodes[0]); } catch { /* map torn down */ } }, 1100);
   }
 
   // Aim the oblique camera so LAND fills the view: look at the centroid of the
@@ -501,7 +527,7 @@ export class WorldMap3D {
         ring = new THREE.Mesh(new THREE.RingGeometry(5, 6.6, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: 0.95, depthWrite: false }));
         ring.position.set(x, y + 0.4, z); this.scene.add(ring);
       }
-      this.markers.push({ node, pos: new THREE.Vector3(x, y, z), ring });
+      this.markers.push({ node, pos: new THREE.Vector3(x, y, z), ring, grp: g, baseS: sc });
       // label sprite for unlocked / current / done
       if (!locked || current) this.addLabel(node, x, y + (current ? 12 : 9), z, current);
     }
@@ -514,7 +540,7 @@ export class WorldMap3D {
     ctx.fillStyle = current ? '#ffe27a' : '#fff4e2'; ctx.fillText(node.name, 128, 34);
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-    sp.position.set(x, y, z); sp.scale.set(22, 5.5, 1); sp.renderOrder = 10; this.scene.add(sp); this.labels.push(sp);
+    sp.position.set(x, y, z); sp.scale.set(22, 5.5, 1); sp.renderOrder = 10; this.scene.add(sp); this.labels.push(sp); this.labelMeta.push({ sp, current });
   }
 
   // big, faint realm names floating over their territory (Total War flavour)
@@ -522,10 +548,11 @@ export class WorldMap3D {
     for (const [name, lat, lon] of REALMS) {
       const cv = document.createElement('canvas'); cv.width = 512; cv.height = 80; const ctx = cv.getContext('2d')!;
       ctx.font = "700 38px 'Cinzel', Georgia, serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      try { (ctx as any).letterSpacing = '10px'; } catch { /* older engines */ }
       ctx.fillStyle = 'rgba(60,44,20,0.72)'; ctx.fillText(name, 256, 44);
       const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.5, depthTest: true, depthWrite: false }));
-      sp.position.set(this.wX(lon), this.terrainY(lon, lat) + 16, this.wZ(lat)); sp.scale.set(58, 9, 1); sp.renderOrder = 2; this.scene.add(sp);
+      sp.position.set(this.wX(lon), this.terrainY(lon, lat) + 16, this.wZ(lat)); sp.scale.set(58, 9, 1); sp.renderOrder = 2; this.scene.add(sp); this.realmSprites.push(sp);
     }
   }
 
@@ -691,6 +718,13 @@ export class WorldMap3D {
       geos.push(gg);
     }
     if (geos.length) { const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.renderOrder = 1; this.scene.add(m); }
+    // a soft brackish bloom where each great river meets the sea
+    const foamTex = this.softSprite('rgba(232,238,236,0.5)');
+    for (const river of RIVERS) {
+      const [la, lo] = river[river.length - 1];
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: foamTex, transparent: true, opacity: 0.3, depthWrite: false }));
+      sp.scale.set(4.5, 3.2, 1); sp.position.set(this.wX(lo), 0.8, this.wZ(la)); sp.renderOrder = 2; this.scene.add(sp);
+    }
   }
 
   // ---- ambient shipping: lone sails working the sea lanes ----
@@ -710,8 +744,77 @@ export class WorldMap3D {
       if (!r) continue;
       const grp = this.buildBoat(); grp.visible = true; grp.scale.setScalar(0.85); // a distant sail, not a leviathan
       this.scene.add(grp);
+      // a churned white wake trailing astern
+      const wk = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 7.5).rotateX(-Math.PI / 2).translate(0, 0, 5.6),
+        new THREE.MeshBasicMaterial({ map: this.softSprite('rgba(226,234,232,0.65)'), transparent: true, opacity: 0.2, depthWrite: false }));
+      wk.renderOrder = 2; this.scene.add(wk); this.wakes.push(wk);
       this.ships.push({ grp, cx, cz, r, a: Math.random() * 6.28, spd: 0.0016 + Math.random() * 0.0018 });
     }
+  }
+
+  // ---- drifting cumulus + their shadows sliding over the land (parallax pair) ----
+  private buildClouds() {
+    const tex = this.cloudSprite(); const shTex = this.softSprite('rgba(18,14,8,0.55)');
+    const x0 = this.wX(this.bb.w), x1 = this.wX(this.bb.e), z0 = this.wZ(this.bb.n), z1 = this.wZ(this.bb.s);
+    for (let i = 0; i < 9; i++) {
+      const sc = 30 + hash(i, 41) * 34;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.42 + hash(i, 43) * 0.26, depthWrite: false, fog: false }));
+      sp.scale.set(sc * (1.3 + hash(i, 45) * 0.5), sc * 0.62, 1); sp.renderOrder = 4;
+      sp.position.set(x0 + hash(i, 47) * (x1 - x0), 88 + hash(i, 49) * 46, z0 + hash(i, 51) * (z1 - z0));
+      // its shadow: a soft dark pool gliding over the relief far below
+      const sh = new THREE.Sprite(new THREE.SpriteMaterial({ map: shTex, transparent: true, opacity: 0.11, depthWrite: false }));
+      sh.scale.set(sc * 1.1, sc * 0.7, 1); sh.renderOrder = 1;
+      this.scene.add(sp); this.scene.add(sh);
+      this.clouds.push({ sp, sh, y: sp.position.y, spd: 0.55 + hash(i, 53) * 0.5 });
+    }
+  }
+  // ---- sun sparkle: pin-points of light twinkling on the open sea ----
+  private buildSparkles() {
+    const tex = this.softSprite('rgba(255,246,220,0.95)');
+    let placed = 0, tries = 0;
+    while (placed < 44 && tries++ < 500) {
+      const lon = this.bb.w + Math.random() * (this.bb.e - this.bb.w), lat = this.bb.s + Math.random() * (this.bb.n - this.bb.s);
+      if (!this.isWater(lon, lat)) continue;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }));
+      sp.scale.set(1.25, 1.0, 1); sp.position.set(this.wX(lon), 0.85, this.wZ(lat)); sp.renderOrder = 2;
+      this.scene.add(sp); this.sparkles.push({ sp, phase: Math.random() * 6.28, k: 1.4 + Math.random() * 1.6 }); placed++;
+    }
+  }
+  // ---- hearth smoke rising from settlements you hold (and the one you besiege) ----
+  private buildSmoke() {
+    const spots = this.settlementSpots();
+    const sites = this.nodes.filter(n => this.prog.completed.includes(n.id)).slice(-8).map(n => spots[n.id]);
+    const cur = spots[Math.min(this.prog.unlocked, this.nodes.length - 1)]; if (cur) sites.push(cur);
+    const tex = this.softSprite('rgba(214,206,196,0.5)');
+    for (const st of sites) for (let w = 0; w < 2; w++) this.addSmoke(tex, st.x + (w - 0.5) * 1.6, st.y + 5.2, st.z, Math.random() * 6.28);
+  }
+  private addSmoke(tex: THREE.Texture, x: number, y0: number, z: number, phase: number) {
+    for (let p = 0; p < 3; p++) { // three puffs per wisp, phase-staggered up the column
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }));
+      sp.position.set(x, y0, z); this.scene.add(sp);
+      this.smokes.push({ sp, x, y0, z, phase: phase + p / 3, drift: 0.6 + Math.random() * 0.9 });
+    }
+  }
+  // ---- the siege camp: your host encamped before the objective's walls ----
+  private buildSiegeCamp() {
+    const spots = this.settlementSpots();
+    const cur = spots[Math.min(this.prog.unlocked, this.nodes.length - 1)]; if (!cur) return;
+    let cx = cur.x, cz = cur.z + 8; // try south of the walls first, then swing round
+    for (const [ox, oz] of [[0, 8], [7, 5], [-7, 5], [8, -3], [-8, -3], [0, -9]] as const) {
+      if (!this.isWaterWorld(cur.x + ox, cur.z + oz)) { cx = cur.x + ox; cz = cur.z + oz; break; }
+    }
+    const [lon, lat] = this.worldToLL(cx, cz); const cy = this.terrainY(lon, lat);
+    const g = new THREE.Group();
+    const canvasM = new THREE.MeshLambertMaterial({ color: '#cdc2a4' }), redM = new THREE.MeshLambertMaterial({ color: '#a03a2c' });
+    for (let t = 0; t < 3; t++) {
+      const a = t / 3 * 6.28 + 0.7, r = 2.3;
+      const tent = new THREE.Mesh(new THREE.ConeGeometry(1.15, 1.5, 5), t === 0 ? redM : canvasM);
+      tent.position.set(Math.cos(a) * r, 0.75, Math.sin(a) * r); tent.rotation.y = hash(t, 61) * 3; g.add(tent);
+    }
+    const fire = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.softSprite('rgba(255,170,70,0.95)'), transparent: true, opacity: 0.7, depthWrite: false }));
+    fire.scale.set(3.2, 2.6, 1); fire.position.y = 0.9; g.add(fire); (this as any).campFire = fire;
+    g.position.set(cx, cy, cz); this.scene.add(g);
+    this.addSmoke(this.softSprite('rgba(190,180,168,0.5)'), cx, cy + 2.2, cz, 0.4);
   }
 
   // A gradient sky dome (warm horizon → cool zenith) so the sky reads with depth
@@ -792,7 +895,11 @@ export class WorldMap3D {
       const k = 4 + Math.floor(Math.random() * 3);
       for (let i = 0; i < k; i++) { const bird = this.oneBird(mat); const col = (i % 2 ? 1 : -1) * Math.ceil(i / 2); bird.position.set(col * 3.2, -Math.abs(col) * 0.6, -Math.abs(col) * 2.6); bird.scale.setScalar(0.9 + Math.random() * 0.3); grp.add(bird); }
       grp.position.set(this.wX(this.bb.w) + Math.random() * (this.wX(this.bb.e) - this.wX(this.bb.w)), 78 + Math.random() * 34, this.wZ(this.bb.n) + Math.random() * (this.wZ(this.bb.s) - this.wZ(this.bb.n)));
-      this.scene.add(grp); this.birds.push({ grp, speed: 0.16 + Math.random() * 0.12, phase: f * 1.7 });
+      this.scene.add(grp);
+      // two of the flocks are harbour gulls, wheeling circles instead of migrating
+      const b: any = { grp, speed: 0.16 + Math.random() * 0.12, phase: f * 1.7 };
+      if (f < 2) { b.orbit = { x: grp.position.x, z: grp.position.z, r: 16 + Math.random() * 12, a: Math.random() * 6.28 }; }
+      this.birds.push(b);
     }
   }
 
@@ -844,7 +951,7 @@ export class WorldMap3D {
       const lon = bb.w + (bb.e - bb.w) * ((i % GW) / (GW - 1)), lat = bb.s + (bb.n - bb.s) * (((i / GW) | 0) / (GH - 1));
       return [this.wX(lon), this.wZ(lat)];
     };
-    const roadGeos: THREE.BufferGeometry[] = [];
+    const roadGeos: THREE.BufferGeometry[] = [], pastGeos: THREE.BufferGeometry[] = [], nextGeos: THREE.BufferGeometry[] = [];
     const seaMat = new THREE.LineDashedMaterial({ color: '#8ba0b2', transparent: true, opacity: 0.45, dashSize: 2.2, gapSize: 2.6 });
     for (let i = 1; i < this.nodes.length; i++) {
       const A = spots[i - 1], B2 = spots[i];
@@ -876,12 +983,18 @@ export class WorldMap3D {
       for (let k = 0; k < wpts.length - 1; k++) { const a = k * 2; ri.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
       const rg = new THREE.BufferGeometry();
       rg.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3)); rg.setIndex(ri);
-      roadGeos.push(rg);
+      this.roadLegs.set(i, wpts); // the march animation walks THIS road, not a ruler line
+      // legs already marched wear gold dust; the leg you'll march next pulses; the rest wait
+      (i < this.prog.unlocked ? pastGeos : i === this.prog.unlocked ? nextGeos : roadGeos).push(rg);
     }
-    if (roadGeos.length) {
-      const m = new THREE.Mesh(mergeGeometries(roadGeos, false), new THREE.MeshBasicMaterial({ color: '#c9a878', transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
-      m.renderOrder = 2; this.scene.add(m);
-    }
+    const addRoad = (gs: THREE.BufferGeometry[], mat: THREE.MeshBasicMaterial) => {
+      if (!gs.length) return;
+      const m = new THREE.Mesh(mergeGeometries(gs, false), mat); m.renderOrder = 2; this.scene.add(m);
+    };
+    addRoad(roadGeos, new THREE.MeshBasicMaterial({ color: '#c9a878', transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
+    addRoad(pastGeos, new THREE.MeshBasicMaterial({ color: '#dcbc82', transparent: true, opacity: 0.98, depthWrite: false, side: THREE.DoubleSide }));
+    this.nextLegMat = new THREE.MeshBasicMaterial({ color: '#eccb84', transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide });
+    addRoad(nextGeos, this.nextLegMat);
   }
 
   // ---- compass + castle info panel (DOM overlays on the map screen) ----
@@ -926,6 +1039,17 @@ export class WorldMap3D {
     .castlePanel button{flex:1;border:none;border-radius:10px;padding:12px 10px;font:600 15px 'EB Garamond',Georgia,serif;cursor:pointer;line-height:1.15}
     .castlePanel .go{background:linear-gradient(#b5402f,#8c2b20);color:#fff}
     .castlePanel .close{background:#3a2e1e;color:#d9c8a8}
+    .mapChips{position:absolute;top:160px;right:14px;display:flex;flex-direction:column;gap:8px;z-index:6}
+    .mapChips button{width:44px;height:44px;border-radius:50%;border:2px solid #7a5e2e;cursor:pointer;
+      background:radial-gradient(circle at 50% 34%,#f4e7c8,#d9c294 66%,#c0a878);color:#4a3514;font-size:19px;line-height:1;
+      box-shadow:0 3px 9px rgba(0,0,0,.4),inset 0 2px 4px rgba(255,255,255,.5)}
+    .mapChips button:active{transform:scale(.93)}
+    .mapVig{position:absolute;inset:0;pointer-events:none;z-index:5;
+      background:radial-gradient(120% 96% at 50% 42%,transparent 56%,rgba(13,9,4,.3) 100%)}
+    .castlePanel .gbar{display:flex;height:9px;border-radius:5px;overflow:hidden;margin:0 auto 6px;max-width:340px;border:1px solid #3a2c19}
+    .castlePanel .gbar i{display:block;height:100%}
+    .castlePanel .glegend{display:flex;justify-content:center;gap:14px;font-size:10.5px;color:#bda981;margin-bottom:13px}
+    .castlePanel .glegend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
     .marchHint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:7;
       background:#000a;color:#f3e6cf;padding:7px 14px;border-radius:20px;font:600 13px 'EB Garamond',Georgia,serif;display:none}
     .marchHint.show{display:block}`;
@@ -938,6 +1062,21 @@ export class WorldMap3D {
     c.innerHTML = '<div class="ring"><span class="n">N</span><span class="s">S</span><span class="e">E</span><span class="w">W</span></div><div class="rose"><div class="needle"></div><div class="needle s"></div></div>';
     c.addEventListener('click', () => { this.azReset = true; });
     this.host().appendChild(c); this.compassEl = c; this.compassRose = c.querySelector('.rose') as HTMLElement;
+    // two glide chips: home to your encamped host, or pull back to survey the world
+    const chips = document.createElement('div'); chips.className = 'mapChips';
+    const mk = (label: string, title: string, fn: () => void) => {
+      const b = document.createElement('button'); b.textContent = label; b.title = title;
+      b.addEventListener('click', fn); chips.appendChild(b);
+    };
+    mk('⚑', 'Return to your host', () => {
+      const sp = this.settlementSpots()[Math.min(this.prog.unlocked, this.nodes.length - 1)];
+      if (sp) this.clampTweenTo(sp.x, sp.z, 140, 0.9);
+    });
+    mk('🌍', 'Survey the whole world', () => {
+      this.clampTweenTo((this.wX(this.bb.w) + this.wX(this.bb.e)) / 2, (this.wZ(this.bb.n) + this.wZ(this.bb.s)) / 2 + 20, 345, 1.1);
+    });
+    this.host().appendChild(chips); this.chipsEl = chips;
+    const vig = document.createElement('div'); vig.className = 'mapVig'; this.host().appendChild(vig); this.vigEl = vig;
   }
   private makePanel() {
     this.injectStyles();
@@ -977,16 +1116,49 @@ export class WorldMap3D {
     const rank = sorted.filter(x => x <= v).length - 1; // 0-based position among all castles
     return Math.max(1, Math.min(5, 1 + Math.floor(rank / Math.max(1, sorted.length) * 5)));
   }
-  private describe(node: CampaignCastle): { blurb: string; stats: [string, string][]; schematic: string; total: number; breakdown: string; canSiege: boolean } {
-    const st = node.style; const done = this.prog.completed.includes(node.id); const current = node.id === this.prog.unlocked;
+  // the exact sky the siege will be fought under — same seed rolls as main.ts
+  // newGame(), so this is real intelligence: rain slackens bowstrings and kills
+  // fire; mist shortens sightlines; wind bends arrows but fans the flames.
+  private forecast(seed: number): { line: string; note: string } {
+    const WX = ['clear', 'clear', 'clear', 'clear', 'clear', 'rain', 'rain', 'mist', 'mist', 'wind'] as const;
+    const TODS = ['noon', 'dawn', 'noon', 'dusk', 'noon', 'dawn', 'dusk', 'night'] as const;
+    const wx = WX[(seed >>> 7) % WX.length], tod = TODS[(seed >>> 3) % 8];
+    const T: Record<string, string> = { dawn: 'Dawn', noon: 'Midday', dusk: 'Dusk', night: 'Night' };
+    const W: Record<string, string> = { clear: 'fair skies', rain: 'rain', mist: 'mist', wind: 'high wind' };
+    const N: Record<string, string> = {
+      clear: '', rain: 'Rain will slacken every bowstring and drown all fire.',
+      mist: 'Mist will shorten every sightline on the field.',
+      wind: 'The wind will bend arrows — and fan any flame it finds.',
+    };
+    return { line: `${T[tod]} · ${W[wx]}`, note: N[wx] };
+  }
+  private describe(node: CampaignCastle): { blurb: string; stats: [string, string][]; schematic: string; total: number; breakdown: string; canSiege: boolean; locked: boolean; gbar: [number, number, number]; wxNote: string } {
+    const done = this.prog.completed.includes(node.id); const current = node.id === this.prog.unlocked;
+    const locked = node.id > this.prog.unlocked;
     const stars = this.starsFor(node);                 // (runs the campaign-wide threat pass, may mutate globals)
     const s = surveyCastle(node.seed, node.style, castleDifficulty(node.tier)); // re-survey the clicked castle for its schematic + numbers
     const pl = s.plan;
     const menAtArms = pl.garrison + pl.citGuard, archers = pl.wallArchers.length + pl.towerArchers + pl.citArchers.length;
-    const breakdown = `${menAtArms.toLocaleString()} men-at-arms · ${archers.toLocaleString()} archers · ${pl.reserves.toLocaleString()} in reserve`;
     const walls = s.palisade ? 'Timber palisade' : s.concentric ? 'Concentric double ring' : 'Stone curtain wall';
     const hold = s.citadel ? 'Walled inner citadel' : s.keep ? 'Great central keep' : 'Open bailey';
     const towers = s.towers > 0 ? `${s.towers}${s.bigTowers ? ` · ${s.bigTowers} great` : ''}` : '—';
+    const fc = this.forecast(node.seed);
+    if (locked) {
+      // beyond the frontier: scouts bring only rumour — rounded strength, no plan
+      const approx = Math.max(100, Math.round(s.total / 100) * 100);
+      return {
+        blurb: `The road east does not yet reach ${node.name}. Travellers' tales speak of ${walls.toLowerCase()} and a watchful garrison.`,
+        total: s.total, breakdown: `Rumoured ~${approx.toLocaleString()} strong`, schematic: castleSchematicSVG(s),
+        stats: [
+          ['Garrison', `~${approx.toLocaleString()} (rumoured)`],
+          ['Walls', walls],
+          ['Difficulty', '★'.repeat(stars) + '☆'.repeat(5 - stars)],
+          ['Status', 'Beyond the frontier'],
+        ],
+        canSiege: false, locked: true, gbar: [0, 0, 0], wxNote: '',
+      };
+    }
+    const breakdown = `${menAtArms.toLocaleString()} men-at-arms · ${archers.toLocaleString()} archers · ${pl.reserves.toLocaleString()} in reserve`;
     const blurb = WorldMap3D.BLURBS[node.name] || `A ${s.concentric ? 'concentric' : s.round ? 'drum-towered' : 'stout'} stronghold of ${node.region}, ${node.tier > 0.6 ? 'strongly held and richly garrisoned' : 'guarding the road east'}.`;
     return {
       blurb, total: s.total, breakdown, schematic: castleSchematicSVG(s),
@@ -996,19 +1168,27 @@ export class WorldMap3D {
         ['Towers', towers],
         ['Stronghold', hold],
         ['Ground', `${s.footprintW} × ${s.footprintD} paces`],
+        ['Skies at the siege', fc.line],
         ['Difficulty', '★'.repeat(stars) + '☆'.repeat(5 - stars)],
         ['Status', done ? 'Conquered' : current ? 'Your objective' : 'Awaiting'],
       ],
-      canSiege: current,
+      canSiege: current, locked: false, gbar: [menAtArms, archers, pl.reserves], wxNote: current ? fc.note : '',
     };
   }
   private showPanel(node: CampaignCastle) {
     const p = this.panelEl; if (!p) return; const d = this.describe(node);
+    const [ma, ar, rs] = d.gbar; const gt = ma + ar + rs;
+    const gbar = gt > 0
+      ? `<div class="gbar"><i style="width:${(ma / gt * 100).toFixed(1)}%;background:#b5563c"></i><i style="width:${(ar / gt * 100).toFixed(1)}%;background:#c9a84c"></i><i style="width:${(rs / gt * 100).toFixed(1)}%;background:#8a8f98"></i></div>`
+        + `<div class="glegend"><span><i style="background:#b5563c"></i>Men-at-arms</span><span><i style="background:#c9a84c"></i>Archers</span><span><i style="background:#8a8f98"></i>Reserve</span></div>`
+      : '';
     p.innerHTML = `<h3>${node.name}</h3><div class="reg">${node.region}</div>`
       + `<div class="cmap">${d.schematic}</div>`
       + `<div class="blurb">${d.blurb}</div>`
       + `<div class="obreak">${d.breakdown}</div>`
+      + gbar
       + `<div class="stats">${d.stats.map(s => `<div class="stat"><span>${s[0]}</span><b>${s[1]}</b></div>`).join('')}</div>`
+      + (d.wxNote ? `<div class="obreak">${d.wxNote}</div>` : '')
       + `<div class="row">${d.canSiege ? '<button class="go">March &amp; Lay Siege</button>' : ''}<button class="close">Close</button></div>`;
     p.classList.add('show');
     p.querySelector('.close')!.addEventListener('click', () => p.classList.remove('show'));
@@ -1078,16 +1258,31 @@ export class WorldMap3D {
   }
   private marchTo(node: CampaignCastle) {
     const src = node.id > 0 ? this.nodes[node.id - 1] : null;
-    const A = src ? { lon: src.lon, lat: src.lat } : { lon: node.lon, lat: node.lat - 2.2 };
-    const B = { lon: node.lon, lat: node.lat };
-    const N = 60, path: { p: THREE.Vector3; water: boolean }[] = [];
-    for (let k = 0; k <= N; k++) {
-      const t = k / N, lon = A.lon + (B.lon - A.lon) * t, lat = A.lat + (B.lat - A.lat) * t;
-      const water = this.isWater(lon, lat);
-      const y = water ? 0.7 : this.terrainY(lon, lat) + 0.4;
-      path.push({ p: new THREE.Vector3(this.wX(lon), y, this.wZ(lat)), water });
+    const path: { p: THREE.Vector3; water: boolean }[] = [];
+    let dur: number;
+    const leg = this.roadLegs.get(node.id);
+    if (leg && leg.length > 2) {
+      // the host marches the ACTUAL road — winding through passes and valley
+      // floors — instead of ghosting a straight line over fell and firth
+      let len = 0;
+      for (let k = 0; k < leg.length; k++) {
+        const [lon, lat] = this.worldToLL(leg[k][0], leg[k][1]);
+        path.push({ p: new THREE.Vector3(leg[k][0], this.terrainY(lon, lat) + 0.4, leg[k][1]), water: false });
+        if (k) len += Math.hypot(leg[k][0] - leg[k - 1][0], leg[k][1] - leg[k - 1][1]);
+      }
+      dur = Math.max(2.6, Math.min(6.5, len * 0.05 + 2.1));
+    } else {
+      const A = src ? { lon: src.lon, lat: src.lat } : { lon: node.lon, lat: node.lat - 2.2 };
+      const B = { lon: node.lon, lat: node.lat };
+      const N = 60;
+      for (let k = 0; k <= N; k++) {
+        const t = k / N, lon = A.lon + (B.lon - A.lon) * t, lat = A.lat + (B.lat - A.lat) * t;
+        const water = this.isWater(lon, lat);
+        const y = water ? 0.7 : this.terrainY(lon, lat) + 0.4;
+        path.push({ p: new THREE.Vector3(this.wX(lon), y, this.wZ(lat)), water });
+      }
+      dur = Math.max(2.6, Math.min(5.5, src ? Math.hypot(B.lon - A.lon, B.lat - A.lat) * 1.4 + 2.2 : 2.6));
     }
-    const dur = Math.max(2.6, Math.min(5.5, A && src ? Math.hypot(B.lon - A.lon, B.lat - A.lat) * 1.4 + 2.2 : 2.6));
     const army = this.buildArmy(), boat = this.buildBoat();
     (this as any).hintEl?.classList.add('show');
     this.march = { t: 0, dur, last: performance.now(), path, army, boat, done: () => this.onSelect(node), skip: false };
@@ -1108,13 +1303,33 @@ export class WorldMap3D {
     const unit = water ? m.boat : m.army; unit.position.copy(pos); unit.rotation.y = heading;
     if (water) { m.boat.position.y = pos.y + Math.sin(this.pulse * 2) * 0.25; }
     else { const cloth = (m.army as any).cloth as THREE.Mesh; if (cloth) cloth.rotation.y = 0.5 + Math.sin(this.pulse * 2.4) * 0.5; }
+    // dust hangs behind the column on land; a churned wake astern on water
+    (this as any)._dustAcc = ((this as any)._dustAcc ?? 0) + dt;
+    if ((this as any)._dustAcc > 0.22) {
+      (this as any)._dustAcc = 0;
+      const tex = this.softSprite(water ? 'rgba(226,232,230,0.5)' : 'rgba(168,146,108,0.5)');
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.3, depthWrite: false }));
+      sp.position.set(pos.x - Math.sin(heading) * 3.2, pos.y + 0.8, pos.z - Math.cos(heading) * 3.2);
+      sp.scale.set(2.4, 1.8, 1); this.scene.add(sp);
+      const born = performance.now(); const puffs = ((this as any)._puffs ??= [] as { sp: THREE.Sprite; born: number }[]);
+      puffs.push({ sp, born });
+      for (let i = puffs.length - 1; i >= 0; i--) { // grow, thin, expire (~1.6s)
+        const e = (performance.now() - puffs[i].born) / 1600;
+        if (e >= 1) { this.scene.remove(puffs[i].sp); puffs.splice(i, 1); continue; }
+        (puffs[i].sp.material as THREE.SpriteMaterial).opacity = 0.3 * (1 - e);
+        const scl = 2.4 + e * 3.4; puffs[i].sp.scale.set(scl, scl * 0.75, 1);
+      }
+    }
     // ease the camera in & follow the column (cinematic)
-    this.dist += (96 - this.dist) * 0.04;
-    this.target.x += (pos.x - this.target.x) * 0.07; this.target.z += (pos.z + 10 - this.target.z) * 0.07;
+    const k1 = 1 - Math.exp(-2.4 * dt), k2 = 1 - Math.exp(-4.3 * dt);
+    this.dist += (96 - this.dist) * k1;
+    this.target.x += (pos.x - this.target.x) * k2; this.target.z += (pos.z + 10 - this.target.z) * k2;
   }
   private endMarch() {
     const m = this.march; if (!m) return; this.march = undefined;
     this.scene.remove(m.army); this.scene.remove(m.boat);
+    const puffs = (this as any)._puffs as { sp: THREE.Sprite }[] | undefined;
+    if (puffs) { for (const p of puffs) this.scene.remove(p.sp); puffs.length = 0; }
     (this as any).hintEl?.classList.remove('show');
     m.done();
   }
@@ -1131,11 +1346,59 @@ export class WorldMap3D {
     this.target.z = Math.max(this.wZ(bb.n), Math.min(this.wZ(bb.s), this.target.z));
     this.dist = Math.max(45, Math.min(345, this.dist)); // cap zoom-out so the map's far rim stays wreathed in cloud, never a bare floating tile
   }
+  // the ground point under a screen position (on the target's height plane)
+  private groundAt(sx: number, sy: number): THREE.Vector3 | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const nx = ((sx - rect.left) / rect.width) * 2 - 1, ny = -(((sy - rect.top) / rect.height) * 2 - 1);
+    const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(nx, ny), this.camera);
+    const hit = new THREE.Vector3();
+    return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.target.y), hit) ? hit : null;
+  }
+  private rotating = false; private lastTapT = 0; private lastTapX = 0; private lastTapY = 0;
+  private keyDownBound = (e: KeyboardEvent) => {
+    if (this.cssW() === 0 || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) { this.keys.add(k); this.camTween = undefined; }
+  };
+  private keyUpBound = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
+  private blurBound = () => this.keys.clear();
+  private stepKeys(dt: number) {
+    if (!this.keys.size) return;
+    const K = this.keys, sp = this.dist * 0.9 * dt, ca = Math.cos(this.azimuth), sa = Math.sin(this.azimuth);
+    let mx = 0, mz = 0;
+    if (K.has('w') || K.has('arrowup')) mz -= 1;
+    if (K.has('s') || K.has('arrowdown')) mz += 1;
+    if (K.has('a') || K.has('arrowleft')) mx -= 1;
+    if (K.has('d') || K.has('arrowright')) mx += 1;
+    if (mx || mz) { this.target.x += (mx * ca - mz * sa) * sp; this.target.z += (mx * -sa + mz * ca) * sp; }
+    if (K.has('q')) { this.azimuth += dt * 1.5; this.azReset = false; }
+    if (K.has('e')) { this.azimuth -= dt * 1.5; this.azReset = false; }
+    if (K.has('r')) this.dist *= 1 - dt * 1.2;
+    if (K.has('f')) this.dist *= 1 + dt * 1.2;
+    this.clampTarget();
+  }
   private bind() {
     const c = this.canvas; const pts = new Map<number, { x: number; y: number }>();
-    c.addEventListener('pointerdown', e => { c.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (pts.size === 1) { this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY; this.downX = e.clientX; this.downY = e.clientY; this.moved = 0; this.downT = performance.now(); } });
+    c.addEventListener('contextmenu', e => e.preventDefault());
+    c.addEventListener('pointerdown', e => {
+      c.setPointerCapture(e.pointerId); this.camTween = undefined;
+      if (e.button === 2) { this.rotating = true; this.lastX = e.clientX; this.lastY = e.clientY; return; }
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 1) { this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY; this.downX = e.clientX; this.downY = e.clientY; this.moved = 0; this.downT = performance.now(); }
+    });
     c.addEventListener('pointermove', e => {
-      const p = pts.get(e.pointerId); if (!p) return; p.x = e.clientX; p.y = e.clientY;
+      if (this.rotating) { // right-drag orbits, matching the battle camera
+        const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY; this.lastX = e.clientX; this.lastY = e.clientY;
+        this.azimuth -= dx * 0.005; this.azReset = false;
+        this.pitch = Math.max(0.5, Math.min(1.28, this.pitch + dy * 0.004));
+        return;
+      }
+      const p = pts.get(e.pointerId);
+      if (!p) { // a bare mouse hover: light up whatever castle is under the cursor
+        if (e.pointerType === 'mouse') { this.hoverId = this.markerAt(e.clientX, e.clientY); c.style.cursor = this.hoverId >= 0 ? 'pointer' : ''; }
+        return;
+      }
+      p.x = e.clientX; p.y = e.clientY;
       if (pts.size >= 2) {
         const a = [...pts.values()]; const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
         if (this.pinchD) this.dist *= this.pinchD / d; this.pinchD = d;
@@ -1149,21 +1412,56 @@ export class WorldMap3D {
       // drag moves the map: pan in the camera's ground plane
       this.target.x -= (dx * ca - dy * sa) * k; this.target.z -= (dx * -sa + dy * ca) * k * 1.4; this.clampTarget();
     });
-    const end = (e: PointerEvent) => { const tap = pts.size === 1 && this.moved < 9 && performance.now() - this.downT < 400; pts.delete(e.pointerId); if (pts.size < 2) { this.pinchD = 0; this.pinchA = undefined; } if (pts.size === 0) this.dragging = false; if (tap) this.pick(this.downX, this.downY); };
+    const end = (e: PointerEvent) => {
+      if (e.button === 2 || this.rotating) { this.rotating = false; return; }
+      const tap = pts.size === 1 && this.moved < 9 && performance.now() - this.downT < 400;
+      pts.delete(e.pointerId); if (pts.size < 2) { this.pinchD = 0; this.pinchA = undefined; } if (pts.size === 0) this.dragging = false;
+      if (tap) {
+        const now = performance.now();
+        if (now - this.lastTapT < 320 && Math.hypot(this.downX - this.lastTapX, this.downY - this.lastTapY) < 34) {
+          // double-tap: dive toward that spot
+          const g = this.groundAt(this.downX, this.downY);
+          if (g) { this.clampTweenTo(g.x, g.z, Math.max(60, this.dist * 0.52), 0.55); }
+          this.lastTapT = 0;
+        } else { this.lastTapT = now; this.lastTapX = this.downX; this.lastTapY = this.downY; this.pick(this.downX, this.downY); }
+      }
+    };
     c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
+    c.addEventListener('wheel', e => { // zoom toward the cursor, not the screen centre
+      e.preventDefault(); this.camTween = undefined;
+      const g = this.groundAt(e.clientX, e.clientY);
+      const sc = Math.exp(e.deltaY * 0.0011);
+      if (g && sc < 1) { this.target.x += (g.x - this.target.x) * (1 - sc); this.target.z += (g.z - this.target.z) * (1 - sc); }
+      this.dist *= sc; this.clampTarget();
+    }, { passive: false });
     window.addEventListener('resize', this.resizeBound);
+    window.addEventListener('keydown', this.keyDownBound);
+    window.addEventListener('keyup', this.keyUpBound);
+    window.addEventListener('blur', this.blurBound);
   }
-  private pick(sx: number, sy: number) {
-    if (this.march) { this.march.skip = true; return; } // tap skips the march
+  private clampTweenTo(x: number, z: number, dist: number, dur: number) {
+    const { bb } = this;
+    this.camTween = {
+      x: Math.max(this.wX(bb.w), Math.min(this.wX(bb.e), x)),
+      z: Math.max(this.wZ(bb.n), Math.min(this.wZ(bb.s), z)),
+      dist: Math.max(45, Math.min(345, dist)), t: 0, dur,
+    };
+  }
+  // nearest tappable marker to a page position (shared by pick + hover)
+  private markerAt(sx: number, sy: number): number {
     const rect = this.canvas.getBoundingClientRect(); const px = sx - rect.left, py = sy - rect.top;
-    const v = new THREE.Vector3(); let best = -1, bd = 44 * 44;
+    const v = this._tp; let best = -1, bd = 44 * 44;
     for (const m of this.markers) {
-      if (m.node.id > this.prog.unlocked) continue;
       v.copy(m.pos); v.y += 4; v.project(this.camera);
       const ex = (v.x * 0.5 + 0.5) * this.cssW(), ey = (1 - (v.y * 0.5 + 0.5)) * this.cssH();
       const d = (ex - px) ** 2 + (ey - py) ** 2; if (d < bd && v.z < 1) { bd = d; best = m.node.id; }
     }
-    if (best >= 0) this.showPanel(this.nodes[best]);
+    return best;
+  }
+  private pick(sx: number, sy: number) {
+    if (this.march) { this.march.skip = true; return; } // tap skips the march
+    const best = this.markerAt(sx, sy);
+    if (best >= 0) this.showPanel(this.nodes[best]); // locked holds open too — as scouts' rumour
   }
   private animateWater() {
     const w = this.water, base = this.waterBase; if (!w || !base) return;
@@ -1208,6 +1506,10 @@ export class WorldMap3D {
   }
 
   private frame() {
+    // real dt so every animation runs at one speed on 60Hz laptops and 120Hz
+    // phones alike (pulse advances 3/s — the old 0.05-per-frame at 60fps)
+    const nowT = performance.now(); const dt = Math.min(0.05, (nowT - (this.lastT || nowT)) / 1000); this.lastT = nowT;
+    this.pulse += dt * 3;
     if (this.cssW() === 0) return; // map hidden behind muster/battle — don't burn cycles
     if (!this.ready) { this.renderer.render(this.scene, this.camera); return; }
     this.azimuth = Math.atan2(Math.sin(this.azimuth), Math.cos(this.azimuth)); // keep in [-π,π]
@@ -1227,15 +1529,61 @@ export class WorldMap3D {
       for (let i = 0; i < a.length; i += 3) { const lx = base[i]; a[i + 2] = Math.sin(this.pulse * 2.4 + lx * 4 + b.phase) * 0.22 * (0.3 + lx * 0.6); }
       p.needsUpdate = true;
     }
-    for (const sh of this.ships) { // lone sails slowly working circles on their sea lanes
-      sh.a += sh.spd; const px = sh.cx + Math.cos(sh.a) * sh.r, pz = sh.cz + Math.sin(sh.a) * sh.r;
+    for (let si = 0; si < this.ships.length; si++) { // lone sails slowly working circles on their sea lanes
+      const sh = this.ships[si];
+      sh.a += sh.spd * dt * 60; const px = sh.cx + Math.cos(sh.a) * sh.r, pz = sh.cz + Math.sin(sh.a) * sh.r;
       sh.grp.position.set(px, 0.55 + Math.sin(this.pulse * 1.6 + sh.a * 9) * 0.16, pz);
       sh.grp.rotation.y = Math.atan2(-Math.sin(sh.a), Math.cos(sh.a));
+      const wk = this.wakes[si]; if (wk) { wk.position.set(px, 0.5, pz); wk.rotation.y = sh.grp.rotation.y; }
     }
     for (const bd of this.birds) {
-      bd.grp.position.x += bd.speed;
-      if (bd.grp.position.x > this.wX(this.bb.e) + 150) bd.grp.position.x = this.wX(this.bb.w) - 150;
+      const orb = (bd as any).orbit;
+      if (orb) { // gulls wheeling above a harbour
+        orb.a += dt * 0.28;
+        bd.grp.position.x = orb.x + Math.cos(orb.a) * orb.r; bd.grp.position.z = orb.z + Math.sin(orb.a) * orb.r;
+        bd.grp.rotation.y = -orb.a;
+      } else {
+        bd.grp.position.x += bd.speed * dt * 60;
+        if (bd.grp.position.x > this.wX(this.bb.e) + 150) bd.grp.position.x = this.wX(this.bb.w) - 150;
+      }
       bd.grp.children.forEach((b, k) => { const a = 0.55 * Math.sin(this.pulse * 7 + bd.phase + k * 0.7); (b as any).lw.rotation.z = a; (b as any).rw.rotation.z = a; });
+    }
+    // clouds drift east with their shadows tracing the relief beneath them
+    const cx0 = this.wX(this.bb.w) - 90, cx1 = this.wX(this.bb.e) + 90;
+    for (const cl of this.clouds) {
+      cl.sp.position.x += cl.spd * dt * 2.6;
+      if (cl.sp.position.x > cx1) cl.sp.position.x = cx0;
+      const [lon, lat] = this.worldToLL(cl.sp.position.x + 14, cl.sp.position.z + 10); // shadow cast down-sun
+      cl.sh.position.set(cl.sp.position.x + 14, this.isWater(lon, lat) ? 1.3 : this.terrainY(lon, lat) + 1.1, cl.sp.position.z + 10);
+    }
+    for (const sk of this.sparkles) { const v = Math.sin(this.pulse * sk.k + sk.phase); (sk.sp.material as THREE.SpriteMaterial).opacity = v > 0 ? v * v * v * 0.55 : 0; }
+    for (const sm of this.smokes) { // wisps climb, drift on the wind and thin away
+      const t = (this.pulse * 0.14 + sm.phase) % 1;
+      sm.sp.position.set(sm.x + t * sm.drift * 3.2, sm.y0 + t * 8.5, sm.z - t * 1.2);
+      const o = t < 0.18 ? t / 0.18 : 1 - (t - 0.18) / 0.82;
+      (sm.sp.material as THREE.SpriteMaterial).opacity = o * 0.26;
+      const scl = 1.6 + t * 4.2; sm.sp.scale.set(scl, scl * 0.8, 1);
+    }
+    { const f = (this as any).campFire as THREE.Sprite | undefined; if (f) (f.material as THREE.SpriteMaterial).opacity = 0.55 + Math.sin(this.pulse * 5.1) * 0.18 + Math.sin(this.pulse * 11.7) * 0.07; }
+    if (this.nextLegMat) this.nextLegMat.opacity = 0.72 + Math.sin(this.pulse * 1.9) * 0.26; // the road you will march, breathing gold
+    // layered cartography: realm names belong to the far view, castle names to the near
+    const zf = Math.max(0, Math.min(1, (this.dist - 150) / 170));
+    for (const rs of this.realmSprites) (rs.material as THREE.SpriteMaterial).opacity = 0.14 + zf * 0.5;
+    for (const lm of this.labelMeta) (lm.sp.material as THREE.SpriteMaterial).opacity = lm.current ? 1 : 1 - zf * 0.62;
+    for (const mk of this.markers) { // hovered castle swells slightly under the cursor
+      if (!mk.grp) continue;
+      const want = mk.baseS * (mk.node.id === this.hoverId ? 1.14 : 1);
+      const cur = mk.grp.scale.x, nx = cur + (want - cur) * Math.min(1, dt * 10);
+      if (Math.abs(nx - cur) > 1e-4) mk.grp.scale.setScalar(nx);
+    }
+    this.stepKeys(dt);
+    if (this.camTween) { // smooth glide for the host / whole-world chips
+      const tw = this.camTween; tw.t = Math.min(1, tw.t + dt / tw.dur);
+      const e = tw.t < 0.5 ? 2 * tw.t * tw.t : 1 - Math.pow(-2 * tw.t + 2, 2) / 2;
+      const k = 1 - Math.exp(-6 * dt * (0.4 + e));
+      this.target.x += (tw.x - this.target.x) * k; this.target.z += (tw.z - this.target.z) * k;
+      this.dist += (tw.dist - this.dist) * k;
+      if (tw.t >= 1) this.camTween = undefined;
     }
     if (this.march) this.stepMarch();
     this.stepFlourish();
