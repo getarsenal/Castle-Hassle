@@ -14,8 +14,21 @@ const pctUp = (m: number) => Math.round((m - 1) * 100);
 function statRow(desc: string, val: string): string {
   return `<div class="srow"><span class="d">${desc}</span>${val ? `<b class="v">${val}</b>` : ''}</div>`;
 }
+const KEY2T: Record<string, number> = { heavy: 0, light: 1, archer: 2, cavalry: 3, siege: 4 };
 function boonLine(key: ArmyKey, b: AtkBuff): string {
   const p: string[] = [];
+  const t = KEY2T[key];
+  // the arm's chosen DOCTRINE (branching War Council paths) reads on the roll too
+  if ((b.hpA?.[t] ?? 1) > 1.005) p.push(`+${pctUp(b.hpA![t])}% doctrine hardiness`);
+  if ((b.dmgA?.[t] ?? 1) > 1.005) p.push(`+${pctUp(b.dmgA![t])}% doctrine bite`);
+  if ((b.spdA?.[t] ?? 1) > 1.005) p.push(`+${pctUp(b.spdA![t])}% marching pace`);
+  if ((b.cdA?.[t] ?? 1) < 0.995) p.push(`${Math.round((1 / b.cdA![t] - 1) * 100)}% swifter loosing`);
+  if ((b.rngA?.[t] ?? 1) > 1.005) p.push(`+${pctUp(b.rngA![t])}% reach`);
+  if ((b.ammoA?.[t] ?? 1) > 1.005) p.push(`+${pctUp(b.ammoA![t])}% quivers`);
+  if (key === 'cavalry' && b.chargeMul) p.push('couched lances');
+  if (key === 'heavy' && b.braceMul) p.push('tower shields');
+  if (key === 'light' && b.lightFlank) p.push('flanking doctrine');
+  if (key === 'siege' && b.firepot) p.push('firepot ammunition');
   if (b.hp > 1.005) p.push(`+${pctUp(b.hp)}% hardiness`);
   if ((key === 'heavy' || key === 'light' || key === 'cavalry') && b.melee > 1.005) p.push(`+${pctUp(b.melee)}% bite`);
   if (key === 'archer' && b.archer > 1.005) p.push(`+${pctUp(b.archer)}% arrow-sting`);
@@ -32,20 +45,24 @@ function statsHTML(key: ArmyKey, b: AtkBuff, vm: number): string {
   let rows = '';
   if (key === 'heavy') rows = statRow('Harnessed in mail and plate', `${hp(120)} vigour`)
     + statRow('The weight of a knight’s blade', `${mel(9)} might`)
-    + statRow('Holds the shield-wall — slow, unyielding', '');
+    + statRow('Holds the shield-wall — slow, unyielding', '')
+    + statRow('Spears set against horse; a braced wall breaks a charge', '');
   else if (key === 'light') rows = statRow('Lightly girt, swift afoot', `${hp(70)} vigour`)
     + statRow('Darting spear-thrusts, oft renewed', `${mel(7)} might`)
-    + statRow('May break into a sprint to close the field', '');
+    + statRow('May break into a sprint to close the field', '')
+    + statRow('Cuts cruellest from flank and rear', '');
   else if (key === 'archer') rows = statRow('Scarce armoured — frail in the press', `${hp(55)} vigour`)
     + statRow('Bodkin shafts loosed from afar', `${Math.round(12 * b.archer * vm)} sting`)
     + statRow('Reach of forty paces · a quiver of sixteen', '')
     + statRow('May loose a massed volley — farther, harder, slower', '');
   else if (key === 'cavalry') rows = statRow('Barded destriers, proud and stout', `${hp(95)} vigour`)
     + statRow('Lance and longsword both', `${mel(15)} might`)
-    + statRow('The thundering charge strikes near threefold', '');
+    + statRow('The thundering charge strikes near threefold', '')
+    + statRow('Hurls men from their feet — but balks at braced spears', '');
   else if (key === 'siege') rows = statRow('Great engines of oak and iron', `${hp(260)} vigour`)
     + statRow('Hurls stone to shatter wall and gate', `${Math.round(200 * b.siege * vm)} ruin`)
-    + statRow('Reach of one hundred paces · sixteen stones', '');
+    + statRow('Reach of one hundred paces · sixteen stones', '')
+    + statRow('Worked by engineer crews — guard them or the engine falls silent', '');
   return rows + boonLine(key, b);
 }
 

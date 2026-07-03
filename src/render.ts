@@ -1339,7 +1339,7 @@ export class Renderer {
     // house fires (the town alight) — bigger flames than the braziers, capped
     const gmat = new THREE.MeshBasicMaterial({ map: this.fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     gmat.color.setRGB(3.0, 1.8, 0.8);
-    this.flameMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.4, 4.6), gmat, 6);
+    this.flameMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.4, 4.6), gmat, 16);
     this.flameMesh.frustumCulled = false; this.scene.add(this.flameMesh);
   }
 
@@ -1430,7 +1430,25 @@ export class Renderer {
     // ---- the town alight: flaming arrows that come down beside a house ignite it ----
     const lands = this.sim.drainFireLands();
     for (let c = 0; c + 1 < lands.length; c += 2) this.igniteHouse(lands[c], lands[c + 1], 9);
+    // gatehouse oil: a scalding gout — steam, embers, a shock ring at the gate
+    const pours = (this.sim as any).drainOilPours ? (this.sim as any).drainOilPours() : [];
+    for (let c = 0; c + 1 < pours.length; c += 2) {
+      this.spawnDust(pours[c], 5.5, pours[c + 1], 3.2, 4);
+      this.spawnShock(pours[c], pours[c + 1], 0.8);
+      for (let k = 0; k < 4; k++) this.spawnEmber(pours[c], 6, pours[c + 1]);
+    }
     if (this.flameMesh) {
+      // slots 6..15 render the sim's burning-pitch patches (incendiary trebuchet ammo)
+      const patches = (this.sim as any).burnPatches ?? [];
+      for (let i = 6; i < 16; i++) {
+        const p = patches[i - 6];
+        if (p && p.life > 0) {
+          const fl = (0.7 + Math.sin(this.time * 6 + i) * 0.12) * Math.min(1, p.life / 1.5);
+          this.dummy.position.set(p.x, 1.4, p.z); this.dummy.quaternion.copy(this.billboard);
+          this.dummy.scale.set(fl, fl, fl); this.dummy.updateMatrix(); this.flameMesh.setMatrixAt(i, this.dummy.matrix);
+          if (Math.random() < 0.25) this.spawnEmber(p.x + (Math.random() - 0.5) * 3, 1.2, p.z + (Math.random() - 0.5) * 3);
+        } else { this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.flameMesh.setMatrixAt(i, this.dummy.matrix); }
+      }
       for (let i = 0; i < 6; i++) {
         const b = this.burning[i];
         if (b) {

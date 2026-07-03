@@ -65,6 +65,36 @@ Notables for future sessions:
 - `renderer.heroVictory()`: keep banner swap on win. Burning houses capped at 6.
 - Adaptive score: audio.ts drives drum gain from siege heat, cries from melee.
 
+## Combat overhaul (July 2026 — the deep dive)
+The sim gained a full combat-resolution layer; `scripts/simbench.mjs N mins`
+fights scripted battles across seeds (THE tuning instrument — run before/after
+any combat change; naive-assault baseline ~6/8 wins, 56s-185s durations).
+- **Morale**: live per-company nerve (casualties, flank/rear blows, contagious
+  fear capped at 3 neighbours) with SHAKEN → BROKEN states, self-rally for
+  attackers, `rallyDiv()` horn, `generalsPush()` (once/battle). Constants MOR_*.
+- **Counters**: flank ×1.3 / rear ×1.6, heavy spears vs cavalry, braced
+  shield-wall balks charges (horse takes spearpoints), charge knockback+stagger.
+- **Body blocking**: enemies are solid (ENEMY_BLOCK_*) — lines are fought
+  through; same-faction spacing widened for sprite depth.
+- **LOS**: ground archers can't shoot through walls/buildings (`losClear`);
+  elevated shooters blocked only by cover at the target end. Ballistae too.
+- **Crews**: 'Engine Crews' (2/engine, div=Siege, crewFor links) — engines idle
+  without them; fire arrows burn engines ×3. 'Ballista Crews' on walls.
+- **Defence director** (`stepDefence`): pre-plugs threatened walls/gates (hp<62%
+  or ram) with tight close-order companies (u.tight), replenishes broken plugs,
+  counter-masses vs attackers inside (keep guard never leaves). Castellan
+  personalities seeded per castle (cmd.*: Baldric/Odo/Renaud/Hugh) scale
+  behaviour with difficulty. Gatehouse OIL while manned (sfx.oil/oilPours).
+- **War Council**: branching doctrine trees (upgrades.ts) — per-arm A/B paths,
+  per-arm buffs plumbed via AtkBuff.hpA/dmgA/spdA/cdA/rngA/ammoA + chargeMul/
+  braceMul/lightFlank/firepot/surgeons. Old saves migrate via treeState legacy.
+- **Firepots**: siege path B — incendiary ammo toggle (tools), burning ground
+  patches (sim.burnPatches → flameMesh slots 6-15), houses ignite.
+- **Desktop**: WASD/QE/RF camera, 1-5 arm select, Space pause, G charge,
+  right-drag orbit, right-click = detach nearest company order. Landscape:
+  manifest 'any' + short-height CSS. Battle report: kills/MVP/surgeons in the
+  Butcher's Bill; telemetry at localStorage castlehassle.blog.v1.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

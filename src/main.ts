@@ -62,6 +62,9 @@ function gameConfirm(opts: { title: string; body: string; confirm: string; cance
   el.addEventListener('click', (e) => { if (e.target === el) close(); }); // tap the dark backdrop to dismiss
   el.classList.add('show');
 }
+document.getElementById('pushBtn')?.addEventListener('click', () => {
+  if (sim.generalsPush()) { battleAudio.horn('call'); renderer.shake(0.5); updateTopbar(); }
+});
 retreatBtn?.addEventListener('click', () => gameConfirm({
   title: 'Sound the Retreat?', body: 'Your surviving troops withdraw in good order — the castle is not taken.',
   confirm: 'Sound Retreat', cancel: 'Fight On', danger: true, onConfirm: () => sim.retreat(),
@@ -181,6 +184,7 @@ function refreshCards() {
   for (const card of Array.from(cardsEl.children) as HTMLElement[]) {
     const div = Number(card.dataset.div); const a = sim.divAgg(div);
     card.classList.toggle('sel', selected === div); card.classList.toggle('routing', a.routing);
+    card.classList.toggle('shaken', !a.routing && sim.divMoraleState(div) === 'shaken');
     card.classList.toggle('assault', sim.assaultingDiv(div));
     (card.querySelector('.count') as HTMLElement).textContent = String(a.alive);
     const frac = a.count ? a.alive / a.count : 0, bar = card.querySelector('.bar > i') as HTMLElement;
@@ -197,6 +201,8 @@ function updateTopbar() {
   // keep-capture meter: only meaningful once the assault is underway
   const inBattle = sim.phase === 'battle';
   pauseBtn?.classList.toggle('show', inBattle);
+  const pushBtn = document.getElementById('pushBtn') as HTMLButtonElement | null;
+  if (pushBtn) { pushBtn.classList.toggle('show', inBattle && !sim.pushUsed); }
   speedBtn?.classList.toggle('show', inBattle);
   retreatBtn?.classList.toggle('show', inBattle);
   helpBtn?.classList.toggle('show', sim.phase === 'deploy'); // help lives on the deploy screen; battle top stays uncluttered
@@ -249,6 +255,12 @@ function updateTools() {
     ab.addEventListener('click', () => { sim.toggleAssaultDiv(selected); refreshCards(); updateTools(); });
     toolsEl.appendChild(ab);
   }
+  // Rally — when an arm's nerve is going or gone, the horn brings it back
+  if (sim.phase === 'battle' && sim.divMoraleState(selected) !== 'steady') {
+    const rb2 = document.createElement('button'); rb2.className = 'tool on'; rb2.textContent = 'Rally!';
+    rb2.addEventListener('click', () => { if (sim.rallyDiv(selected)) { battleAudio.horn('call'); refreshCards(); updateTools(); } });
+    toolsEl.appendChild(rb2);
+  }
   // signature ability per melee arm
   if (a.type === UType.Cavalry) {
     const cb = document.createElement('button'); cb.id = 'chargeTool'; cb.className = 'tool';
@@ -277,6 +289,12 @@ function updateTools() {
     vb.addEventListener('click', () => { sim.toggleStanceDiv(selected); updateTools(); });
     toolsEl.appendChild(vb);
   }
+  if (a!.type === UType.Siege && warBuffs().atk.firepot) { // incendiary ammo (Engineer's Lodge: Incendiaries)
+    const on = sim.firepotOnDiv(selected);
+    const fb = document.createElement('button'); fb.className = 'tool' + (on ? ' on' : ''); fb.textContent = on ? 'Firepots' : 'Stone';
+    fb.addEventListener('click', () => { sim.setFirepotDiv(selected, !sim.firepotOnDiv(selected)); updateTools(); });
+    toolsEl.appendChild(fb);
+  }
   if (a!.type === UType.Archer && comps.some(u => u.hasFocus)) {
     const cb = document.createElement('button'); cb.className = 'tool'; cb.textContent = 'Clear Aim';
     cb.addEventListener('click', () => { sim.clearFocusDiv(selected); updateTools(); });
@@ -289,6 +307,12 @@ restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if
 
 function showEnd() {
   const win = sim.winner === Faction.Attacker;
+  try { // balance telemetry — tune from data, not vibes (window.__battleLog)
+    const log = JSON.parse(localStorage.getItem('castlehassle.blog.v1') || '[]');
+    log.push({ seed: currentSeed, win, dur: Math.round(sim.battleT), cmd: sim.cmd.kind, att: sim.countAlive(Faction.Attacker), def: sim.countAlive(Faction.Defender), retreat: sim.retreated });
+    while (log.length > 40) log.shift();
+    localStorage.setItem('castlehassle.blog.v1', JSON.stringify(log));
+  } catch { /* private mode */ }
   const inCampaign = !!(activeCastle || activeRaid);
   // Persistent army, keep-survivors-lose-dead: the survivors of this battle rejoin
   // your host, the fallen are gone for good. Apply the per-arm survival rate to
@@ -299,14 +323,18 @@ function showEnd() {
   // The Butcher's Bill — a per-arm tally of who marched out and who came home, shown
   // for every battle. In a campaign the survival rate also attrits your standing host.
   const sp = sim.attackerSpawned(), al = sim.attackerAlive(), kills = sim.attackerKills;
-  let brought = 0, fell = 0;
+  const surg = win && inCampaign ? (warBuffs().atk.surgeons ?? 0) : 0;
+  let brought = 0, fell = 0, healed = 0;
   const rows: string[] = [];
   const promotions: string[] = []; // arms that earned a higher rank this battle
   let tookCastle = false, battleSpoils = 0; // for the lifetime record
   for (let i = 0; i < ARMY_KEYS.length; i++) {
     const k = ARMY_KEYS[i];
-    const rate = sp[i] > 0 ? al[i] / sp[i] : 1;
+    const rate0 = sp[i] > 0 ? al[i] / sp[i] : 1;
+    // the surgeon corps walks the field after a victory — some of the fallen rise
+    const rate = i < 4 ? Math.min(1, rate0 + (1 - rate0) * surg) : rate0;
     const lost = Math.max(0, sp[i] - al[i]);
+    if (i < 4) healed += Math.round(lost * surg);
     if (inCampaign) progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
     // veterancy: only an arm that actually FOUGHT earns experience — it must have
     // drawn blood or shed it. An arm brought along but left in reserve (no kills,
@@ -323,11 +351,15 @@ function showEnd() {
     if (sp[i] <= 0) continue;                         // arm wasn't mustered for this battle
     // engines are "wrecked", men "fell"; an untouched arm reports all returned
     const verb = i === 4 ? 'wrecked' : 'fell';
-    const val = lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`;
+    const val = (lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`) + (kills[i] > 0 ? ` \u00b7 slew ${kills[i]}` : '');
     rows.push(`<div class="lrow${lost > 0 ? '' : ' none'}"><span class="ln">${TYPE_NAME[i]}</span><span class="lv">${val}</span></div>`);
   }
   if (rows.length) {
-    bannerLosses.innerHTML = `<div class="lhead">The Butcher's Bill</div>${rows.join('')}`
+    // the field report: who did the killing, who patched the wounded
+    let mvp = -1, mk = 0; for (let i = 0; i < 5; i++) if (kills[i] > mk) { mk = kills[i]; mvp = i; }
+    const extra = (mvp >= 0 ? `<div class="lrow"><span class="ln">Honours of the day</span><span class="lv">${TYPE_NAME[mvp]} (${mk} slain)</span></div>` : '')
+      + (healed > 0 ? `<div class="lrow none"><span class="ln">Field surgeons</span><span class="lv">${healed} men recovered</span></div>` : '');
+    bannerLosses.innerHTML = `<div class="lhead">The Butcher's Bill</div>${rows.join('')}${extra}`
       + (promotions.length ? `<div class="lhead hon">Honours Won</div>${promotions.join('')}` : '');
     bannerLosses.classList.add('show');
   } else {
@@ -411,6 +443,35 @@ function showEnd() {
   }
 }
 
+// ---------------- Desktop keyboard: WASD/arrows pan, Q/E rotate, R/F zoom,
+// 1-5 select arms, Space pause, G charge, Esc deselect ----------------
+const keysDown = new Set<string>();
+window.addEventListener('keydown', (e) => {
+  if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) { keysDown.add(k); lastCamInput = performance.now(); renderer.introT = 0; e.preventDefault(); }
+  else if (k === ' ') { pauseBtn?.click(); e.preventDefault(); }
+  else if (k === 'escape') { selected = -1; attackArm = -1; refreshCards(); updateHint(); updateTools(); }
+  else if (k === 'g' && selected >= 0 && sim.isCavalry(selected)) sim.chargeDiv(selected);
+  else if (k >= '1' && k <= '5') { const divs = sim.playerDivs(); const d = divs[+k - 1]; if (d !== undefined) { selected = selected === d ? -1 : d; attackArm = -1; refreshCards(); updateHint(); updateTools(); } }
+});
+window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
+function applyKeys(dt: number) {
+  if (!keysDown.size || !renderer) return;
+  const pan = renderer.camDist * 0.9 * dt, cy = Math.cos(renderer.camYaw), sy = Math.sin(renderer.camYaw);
+  let mx = 0, mz = 0;
+  if (keysDown.has('w') || keysDown.has('arrowup')) mz -= 1;
+  if (keysDown.has('s') || keysDown.has('arrowdown')) mz += 1;
+  if (keysDown.has('a') || keysDown.has('arrowleft')) mx -= 1;
+  if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
+  if (mx || mz) { renderer.camTarget.x += (mx * cy - mz * sy) * pan; renderer.camTarget.z += (-mx * sy - mz * cy) * pan; }
+  if (keysDown.has('q')) renderer.camYaw += dt * 1.6;
+  if (keysDown.has('e')) renderer.camYaw -= dt * 1.6;
+  if (keysDown.has('r')) renderer.camDist *= 1 - dt * 1.2;
+  if (keysDown.has('f')) renderer.camDist *= 1 + dt * 1.2;
+  renderer.clampTarget();
+}
+
 // ---------------- Input ----------------
 const pointers = new Map<number, { x: number; y: number }>();
 let gesture: 'none' | 'orbit' | 'command' | 'camera' = 'none';
@@ -433,8 +494,21 @@ function bindInput() {
   // listeners must attach to the new element (the old one is discarded with it).
   pointers.clear(); gesture = 'none';
   const el = renderer.gl.domElement;
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
   el.addEventListener('pointerdown', (e) => {
     lastCamInput = performance.now(); renderer.introT = 0; // the player's hand always beats the director's
+    if (e.button === 2) { // right-click with an arm selected: detach its nearest company to the point
+      if (selected >= 0 && sim.phase !== 'over') {
+        const p = groundAt(e.clientX, e.clientY);
+        if (p) {
+          const comps = sim.divCompanies(selected).filter(u => u.crewFor < 0 && u.type !== UType.Siege);
+          let bu = -1, bd = 1e9;
+          for (const u of comps) { const d = (u.cx - p.x) ** 2 + (u.cz - p.z) ** 2; if (d < bd) { bd = d; bu = u.id; } }
+          if (bu >= 0) { sim.orderMove(bu, p.x, p.z); renderer.pingMove(p.x, p.z); }
+        }
+      }
+      return;
+    }
     el.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) { const p = [...pointers.values()]; pinchDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); panMid = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 }; gesture = 'camera'; cmdP0 = null; renderer.setPreview(null); return; }
     downAt = { x: e.clientX, y: e.clientY, t: performance.now() }; moved = false;
@@ -485,10 +559,12 @@ function handleTap(cx: number, cy: number) {
   if (selected >= 0 && sim.phase !== 'over') {
     const a = sim.divAgg(selected);
     if (a.type === UType.Siege) {
-      // trebuchets: tap a WALL to batter it, tap enemy TROOPS to bombard them, tap open ground to reposition
-      const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); updateHint(); return; }
-      const foe = sim.phase === 'battle' ? sim.enemyPosNear(p.x, p.z, 16) : null;
+      // trebuchets: tap enemy TROOPS to bombard them (they take priority — the old
+      // order let any wall within 14m steal the tap), tap a WALL to batter it,
+      // tap open ground to reposition the battery.
+      const foe = sim.phase === 'battle' ? sim.enemyPosNear(p.x, p.z, 9) : null;
       if (foe) { sim.setSiegeBombardDiv(selected, foe.x, foe.z); renderer.pingMove(foe.x, foe.z); updateHint(); return; }
+      const seg = sim.wallSegAt(p.x, p.z); if (seg >= 0) { sim.setSiegeTargetDiv(selected, seg); updateHint(); return; }
       sim.orderDivision(selected, p.x, p.z, p.x, p.z); renderer.pingMove(p.x, p.z);
     }
     else if (a.type === UType.Archer) { sim.setFocusDiv(selected, p.x, p.z); updateTools(); }
@@ -550,7 +626,7 @@ function refreshGoldLabel() { const g = document.getElementById('mapGoldVal'); i
 // every realm already conquered (so the host grows as the Crusade advances east).
 function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
   const b = computeBuffs(progress.upg), cb = countryBoons(progress, castles);
-  return { atk: { hp: b.atk.hp + cb.hp, melee: b.atk.melee + cb.melee, archer: b.atk.archer + cb.archer, fire: b.atk.fire, siege: b.atk.siege + cb.siege, reload: b.atk.reload },
+  return { atk: { ...b.atk, hp: b.atk.hp + cb.hp, melee: b.atk.melee + cb.melee, archer: b.atk.archer + cb.archer, siege: b.atk.siege + cb.siege },
     discount: b.recruitDiscount, trebs: b.extraTrebs + cb.trebs };
 }
 // per-arm veterancy combat multiplier, indexed by UType (= ARMY_KEYS order), folded
@@ -1009,6 +1085,7 @@ function frame(now: number) {
     renderer.setRangeFans(sim.divCompanies(selected).filter(u => u.alive > 0).map(u => ({ x: u.cx, z: u.cz, r })));
   } else renderer.setRangeFans(null);
 
+  applyKeys(dt); // desktop camera keys
   // when the player's hand has been off the camera a while, drift toward the action
   if (sim.phase === 'battle' && !paused && performance.now() - lastCamInput > 7000) renderer.autoDirect(dt);
 

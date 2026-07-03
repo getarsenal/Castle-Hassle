@@ -4,7 +4,7 @@
   "description": "Command an army of thousands and storm the castle.",
   "start_url": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#1a2433",
   "theme_color": "#1a2433",
   "icons": [

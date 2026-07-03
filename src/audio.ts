@@ -9,7 +9,7 @@
 // — and everything is fed to a shared REVERB so the render sits in a space
 // instead of sounding dry and synthetic.
 
-export interface SfxTally { arrows: number; bolts: number; boulders: number; breaches: number; melee: number; deaths: number; hits: number; cavalry: number; }
+export interface SfxTally { arrows: number; bolts: number; boulders: number; breaches: number; melee: number; deaths: number; hits: number; cavalry: number; oil: number; }
 
 function makeImpulse(ctx: AudioContext, seconds: number, decay: number): AudioBuffer {
   const rate = ctx.sampleRate, len = Math.max(1, Math.floor(rate * seconds)), buf = ctx.createBuffer(2, len, rate);
@@ -246,6 +246,13 @@ class BattleAudioImpl {
     const ng = this.g(0); ng.connect(out); const bp = this.bq('bandpass', 2200, 1.2); this.noise(0.1).connect(bp).connect(ng);
     bp.frequency.setValueAtTime(3000, t); bp.frequency.exponentialRampToValueAtTime(1100, t + 0.09); this.env(ng.gain, t, 0.4, 0.003, 0.09);
   }
+  oilHiss(vol = 1) {                      // boiling oil — a scalding hiss + screams carried by the din
+    if (!this.ctx || !this.rl('oil', 1.2)) return; const t = this.now();
+    const out = this.bus(0.5 * vol, 0, 0.3); const eg = this.g(0); eg.connect(out);
+    const bp = this.bq('bandpass', 3400, 0.7); this.noise(0.9).connect(bp).connect(eg);
+    bp.frequency.setValueAtTime(4200, t); bp.frequency.exponentialRampToValueAtTime(1400, t + 0.8);
+    this.env(eg.gain, t, 1, 0.03, 0.8);
+  }
   trebFire(vol = 1) {                     // trebuchet — groaning arm + release thunk
     if (!this.ctx || !this.rl('treb', 0.12)) return;
     if (this.oneshot('trebFire', 0.8 * vol, (Math.random() - 0.5) * 0.4, 0.2)) return;
@@ -373,6 +380,7 @@ class BattleAudioImpl {
     for (let i = 0; i < Math.min(e.hits, 3); i++) this.impact();
     for (let i = 0; i < e.breaches; i++) this.breach();
     if (e.bolts > 0) this.bolt();
+    if (e.oil > 0) this.oilHiss();
     if (e.cavalry > 0) this.cavalry(Math.min(1, e.cavalry / 8));
     if (e.arrows >= 10) this.volley(Math.min(1, e.arrows / 30));
     else if (e.arrows > 0) this.arrow(Math.min(1, e.arrows / 5));

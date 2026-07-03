@@ -206,6 +206,26 @@
     .card .ammo { height: 3px; border-radius: 2px; margin-top: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
     .card .ammo > i { display: block; height: 100%; background: #6fc3e8; }
     .card.routing { opacity: 0.55; }
+    .card.shaken { border-color: #d8a43a; animation: cardShake 1.6s ease-in-out infinite; }
+    @keyframes cardShake { 0%,100% { box-shadow: 0 4px 0 rgba(0,0,0,0.36); } 50% { box-shadow: 0 0 10px rgba(216,164,58,0.7), 0 4px 0 rgba(0,0,0,0.36); } }
+    #pushBtn { display: none; font: 800 var(--fs-label) 'Cinzel',Georgia,serif; color: #2c1a06; padding: 0 10px;
+      background: linear-gradient(var(--gold-bright), var(--gold-deep)); border: none; border-radius: var(--r-md); min-height: 34px; cursor: pointer;
+      box-shadow: var(--gold-drop); white-space: nowrap; }
+    #pushBtn.show { display: inline-flex; align-items: center; }
+    #pushBtn:disabled { opacity: 0.45; }
+    /* LANDSCAPE phones: short viewport - compact the HUD so the field stays visible */
+    @media (orientation: landscape) and (max-height: 480px) {
+      #cards { gap: 5px; }
+      .card { min-width: 84px; padding: 5px 7px 6px; }
+      .card .cardIc { width: 24px; height: 24px; }
+      .card .name { font-size: 10px; }
+      .card .count { font-size: 14px; }
+      #topHud { padding: 6px 8px; }
+      #startbar button { min-height: 40px; padding: 8px 18px; }
+      #tools { bottom: 74px; }
+      #hint { max-width: 62vw; font-size: 11px; }
+      #keepBar { top: 44px; }
+    }
     .card.routing .name::after { content: ''; display: inline-block; width: 9px; height: 12px; margin-left: 4px; vertical-align: -1px;
       background: no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 12'%3E%3Cpath d='M2 1 V11' stroke='%23ffb03a' stroke-width='1.4' stroke-linecap='round'/%3E%3Cpath d='M2.7 1.6 H7.4 L5.9 3.6 L7.4 5.6 H2.7 Z' fill='%23ffb03a'/%3E%3C/svg%3E"); }
     .card.assault { border-color: #e8893a; border-top-color: #e8893a; box-shadow: 0 0 12px rgba(232,137,58,0.55), 0 4px 0 rgba(0,0,0,0.34); }
@@ -544,6 +564,7 @@
         <div id="perf" title="Tap to hide">– fps</div>
       </div>
       <div id="topRight">
+        <button id="pushBtn" title="The General's Push: once per battle, the whole host finds its blood">⚔ Push</button>
         <button id="retreatBtn" title="Sound the retreat" aria-label="Retreat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15 5 10l5-5"/><path d="M5 10h10a5 5 0 0 1 5 5 5 5 0 0 1-5 5H8"/></svg></button>
         <button id="speedBtn" title="Battle speed">1x</button>
         <button id="pauseBtn" title="Pause" aria-label="Pause"><svg class="pauseIc" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><svg class="playIc" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg></button>
