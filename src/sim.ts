@@ -1024,10 +1024,29 @@ export class Sim {
   }
   // southernmost line you may muster on during deploy (just outside the walls)
   deployLine(): number { return LAYOUT.front + 8; }
-  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.hasFocus = false; u.holdFire = false; } }  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
+  // A battery ordered onto a target beyond its reach ADVANCES to firing range on
+  // its own (with its crews in tow) — an order should never silently do nothing.
+  private advanceBattery(div: number, tx: number, tz: number) {
+    const engines = this.divCompanies(div).filter(u => u.type === UType.Siege);
+    if (!engines.length) return;
+    const rng = RANGE[UType.Siege] * this.aRng(UType.Siege) * 0.88;
+    for (const u of engines) {
+      const d = Math.hypot(tx - u.cx, tz - u.cz);
+      if (d <= rng) continue;
+      const nx = u.cx + (tx - u.cx) * (1 - rng / d), nz = u.cz + (tz - u.cz) * (1 - rng / d);
+      this.setAnchor(u, nx, nz, Math.atan2(tx - nx, tz - nz), u.cols);
+      for (const cu of this.divCompanies(div)) { // the engineers keep pace, just behind
+        if (cu.crewFor !== u.id) continue;
+        const away = Math.hypot(nx, nz) || 1;
+        this.setAnchor(cu, nx + nx / away * 9, nz + nz / away * 9, u.facing, Math.max(4, Math.round(Math.sqrt(cu.count) * 1.8)));
+      }
+    }
+  }
+  setSiegeTargetDiv(div: number, segIdx: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = segIdx; u.hasFocus = false; u.holdFire = false; } const [cx, cz] = this.segCenter(segIdx); this.advanceBattery(div, cx, cz); }
+  setFocusDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.hasFocus = true; u.focusX = x; u.focusZ = z; } }
   // Order a trebuchet battery to BOMBARD a ground point (anti-personnel) instead of a
   // wall — so the player chooses: batter the walls, or rain stone on massed infantry.
-  setSiegeBombardDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = -1; u.hasFocus = true; u.focusX = x; u.focusZ = z; u.holdFire = false; } }
+  setSiegeBombardDiv(div: number, x: number, z: number) { for (const u of this.divCompanies(div)) { u.siegeTargetSeg = -1; u.hasFocus = true; u.focusX = x; u.focusZ = z; u.holdFire = false; } this.advanceBattery(div, x, z); }
   clearFocusDiv(div: number) { for (const u of this.divCompanies(div)) u.hasFocus = false; }
   toggleHoldFireDiv(div: number): boolean { const cs = this.divCompanies(div); if (!cs.length) return false; const v = !cs[0].holdFire; for (const u of cs) u.holdFire = v; return v; }
   // the player's arms present in this battle, in roster order
@@ -2389,7 +2408,7 @@ export class Sim {
     let attActive = 0, defAlive = 0;
     for (const u of this.units) {
       if (u.faction === Faction.Defender) defAlive += u.alive;
-      else if (!u.routing && u.type !== UType.Siege) attActive += u.alive; // trebuchets alone can't carry it
+      else if (!u.routing && u.type !== UType.Siege && u.crewFor < 0) attActive += u.alive; // engines & their crews alone can't carry an assault
     }
     const defFrac = defAlive / Math.max(1, this.defenderAliveStart);
     if (this.captureProgress >= 1 || defFrac <= 0.1) { this.phase = 'over'; this.winner = Faction.Attacker; }

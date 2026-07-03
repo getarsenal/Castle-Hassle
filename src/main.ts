@@ -533,8 +533,20 @@ function bindInput() {
   });
   const endPointer = (e: PointerEvent) => {
     const wasTap = !moved && gesture !== 'camera' && (performance.now() - downAt.t) < 350 && pointers.size === 1;
+    // LONG-PRESS (mobile parity with desktop right-click): with an arm selected, a
+    // still press of 550ms+ detaches that arm's NEAREST COMPANY to the pressed point
+    const wasHold = !moved && gesture === 'command' && (performance.now() - downAt.t) >= 550 && pointers.size === 1;
     pointers.delete(e.pointerId);
-    if (gesture === 'command' && moved && cmdP0 && cmdP1 && selected >= 0) { sim.orderDivision(selected, cmdP0.x, cmdP0.z, cmdP1.x, cmdP1.z); renderer.pingMove((cmdP0.x + cmdP1.x) / 2, (cmdP0.z + cmdP1.z) / 2); }
+    if (wasHold && selected >= 0 && sim.phase !== 'over') {
+      const p = groundAt(e.clientX, e.clientY);
+      if (p) {
+        const comps = sim.divCompanies(selected).filter(u => u.crewFor < 0 && u.type !== UType.Siege);
+        let bu = -1, bd = 1e9;
+        for (const u of comps) { const d = (u.cx - p.x) ** 2 + (u.cz - p.z) ** 2; if (d < bd) { bd = d; bu = u.id; } }
+        if (bu >= 0) { sim.orderMove(bu, p.x, p.z); renderer.pingMove(p.x, p.z); }
+      }
+    }
+    else if (gesture === 'command' && moved && cmdP0 && cmdP1 && selected >= 0) { sim.orderDivision(selected, cmdP0.x, cmdP0.z, cmdP1.x, cmdP1.z); renderer.pingMove((cmdP0.x + cmdP1.x) / 2, (cmdP0.z + cmdP1.z) / 2); }
     else if (wasTap) handleTap(e.clientX, e.clientY);
     renderer.setPreview(null);
     if (pointers.size === 0) { gesture = 'none'; cmdP0 = cmdP1 = null; }
