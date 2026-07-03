@@ -19,11 +19,15 @@ import { stoneTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } 
 const CINEMATIC_GRADE = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
-    uExposure: { value: 1.19 },
-    uSat: { value: 0.83 },
+    uExposure: { value: 1.2 },
+    // Warm "golden sun" white balance applied in scene-linear (before ACES) so the
+    // whole frame reads sun-baked — the dry, warm light in the reference sieges —
+    // with the highlight rolloff keeping it from going orange.
+    uBalance: { value: new THREE.Vector3(1.075, 1.005, 0.88) },
+    uSat: { value: 0.86 },
     uContrast: { value: 1.05 },
-    uWarm: { value: new THREE.Vector3(0.038, 0.014, -0.01) }, // shadow tint (warm brown)
-    uCool: { value: new THREE.Vector3(-0.01, 0.0, 0.018) },   // highlight tint (cool)
+    uWarm: { value: new THREE.Vector3(0.05, 0.02, -0.014) },  // shadow tint (warm earth)
+    uHigh: { value: new THREE.Vector3(0.024, 0.01, -0.022) }, // highlight tint (golden)
     uVignette: { value: 0.1 }, // gentle — a CSS #vignette already darkens the frame edges
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
@@ -31,16 +35,16 @@ const CINEMATIC_GRADE = {
     varying vec2 vUv;
     uniform sampler2D tDiffuse;
     uniform float uExposure, uContrast, uVignette, uSat;
-    uniform vec3 uWarm, uCool;
+    uniform vec3 uWarm, uHigh, uBalance;
     vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
     void main(){
-      vec3 c = texture2D(tDiffuse, vUv).rgb * uExposure;
+      vec3 c = texture2D(tDiffuse, vUv).rgb * uExposure * uBalance; // warm the light, then
       c = aces(c);                                            // HDR → display-referred 0..1
       float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c = mix(vec3(L), c, uSat);                              // gentle desaturate
       float sh = 1.0 - smoothstep(0.0, 0.55, L);             // shadow mask
-      float hi = smoothstep(0.55, 1.0, L);                   // highlight mask
-      c += uWarm * sh + uCool * hi;                          // split-tone toward dusk
+      float hi = smoothstep(0.5, 1.0, L);                    // highlight mask
+      c += uWarm * sh + uHigh * hi;                          // split-tone, warm throughout
       c = (c - 0.5) * uContrast + 0.5;                       // filmic contrast
       c = clamp(c, 0.0, 1.0);
       float d = distance(vUv, vec2(0.5));
@@ -59,8 +63,8 @@ interface BiomeCfg {
 // Palette note: grounds/hills/trees are kept SOMBER — desaturated, slightly darker
 // greens — so the field reads clear, defined and medieval rather than candy-bright.
 const BIOMES: Record<Biome, BiomeCfg> = {
-  britain: { bg: '#b3cbe2', skyTop: '#b3cee4', skyBot: '#e4dcc6', fog: '#c6d4d0', fogNear: 430, fogFar: 1060, hemiSky: '#f7ebd2', hemiGround: '#63703c', sun: '#f7d9a6', sunInt: 1.95, amb: '#f3e4cb', ground: '#84994f', sand: false, hill: '#54683a', hillTop: '#748c50', snow: false, hillH: 62, dune: false, tree: '#384d26' },
-  france:  { bg: '#b8cfe2', skyTop: '#b7d0e3', skyBot: '#e6dec8', fog: '#ccd6cd', fogNear: 450, fogFar: 1080, hemiSky: '#f7edd6', hemiGround: '#6b763c', sun: '#f7dcab', sunInt: 1.95, amb: '#f3e6cd', ground: '#8ba354', sand: false, hill: '#5f783e', hillTop: '#7e9453', snow: false, hillH: 40, dune: false, tree: '#3e552a' },
+  britain: { bg: '#b8cade', skyTop: '#b7ccdf', skyBot: '#ecddc0', fog: '#cdd2c4', fogNear: 430, fogFar: 1060, hemiSky: '#f7ebd2', hemiGround: '#6d6a3a', sun: '#f9d79c', sunInt: 1.98, amb: '#f3e4cb', ground: '#94914f', sand: false, hill: '#5f6339', hillTop: '#86864e', snow: false, hillH: 62, dune: false, tree: '#3c4b26' },
+  france:  { bg: '#bccbdd', skyTop: '#bcccdd', skyBot: '#eddfc6', fog: '#d1d1c1', fogNear: 450, fogFar: 1080, hemiSky: '#f7edd6', hemiGround: '#726f39', sun: '#f9daa2', sunInt: 1.98, amb: '#f3e6cd', ground: '#9c9752', sand: false, hill: '#67703c', hillTop: '#8b8b4f', snow: false, hillH: 40, dune: false, tree: '#42552a' },
   alpine:  { bg: '#bacfe4', skyTop: '#b2cbe6', skyBot: '#dee5e8', fog: '#d1dbe2', fogNear: 470, fogFar: 1120, hemiSky: '#eef2f8', hemiGround: '#57653c', sun: '#f7ddb4', sunInt: 1.9, amb: '#e6eaf3', ground: '#7c944e', sand: false, hill: '#4f5f3c', hillTop: '#b8bfba', snow: true, hillH: 205, dune: false, tree: '#2e4526' },
   med:     { bg: '#c2ccce', skyTop: '#b2c5cd', skyBot: '#e6dcba', fog: '#d9d1b6', fogNear: 410, fogFar: 1040, hemiSky: '#f5e8c4', hemiGround: '#7d7443', sun: '#f5d494', sunInt: 2.05, amb: '#f3e4c1', ground: '#93925a', sand: false, hill: '#7b7043', hillTop: '#968a57', snow: false, hillH: 58, dune: false, tree: '#505e30' },
   desert:  { bg: '#d6ccb2', skyTop: '#c3cac4', skyBot: '#e8dab6', fog: '#ded1b2', fogNear: 430, fogFar: 1060, hemiSky: '#f5e6bd', hemiGround: '#a2874f', sun: '#f5d89b', sunInt: 2.1, amb: '#f3e4c3', ground: '#bda471', sand: true, hill: '#b7a071', hillTop: '#c9b485', snow: false, hillH: 42, dune: true, tree: '#6d7039' },
@@ -489,6 +493,15 @@ export class Renderer {
     const roofHex = LAYOUT.palisade ? '#7a4a26' : ROOFS[(ph >> 3) % ROOFS.length];
     const coneRoofTex = this.texRoof.clone(); coneRoofTex.wrapS = coneRoofTex.wrapT = THREE.RepeatWrapping; coneRoofTex.repeat.set(5, 3); coneRoofTex.needsUpdate = true;
     const roofMat = this.stone(roofHex); roofMat.map = coneRoofTex;
+    // Per-tower roof variation: a small deterministic HSL jitter off the base so a
+    // castle's roofscape reads like weathered tile — sun-bleached and patchy, some
+    // paler, some deeper — instead of one flat monochrome red. Each cone is already
+    // its own draw call, so the material clone is free (the texture map is shared).
+    const roofFor = (seed: number) => {
+      const m = roofMat.clone();
+      m.color.offsetHSL((jit(seed, 21) - 0.5) * 0.05, (jit(seed, 22) - 0.5) * 0.14, (jit(seed, 23) - 0.5) * 0.16);
+      return m;
+    };
     const timber = this.stone('#7a4f2c');
     const tintStone = (m: THREE.MeshLambertMaterial) => { if (!LAYOUT.palisade) m.color.multiply(stoneTint); return m; };
     const stoneCol = (hex: string) => new THREE.Color(hex);
@@ -543,7 +556,7 @@ export class Renderer {
         const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         // roof + pole + flag stay separate (different materials) and hide on crumble
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * (round ? 0.74 : 0.82), round ? 7.5 : 6.5, round ? 14 : 12), roofMat);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * (round ? 0.74 : 0.82), round ? 7.5 : 6.5, round ? 14 : 12), roofFor(s));
         roof.rotation.y = Math.PI / 4; roof.position.set(cx, b.h + 3.7, cz); roof.castShadow = true; this.scene.add(roof); extras.push(roof);
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4), timber); pole.position.set(cx, b.h + 7, cz); this.scene.add(pole); extras.push(pole);
         const flag = this.makeBanner(cx + 0.18, b.h + 8.4, cz, 2.6, 1.5, COL_DEFEND); this.scene.add(flag); extras.push(flag);
@@ -551,7 +564,7 @@ export class Renderer {
       } else if (b.kind === 'keep') {
         keepStoneGeos.push(this.boxG(w, b.h, d, cx, b.h / 2, cz), this.boxG(w - 5, 5, d - 5, cx, b.h + 2.5, cz));
         for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; keepStoneGeos.push(this.boxG(w, 1.4, 1, cx + Math.sin(a) * (d / 2), b.h + 0.7, cz + Math.cos(a) * (d / 2), a)); }
-        const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.8, 9, 14), roofMat); roof.position.set(cx, b.h + 9.5, cz); roof.castShadow = true; this.scene.add(roof);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry((w - 5) * 0.8, 9, 14), roofFor(s)); roof.position.set(cx, b.h + 9.5, cz); roof.castShadow = true; this.scene.add(roof);
         keepTimberGeos.push(this.boxG(2.6, 4, 0.4, cx, 2, b.z1));
         for (const [wx, wy] of [[-3, 8], [3, 8], [-3, 13], [3, 13]] as const) keepTimberGeos.push(this.boxG(1, 1.6, 0.3, cx + wx, wy, b.z1));
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6), timber); pole.position.set(cx, b.h + 15, cz); pole.castShadow = true; this.scene.add(pole);
