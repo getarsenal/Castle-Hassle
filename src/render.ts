@@ -429,6 +429,14 @@ export class Renderer {
 
   private buildGround() {
     const g = new THREE.PlaneGeometry(760, 760, 96, 96); g.rotateX(-Math.PI / 2);
+    { // shape the square sheet into a DISC: corners fold onto the rim circle, which
+      // hides under the horizon ring's inner flats — the world edge is one circle now
+      const pp = g.attributes.position, RIM = 300;
+      for (let i = 0; i < pp.count; i++) {
+        const x = pp.getX(i), z = pp.getZ(i), r = Math.hypot(x, z);
+        if (r > RIM) { pp.setX(i, x / r * RIM); pp.setZ(i, z / r * RIM); }
+      }
+    }
     // NEUTRAL large-scale brightness modulation — soft sunlit/shaded meadow patches that
     // hide the texture tiling, with a faint warm cast. (NOT a second green multiply; that
     // double-darkening is what made the grass read dim and fake.)
@@ -499,15 +507,15 @@ export class Renderer {
   // rim dissolving into the horizon haze. Coastal castles get an ocean flank (north).
   private buildHorizon() {
     const B = this.biomeCfg;
-    const RINGS = 16, SEG = 120, r0 = 250, r1 = 560;
-    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), groundC = new THREE.Color(B.ground), tmp = new THREE.Color();
+    const RINGS = 22, SEG = 120, r0 = 250, r1 = 1150; // outer rim meets the sky dome — no bare band of dome below the hills
+    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), groundC = new THREE.Color(B.ground).multiplyScalar(1.18), tmp = new THREE.Color();
     const seaDir = Math.PI, seaHalf = this.coastal ? 1.0 : -1;        // ~57° sea gap to the north
     const arc = (a: number) => { let d = Math.abs(a - seaDir); if (d > Math.PI) d = 2 * Math.PI - d; return d; };
     const smooth = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
     // rolling height as a function of angle and radial position (sum of low-freq
     // sines → soft ridgelines, never spiky)
     const hAt = (ang: number, t: number) => {
-      const rise = smooth(0, 0.34, t);                                // low at the field edge, full hills beyond
+      const rise = smooth(0.03, 0.22, t);                             // low at the field edge, rising soon after — an enclosing bowl of hills
       // INTEGER angular frequencies so the ridge wraps seamlessly (ang=0 ≡ ang=2π) —
       // non-integers tore a visible gap at the closing seam
       let n = Math.sin(ang * 3 + 1.3) * 0.5 + Math.sin(ang * 5 + 4.1) * 0.28 + Math.sin(ang * 9 + 2.0) * 0.16;
@@ -528,7 +536,7 @@ export class Renderer {
         const frac = Math.max(0, Math.min(1, y / (B.hillH * 0.8)));
         tmp.copy(cBase).lerp(cTop, frac * 0.85);
         if (B.snow && frac > 0.42) tmp.lerp(snow, smooth(0.42, 0.9, frac));
-        tmp.lerp(groundC, Math.max(0, 1 - frac * 2.4) * 0.45);       // hill feet melt into the field colour (smooths the terrain→backdrop seam)
+        tmp.lerp(groundC, Math.max(0, 1 - frac * 2.4) * 0.82);       // hill feet all but ARE the field colour (kills the tan circle at the seam)
         tmp.lerp(fog, Math.pow(t, 2.4) * (B.snow ? 0.55 : 0.9));      // far rim melts into the haze (peaks keep their snow)
         col.push(tmp.r, tmp.g, tmp.b);
       }
@@ -546,10 +554,10 @@ export class Renderer {
   }
 
   private buildOcean() {
-    const beach = new THREE.Mesh(new THREE.PlaneGeometry(940, 96).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#cdbd92' }));
+    const beach = new THREE.Mesh(new THREE.PlaneGeometry(2400, 96).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#cdbd92' }));
     beach.position.set(0, 0.03, -188); beach.receiveShadow = true; this.scene.add(beach);
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(1200, 680).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#2f6188' }));
-    sea.position.set(0, 0.13, -560); this.scene.add(sea);
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1500).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#2f6188' })); // reaches past the hills/fog — no floating rectangle edge at full zoom
+    sea.position.set(0, 0.13, -970); this.scene.add(sea); // near edge stays on the coast at z=-220; the rest runs out past the fog
   }
 
   // shared stone materials (slight tone variation for richness)
