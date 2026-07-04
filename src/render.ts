@@ -371,7 +371,7 @@ export class Renderer {
 
     // frame the whole siege: between the castle centre and the (roomier) camp
     this.camTarget.set(LAYOUT.gate.x * 0.5, 0, LAYOUT.D * 0.5 + 48);
-    this.camDist = Math.min(250, Math.hypot(LAYOUT.W, LAYOUT.D) * 2.3 + 92);
+    this.camDist = Math.min(330, Math.hypot(LAYOUT.W, LAYOUT.D) * 2.3 + 92); // the great fortresses need the wider frame
 
     window.addEventListener('resize', this.onResizeBound);
   }
@@ -661,7 +661,7 @@ export class Renderer {
         const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
         const isStone = b.kind === 'wall';
         const horiz = w > d, len = horiz ? w : d;
-        const outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
+        const outer = b.out ?? ((horiz ? Math.sign(cz) : Math.sign(cx)) || 1); // stored by the generator — sign-of-centre lies on irregular traces
         // both a curtain wall AND a gatehouse get a crenellated parapet on top
         parts.push(this.boxG(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d, 0, b.h + 0.25, 0)); // walkway
         const n = Math.floor(len / 1.7);
@@ -783,7 +783,7 @@ export class Renderer {
           for (let k = 0; k < nb * 0.7; k++) { const a = Math.random() * 6.283, rr = r * rnd(1.0, 1.32); pushBoulder(rnd(0.6, 1.4), cx + Math.cos(a) * rr, rnd(-0.4, 0.05), cz + Math.sin(a) * rr); }
           for (let k = 0; k < 4; k++) { const a = k / 4 * 6.283 + 0.5, sx = cx + Math.cos(a) * (r + 0.05), sz = cz + Math.sin(a) * (r + 0.05); slitG.push(new THREE.BoxGeometry(0.34, 2.3, 0.34).translate(sx, b.h * 0.55, sz)); }
         } else if (b.kind === 'wall') { // no stones at all under a gate — the approach stays clear
-          const horiz = w > d, len = horiz ? w : d, outer = (horiz ? Math.sign(cz) : Math.sign(cx)) || 1;
+          const horiz = w > d, len = horiz ? w : d, outer = b.out ?? ((horiz ? Math.sign(cz) : Math.sign(cx)) || 1);
           const nb = Math.max(5, Math.round(len / 4));
           for (let k = 0; k < nb; k++) {
             const tv = (k + 0.5) / nb - 0.5, big = Math.random() < 0.5;

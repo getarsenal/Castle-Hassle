@@ -210,6 +210,37 @@ NOTE the index.dev.html block sits at the END of the stylesheet on purpose
 Verified at 844x390 (iPhone 12-15 landscape) headless: title, menu, map,
 panel, muster, battle w/ tools all fit and reachable.
 
+## TRUE CASTLES (July 2026 — the blob enceinte)
+generateCastle no longer stamps rectangles. The curtain is traced from a seeded
+CELL BLOB (CS=12 world units/cell, grids to 18x13 → footprints to ~216x156, two
+to four times the old ground) into an irregular RECTILINEAR polygon — so every
+downstream contract survives untouched (WallLine archers/ballistae/ladders,
+AABB segs, breaches, plugs, schematic).
+- Four silhouette archetypes (`CastleStyle.form`, seeded when unset, set for
+  all 21 famous castles in campaign.ts): 'crag' stepped diagonal wards
+  (Gaillard, Krak), 'bastion' jutting corner works + gatehouse block (Dover,
+  Coucy), 'sprawl' anchored-ward walled towns (Carcassonne, Jerusalem),
+  'shell' lobed superellipse ring-works (Harlech). Organic jitter (domino
+  bites) + sanitise passes (dangle strip, hole fill, one component, dilation
+  mass guarantee ≥42% of grid).
+- Gate = best south-facing run (southern/central/long score) — often RECESSED
+  in a bay = a natural killing ground. front stays bbox D (deploy safe).
+- Towers only at REAL corners (both adjoining runs ≥ one cell) + interval
+  flankers on long curtains; caps 44/52.
+- Keep/citadel seat at the blob's DEEPEST cell (BFS from boundary), NOT the
+  origin (which can be outside a crag trace); citadel rect shrinks to fit.
+- `Seg.out` stores each wall's outward side — render's old sign-of-centre
+  trick lies on irregular traces (merlons/doors flipped in notches).
+- `insideCastle(x,z)` = exact blob test, exported from sim.ts — used by
+  footing (mud follows the REAL walls), openBailey spawn, insideWalls,
+  attInside. LAYOUT.blob carries {x0,z0,cs,gw,gh,cells,area}.
+- defenderPlan: garrison from blob area (cap 1060), archer spacing scales
+  with perimeter (2.6..3.4, perim/185) — re-tuned to the simbench
+  equilibrium: 3/6 naive wins with genuine stalls (was 6/6 easy pre-tune).
+- WORLD widened to x±158, z -128..214 for the great fortresses' siege ring.
+- Verified: bench 6 seeds, overhead + three-quarter screenshots (campaign
+  castles 0/24/55/98), map schematic panel, tsc clean.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

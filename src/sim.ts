@@ -4,7 +4,7 @@
 // flow field per destination (no per-agent A*). Fixed-timestep & seeded so it's
 // deterministic (replays / future PvP come cheap).
 
-export const WORLD = { minX: -148, maxX: 148, minZ: -120, maxZ: 215 };
+export const WORLD = { minX: -158, maxX: 158, minZ: -128, maxZ: 214 }; // widened for the blob-traced great fortresses
 export const CELL = 2;
 export const COLS = Math.round((WORLD.maxX - WORLD.minX) / CELL); // 100
 export const ROWS = Math.round((WORLD.maxZ - WORLD.minZ) / CELL); // 90
@@ -125,7 +125,7 @@ export function maxHp(t: UType) { return HP[t]; }
 // and defender deployment. Bigger than before, varied per seed, with a town of
 // buildings inside and (on larger ones) an inner CITADEL that must be taken. ----
 export type SegKind = 'wall' | 'gate' | 'tower' | 'keep' | 'building';
-export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; ramCrew?: number; }
+export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; ramCrew?: number; out?: number; }
 export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; }
 export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
 // A scaling ladder raised against a wall section. Attackers queue at the foot
@@ -139,6 +139,14 @@ export interface CastleLayout {
   wallLines: WallLine[]; towers: { x: number; z: number; big: boolean }[];
   buildings: { x: number; z: number; w: number; d: number }[]; citadel: Citadel | null;
   round: boolean; concentric: boolean; ballistae: Ballista[]; palisade: boolean;
+  // the enceinte's cell blob: the exact irregular footprint (for inside tests)
+  blob: { x0: number; z0: number; cs: number; gw: number; gh: number; cells: Uint8Array; area: number };
+}
+// exact point-in-enceinte test against the traced blob (bbox tests lie in the notches)
+export function insideCastle(x: number, z: number): boolean {
+  const b = LAYOUT?.blob; if (!b) return Math.abs(x) < (LAYOUT?.W ?? 0) && Math.abs(z) < (LAYOUT?.D ?? 0);
+  const cx = Math.floor((x - b.x0) / b.cs), cz = Math.floor((z - b.z0) / b.cs);
+  return cx >= 0 && cz >= 0 && cx < b.gw && cz < b.gh && !!b.cells[cz * b.gw + cx];
 }
 // Per-castle architectural style. Drives generateCastle so each real castle in
 // the campaign has a distinguishable shape/silhouette (concentric double walls,
@@ -152,6 +160,7 @@ export interface CastleStyle {
   town: number;        // building density 0..1 (higher = denser bailey)
   shape?: 'rect' | 'barbican' | 'twin';  // outer footprint: plain, fronted by a barbican bailey, or a flanking twin bailey (non-square)
   palisade?: boolean;  // a town behind low WOODEN walls: no towers, no stone, no engines — a soft raid target
+  form?: 'crag' | 'bastion' | 'sprawl' | 'shell'; // enceinte silhouette archetype (derived from seed when unset)
 }
 
 export const T = 4, WH = 9, SEG = 8;
@@ -200,73 +209,335 @@ export function generateCastle(seed: number, style?: CastleStyle) {
     return lines;
   };
 
-  // ----- outer compound (size & shape from the style; bigger later castles) -----
-  const W = Math.max(40, Math.min(106, Math.round(rr(54, 64) * st.scale * Math.sqrt(st.aspect) / 2) * 2));
-  const D = Math.max(36, Math.min(88, Math.round(rr(48, 56) * st.scale / Math.sqrt(st.aspect) / 2) * 2));
-  const GH = 9, gateX = Math.round(rr(-W * 0.22, W * 0.22) / SEG) * SEG;
-  // Concentric castles get a lower outer curtain (the inner ring towers over it);
-  // a palisade town has only low wooden walls.
-  const outerWH = pal ? 5 : st.concentric ? WH - 2 : WH;
-  const wallLines = compound(-W, W, -D, D, gateX, GH, true, undefined, outerWH);
-  // mid-wall towers
-  const tSpace = st.round ? 26 : 28;
-  for (let x = -W + tSpace; x < W - 18; x += tSpace) { tower(x, -D, false); if (Math.abs(x - gateX) > GH + 7) tower(x, D, false); }
-  for (let z = -D + tSpace; z < D - 18; z += tSpace) { tower(-W, z, false); tower(W, z, false); }
-  tower(gateX - GH - 3, D, true); tower(gateX + GH + 3, D, true); // gatehouse
+  // ===== THE ENCEINTE: an irregular rectilinear ring traced from a seeded cell
+  // blob — every castle is a different SHAPE (stepped crag wards, jutting corner
+  // bastions, sprawling walled towns, rounded shells), not a resized rectangle.
+  // Rectilinear runs keep every downstream contract intact: each run is a
+  // WallLine an archer can man, a ballista can sit on, a ladder can hook. =====
+  const CS = 12; // blob cell size (world units)
+  const form: NonNullable<CastleStyle['form']> = st.form ?? (pal ? 'shell'
+    : st.town > 0.68 ? 'sprawl'
+    : st.concentric ? (R() < 0.5 ? 'crag' : 'shell')
+    : st.strongKeep ? (R() < 0.55 ? 'bastion' : 'crag')
+    : (['sprawl', 'bastion', 'shell', 'crag'] as const)[Math.floor(R() * 4)]);
+  // cell budget from scale/aspect — typical holds ~13x10 cells (156x120 ground),
+  // the great fortresses 17x13 (204x156) — three to five times the old ground
+  const sizeMul = pal ? 0.62 : 1;
+  const gw = Math.max(9, Math.min(18, Math.round((12.4 + rr(0, 2.6)) * st.scale * Math.sqrt(st.aspect) * sizeMul)));
+  const gh = Math.max(7, Math.min(13, Math.round((9.4 + rr(0, 2)) * st.scale / Math.sqrt(st.aspect) * sizeMul)));
+  const cells = new Uint8Array(gw * gh);
+  const at = (x: number, z: number) => (x >= 0 && z >= 0 && x < gw && z < gh ? cells[z * gw + x] : 0);
+  const put = (x: number, z: number, v = 1) => { if (x >= 0 && z >= 0 && x < gw && z < gh) cells[z * gw + x] = v; };
+  const rect = (x0: number, z0: number, x1: number, z1: number) => { for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) put(x, z); };
+  if (form === 'shell') {
+    // a lobed shell — a rounded ring-work whose radius swells and pinches as it
+    // goes round (Harlech's rock, Restormel's shell keep, motte ring-works)
+    const a = (gw - 1) / 2, b = (gh - 1) / 2;
+    const p1 = R() * 6.28, p2 = R() * 6.28, l2 = rr(0.1, 0.22), l3 = rr(0.06, 0.16);
+    for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) {
+      const dx = (x - a) / Math.max(1, a), dz = (z - b) / Math.max(1, b);
+      const ang = Math.atan2(dz, dx);
+      const rad = 1 + l2 * Math.sin(2 * ang + p1) + l3 * Math.sin(3 * ang + p2);
+      if (Math.pow(Math.abs(dx), 1.45) + Math.pow(Math.abs(dz), 1.45) <= rad) put(x, z);
+    }
+  } else if (form === 'crag') {
+    // stepped diagonal wards climbing a ridge line (Edinburgh, Château Gaillard):
+    // three offset blocks whose union reads as a castle following its crag
+    const w1 = Math.max(4, Math.round(gw * 0.55)), h1 = Math.max(3, Math.round(gh * 0.6));
+    const flip = R() < 0.5 ? 1 : -1; // ridge may run either diagonal
+    const fx = (x: number) => (flip > 0 ? x : gw - 1 - x);
+    for (let z = gh - h1; z <= gh - 1; z++) for (let x = 0; x <= w1 - 1; x++) put(fx(x), z);
+    const m0 = Math.round(gw * 0.3);
+    for (let z = Math.max(0, gh - h1 - Math.round(gh * 0.35)); z <= gh - Math.max(1, Math.round(h1 * 0.45)); z++)
+      for (let x = m0; x <= Math.min(gw - 1, m0 + Math.round(gw * 0.5)); x++) put(fx(x), z);
+    for (let z = 0; z <= Math.round(gh * 0.55); z++) for (let x = gw - Math.max(3, Math.round(gw * 0.42)); x <= gw - 1; x++) put(fx(x), z);
+  } else if (form === 'bastion') {
+    // a quadrangular curtain with corner works THRUST OUT well past the walls
+    // and a gatehouse block jutting south (Dover, Coucy, the Edwardian squares)
+    rect(2, 2, gw - 3, gh - 3);
+    rect(0, 0, 2, 2); rect(gw - 3, 0, gw - 1, 2); rect(0, gh - 3, 2, gh - 1); rect(gw - 3, gh - 3, gw - 1, gh - 1);
+    const gxC = Math.round(gw / 2) + (R() < 0.5 ? -1 : 0);
+    rect(Math.max(0, gxC - 1), gh - 3, Math.min(gw - 1, gxC + 1), gh - 1); // the gatehouse block
+    if (gh > 8) rect(Math.round(gw * 0.38), 0, Math.round(gw * 0.58), 1);  // a north sally block
+    if (R() < 0.5) rect(0, Math.round(gh * 0.4), 1, Math.round(gh * 0.62)); // a mid-flank bastion
+  } else {
+    // sprawl: a walled town GROWN ward by ward (Carcassonne, Conwy) — each new
+    // ward is a rect that must overlap the town so far, and none is allowed to
+    // fill the grid, so the union reads as an organic patchwork, not a slab
+    const px0 = Math.floor(R() * gw * 0.35), pz0 = Math.floor(gh * 0.2 + R() * gh * 0.3);
+    rect(px0, pz0, Math.min(gw - 1, px0 + Math.max(4, Math.round(gw * rr(0.45, 0.6)))), Math.min(gh - 1, pz0 + Math.max(3, Math.round(gh * rr(0.45, 0.6)))));
+    // grow ward by ward, each ANCHORED on a cell the town already holds, until
+    // the town holds enough ground — guaranteed mass, organic patchwork outline
+    for (let wd = 0; wd < 9; wd++) {
+      let filled = 0; for (let i = 0; i < cells.length; i++) filled += cells[i];
+      if (filled >= gw * gh * 0.58) break;
+      const anchors: number[] = [];
+      for (let i = 0; i < cells.length; i++) if (cells[i]) anchors.push(i);
+      const an = anchors[Math.floor(R() * anchors.length)];
+      const ax = an % gw, az = (an / gw) | 0;
+      const ww = Math.max(3, Math.round(gw * rr(0.3, 0.5))), wh2 = Math.max(2, Math.round(gh * rr(0.3, 0.5)));
+      const x0 = Math.max(0, Math.min(gw - 1 - ww, ax - Math.floor(R() * ww)));
+      const z0 = Math.max(0, Math.min(gh - 1 - wh2, az - Math.floor(R() * wh2)));
+      rect(x0, z0, x0 + ww, z0 + wh2);
+    }
+  }
+  // organic jitter: bud and nibble the outline so no two castles share a trace
+  // (bastioned quadrangles jitter least — their geometry IS the point)
+  const JN = Math.round(gw * gh * (form === 'bastion' ? 0.05 : 0.14));
+  for (let j = 0; j < JN; j++) {
+    const x = Math.floor(R() * gw), z = Math.floor(R() * gh);
+    const nb = at(x - 1, z) + at(x + 1, z) + at(x, z - 1) + at(x, z + 1);
+    const domino = R() < 0.35; const dx = R() < 0.5 ? 1 : 0, dz = 1 - dx; // sometimes bite two cells
+    if (R() < 0.5) {
+      if (!at(x, z) && nb >= 2) { put(x, z); if (domino && !at(x + dx, z + dz) && (at(x + dx - 1, z + dz) + at(x + dx + 1, z + dz) + at(x + dx, z + dz - 1) + at(x + dx, z + dz + 1)) >= 1) put(x + dx, z + dz); }
+    } else if (at(x, z) && nb <= 2) { put(x, z, 0); if (domino) put(x + dx, z + dz, 0); }
+  }
+  { // sanitise: strip dangling single cells, fill enclosed holes, keep one castle
+    for (let pass = 0; pass < 5; pass++) {
+      let changed = false;
+      for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++)
+        if (at(x, z) && at(x - 1, z) + at(x + 1, z) + at(x, z - 1) + at(x, z + 1) <= 1) { put(x, z, 0); changed = true; }
+      if (!changed) break;
+    }
+    const seen = new Uint8Array(gw * gh); const stack: number[] = [];
+    for (let x = 0; x < gw; x++) { if (!at(x, 0)) stack.push(x); if (!at(x, gh - 1)) stack.push((gh - 1) * gw + x); }
+    for (let z = 0; z < gh; z++) { if (!at(0, z)) stack.push(z * gw); if (!at(gw - 1, z)) stack.push(z * gw + gw - 1); }
+    while (stack.length) { // flood the OUTSIDE; unfilled emptiness left over = holes
+      const i = stack.pop()!; if (seen[i] || cells[i]) continue; seen[i] = 1;
+      const x = i % gw, z = (i / gw) | 0;
+      if (x > 0) stack.push(i - 1); if (x < gw - 1) stack.push(i + 1); if (z > 0) stack.push(i - gw); if (z < gh - 1) stack.push(i + gw);
+    }
+    for (let i = 0; i < cells.length; i++) if (!cells[i] && !seen[i]) cells[i] = 1;
+    let root = -1; for (let i = 0; i < cells.length && root < 0; i++) if (cells[i]) root = i;
+    if (root >= 0) { // keep only the component the root touches
+      const comp = new Uint8Array(gw * gh); const st2 = [root];
+      while (st2.length) {
+        const i = st2.pop()!; if (comp[i] || !cells[i]) continue; comp[i] = 1;
+        const x = i % gw, z = (i / gw) | 0;
+        if (x > 0) st2.push(i - 1); if (x < gw - 1) st2.push(i + 1); if (z > 0) st2.push(i - gw); if (z < gh - 1) st2.push(i + gw);
+      }
+      for (let i = 0; i < cells.length; i++) if (cells[i] && !comp[i]) cells[i] = 0;
+    }
+    let n = 0; for (let i = 0; i < cells.length; i++) n += cells[i];
+    // a castle must HOLD GROUND: thin rolls dilate outward (keeping their
+    // silhouette's character) until they carry enough ward to be a fortress
+    let guardD = 0;
+    while (n < gw * gh * 0.42 && guardD++ < 6) {
+      const add: number[] = [];
+      for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) {
+        if (at(x, z)) continue;
+        if (at(x - 1, z) + at(x + 1, z) + at(x, z - 1) + at(x, z + 1) >= 2) add.push(z * gw + x);
+      }
+      if (!add.length) break;
+      for (const i of add) { if (n < gw * gh * 0.5) { cells[i] = 1; n++; } }
+    }
+    if (n < 12) { cells.fill(0); rect(1, 1, gw - 2, gh - 2); } // degenerate roll — fall back to a plain ward
+  }
+  // recenter the blob so its bounding box sits on the origin
+  let mnx = gw, mxx = -1, mnz = gh, mxz = -1, cellCount = 0;
+  for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) if (at(x, z)) { cellCount++; if (x < mnx) mnx = x; if (x > mxx) mxx = x; if (z < mnz) mnz = z; if (z > mxz) mxz = z; }
+  const W = (mxx - mnx + 1) * CS / 2, D = (mxz - mnz + 1) * CS / 2;
+  const wx0 = -W - mnx * CS, wz0 = -D - mnz * CS;   // world position of cell (0,0)'s corner
+  const cX = (cx: number) => wx0 + cx * CS, cZ = (cz: number) => wz0 + cz * CS; // cell corner → world
+  const blob = { x0: wx0, z0: wz0, cs: CS, gw, gh, cells, area: cellCount * CS * CS };
+  const cellAtW = (x: number, z: number) => at(Math.floor((x - wx0) / CS), Math.floor((z - wz0) / CS));
 
-  // ----- non-square footprint: a walled barbican bailey thrust out in front of
-  // the gate (the attacker must storm it, cross the killing-ground, then the main
-  // gate). 'twin' makes it broad like a second forebailey. -----
-  let front = D, outerGateX = gateX;
-  if (st.shape === 'barbican' || st.shape === 'twin') {
-    const bhw = Math.min(W - 6, Math.round((st.shape === 'twin' ? rr(0.5, 0.66) : rr(0.32, 0.44)) * W));
-    const bd = Math.round(st.shape === 'twin' ? rr(28, 40) : rr(20, 30));
-    const bx0 = Math.max(-W, gateX - bhw), bx1 = Math.min(W, gateX + bhw), bz1 = D + bd;
-    for (let x = bx0; x < bx1 - 0.1; x += SEG) { const e = Math.min(x + SEG, bx1), c = (x + e) / 2; wall(x, e, bz1 - T, bz1, Math.abs(c - gateX) < GH ? 'gate' : 'wall'); } // south face + outer gate
-    for (let z = D; z < bz1 - 0.1; z += SEG) { const e = Math.min(z + SEG, bz1); wall(bx0, bx0 + T, z, e, 'wall'); wall(bx1 - T, bx1, z, e, 'wall'); } // flanks (north side stays open to the main gate)
-    wallLines.push({ x0: bx0, z0: bz1 - T / 2, x1: bx1, z1: bz1 - T / 2, horiz: true, outer: 1, gapC: gateX, gapH: GH });
-    wallLines.push({ x0: bx0 + T / 2, z0: D, x1: bx0 + T / 2, z1: bz1, horiz: false, outer: -1, gapC: 1e9, gapH: 0 });
-    wallLines.push({ x0: bx1 - T / 2, z0: D, x1: bx1 - T / 2, z1: bz1, horiz: false, outer: 1, gapC: 1e9, gapH: 0 });
-    tower(bx0, bz1, false); tower(bx1, bz1, false); tower(gateX - GH - 3, bz1, true); tower(gateX + GH + 3, bz1, true);
-    front = bz1; outerGateX = gateX;
+  // ----- trace the boundary into merged wall RUNS (with their outward side) -----
+  interface Run { horiz: boolean; a0: number; a1: number; c: number; outer: number }
+  const runs: Run[] = [];
+  { // horizontal runs: rows of cell edges grouped by (row, outward side), merged
+    for (let z = 0; z <= gh; z++) for (const o of [1, -1] as const) {
+      let x = 0;
+      while (x < gw) {
+        const edge = (xx: number) => (o > 0 ? at(xx, z - 1) && !at(xx, z) : at(xx, z) && !at(xx, z - 1));
+        if (!edge(x)) { x++; continue; }
+        let e = x; while (e < gw && edge(e)) e++;
+        runs.push({ horiz: true, a0: cX(x), a1: cX(e), c: cZ(z), outer: o });
+        x = e;
+      }
+    }
+    for (let x = 0; x <= gw; x++) for (const o of [1, -1] as const) {
+      let z = 0;
+      while (z < gh) {
+        const edge = (zz: number) => (o > 0 ? at(x - 1, zz) && !at(x, zz) : at(x, zz) && !at(x - 1, zz));
+        if (!edge(z)) { z++; continue; }
+        let e = z; while (e < gh && edge(e)) e++;
+        runs.push({ horiz: false, a0: cZ(z), a1: cZ(e), c: cX(x), outer: o });
+        z = e;
+      }
+    }
+  }
+  // ----- the GATE: the longest, most southern south-facing run near the centre.
+  // On an irregular trace it often sits recessed in a bay — a natural killing
+  // ground the attacker must enter before ramming (real gatehouses did exactly this).
+  const GH_ = 9;
+  let gateRun = runs[0]; let bestScore = -1e9;
+  for (const r of runs) {
+    if (!r.horiz || r.outer !== 1 || r.a1 - r.a0 < 24) continue;
+    const mid = (r.a0 + r.a1) / 2;
+    const sc = r.c * 2 - Math.abs(mid) * 0.7 + (r.a1 - r.a0) * 0.2;
+    if (sc > bestScore) { bestScore = sc; gateRun = r; }
+  }
+  const gateX = Math.round(Math.max(gateRun.a0 + GH_ + 5, Math.min(gateRun.a1 - GH_ - 5, (gateRun.a0 + gateRun.a1) / 2 + rr(-8, 8))));
+  const gateZ = gateRun.c;
+  const outerWH = pal ? 5 : st.concentric ? WH - 2 : WH;
+  // ----- raise the curtain along every run (SEG-chunked so breaches stay local) -----
+  const wallLines: WallLine[] = [];
+  for (const r of runs) {
+    const isGate = r === gateRun;
+    if (r.horiz) {
+      const zlo = r.outer > 0 ? r.c - T : r.c, zhi = r.outer > 0 ? r.c : r.c + T;
+      for (let x = r.a0; x < r.a1 - 0.1; x += SEG) {
+        const e = Math.min(x + SEG, r.a1), cmid = (x + e) / 2;
+        const w0 = segs.length;
+        wall(x, e, zlo, zhi, isGate && Math.abs(cmid - gateX) < GH_ ? 'gate' : 'wall', outerWH);
+        for (let q = w0; q < segs.length; q++) segs[q].out = r.outer;
+      }
+      wallLines.push({ x0: r.a0, z0: r.c - r.outer * T / 2, x1: r.a1, z1: r.c - r.outer * T / 2, horiz: true, outer: r.outer, gapC: isGate ? gateX : 1e9, gapH: isGate ? GH_ : 0 });
+    } else {
+      const xlo = r.outer > 0 ? r.c - T : r.c, xhi = r.outer > 0 ? r.c : r.c + T;
+      for (let z = r.a0; z < r.a1 - 0.1; z += SEG) {
+        const w0 = segs.length;
+        wall(xlo, xhi, z, Math.min(z + SEG, r.a1), 'wall', outerWH);
+        for (let q = w0; q < segs.length; q++) segs[q].out = r.outer;
+      }
+      wallLines.push({ x0: r.c - r.outer * T / 2, z0: r.a0, x1: r.c - r.outer * T / 2, z1: r.a1, horiz: false, outer: r.outer, gapC: 1e9, gapH: 0 });
+    }
+  }
+  // ----- towers crown every salient: corners first, then mid-run flankers -----
+  {
+    const seenT = new Set<string>();
+    const addT = (x: number, z: number, big: boolean) => {
+      const k = `${Math.round(x / 4)},${Math.round(z / 4)}`;
+      if (seenT.has(k)) return; seenT.add(k);
+      tower(x, z, big);
+    };
+    addT(gateX - GH_ - 3, gateZ, true); addT(gateX + GH_ + 3, gateZ, true); // gatehouse drums
+    // a corner earns a tower only when BOTH runs meeting there are substantial —
+    // little jitter steps stay as bare wall articulation, real salients get drums
+    const cornerLen = new Map<string, number>();
+    const note = (x: number, z: number, len: number) => {
+      const k = `${Math.round(x)},${Math.round(z)}`;
+      cornerLen.set(k, Math.min(cornerLen.get(k) ?? 1e9, len));
+    };
+    for (const r of runs) {
+      const len = r.a1 - r.a0;
+      if (r.horiz) { note(r.a0, r.c, len); note(r.a1, r.c, len); } else { note(r.c, r.a0, len); note(r.c, r.a1, len); }
+    }
+    let ci = 0;
+    for (const [k, minLen] of cornerLen) {
+      if (minLen < CS - 0.1) continue; // a one-cell jog — no drum
+      const [x, z] = k.split(',').map(Number);
+      addT(x, z, !pal && (ci++ % 7 === 3)); if (TOWERS.length > 44) break;
+    }
+    for (const r of runs) { // long curtains get interval flanking towers
+      if (TOWERS.length > 52) break;
+      const len = r.a1 - r.a0; if (len < 46) continue;
+      for (let a = r.a0 + 28; a < r.a1 - 20; a += 30) {
+        if (r === gateRun && Math.abs(a - gateX) < GH_ + 8) continue;
+        addT(r.horiz ? a : r.c, r.horiz ? r.c : a, false);
+      }
+    }
   }
 
-  // ----- inner stronghold -----
+  // ----- optional barbican thrust out before the gate (style-driven, as before) -----
+  let front = D, outerGateX = gateX;
+  if ((st.shape === 'barbican' || st.shape === 'twin') && gateZ > -D * 0.2) {
+    const runLen = gateRun.a1 - gateRun.a0;
+    const bhw = Math.min(runLen / 2 - 2, Math.round((st.shape === 'twin' ? rr(0.5, 0.66) : rr(0.32, 0.44)) * Math.max(runLen / 2, 30)));
+    const bd = Math.round(st.shape === 'twin' ? rr(28, 40) : rr(20, 30));
+    const bx0 = Math.max(gateRun.a0, gateX - bhw), bx1 = Math.min(gateRun.a1, gateX + bhw), bz1 = gateZ + bd;
+    for (let x = bx0; x < bx1 - 0.1; x += SEG) {
+      const e = Math.min(x + SEG, bx1), c = (x + e) / 2, w0 = segs.length;
+      wall(x, e, bz1 - T, bz1, Math.abs(c - gateX) < GH_ ? 'gate' : 'wall');
+      for (let q = w0; q < segs.length; q++) segs[q].out = 1;
+    }
+    for (let z = gateZ; z < bz1 - 0.1; z += SEG) {
+      const e = Math.min(z + SEG, bz1), w0 = segs.length;
+      wall(bx0, bx0 + T, z, e, 'wall'); wall(bx1 - T, bx1, z, e, 'wall');
+      for (let q = w0; q < segs.length; q++) segs[q].out = segs[q].x0 < gateX ? -1 : 1;
+    }
+    wallLines.push({ x0: bx0, z0: bz1 - T / 2, x1: bx1, z1: bz1 - T / 2, horiz: true, outer: 1, gapC: gateX, gapH: GH_ });
+    wallLines.push({ x0: bx0 + T / 2, z0: gateZ, x1: bx0 + T / 2, z1: bz1, horiz: false, outer: -1, gapC: 1e9, gapH: 0 });
+    wallLines.push({ x0: bx1 - T / 2, z0: gateZ, x1: bx1 - T / 2, z1: bz1, horiz: false, outer: 1, gapC: 1e9, gapH: 0 });
+    tower(bx0, bz1, false); tower(bx1, bz1, false); tower(gateX - GH_ - 3, bz1, true); tower(gateX + GH_ + 3, bz1, true);
+    front = Math.max(front, bz1);
+  }
+  const GH = GH_; // (citadel + buildings below reuse the name)
+
+  // ----- inner stronghold, seated in the blob's DEEPEST ward (not the origin —
+  // on a crag trace the origin can be empty ground outside the walls) -----
+  // cell depth = BFS steps from the boundary; the keep sits where the castle is thickest
+  const depth = new Int16Array(gw * gh).fill(-1);
+  { const q: number[] = [];
+    for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) {
+      const i = z * gw + x; if (!cells[i]) continue;
+      if (!at(x - 1, z) || !at(x + 1, z) || !at(x, z - 1) || !at(x, z + 1)) { depth[i] = 0; q.push(i); }
+    }
+    for (let h = 0; h < q.length; h++) {
+      const i = q[h], x = i % gw, z = (i / gw) | 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= gw || nz >= gh) continue;
+        const ni = nz * gw + nx; if (cells[ni] && depth[ni] < 0) { depth[ni] = depth[i] + 1; q.push(ni); }
+      }
+    }
+  }
+  let kcx = 0, kcz = 0, kbest = -1;
+  for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) {
+    const dpt = depth[z * gw + x]; if (dpt < 0) continue;
+    const sc = dpt * 10 - z * 0.6; // deep, and biased away from the gate front
+    if (sc > kbest) { kbest = sc; kcx = x; kcz = z; }
+  }
+  const keepX = Math.round(cX(kcx) + CS / 2), keepZ = Math.round(cZ(kcz) + CS / 2);
+  // shrink a candidate citadel rect until it fits wholly on filled cells
+  const fits = (x0: number, z0: number, x1: number, z1: number) => {
+    for (let x = x0; x <= x1; x += CS * 0.5) for (let z = z0; z <= z1; z += CS * 0.5) if (!cellAtW(x, z)) return false;
+    return cellAtW(x1, z0) && cellAtW(x1, z1);
+  };
   let citadel: Citadel | null = null;
   const cTowers: { x: number; z: number; big: boolean }[] = [];
   if (st.concentric) {
-    // A full, taller inner ward concentric with the outer curtain — the attacker
-    // must breach two rings (Krak des Chevaliers, Dover, Caerphilly, Harlech).
-    const cw = Math.round(W * 0.52 / SEG) * SEG, cd = Math.round(D * 0.52 / SEG) * SEG;
-    const ccx = 0, ccz = -Math.round(D * 0.1);
-    const igX = Math.round(rr(-cw * 0.35, cw * 0.35) / SEG) * SEG; // inner gate offset from outer (bent entry)
+    // A full, taller inner ward — the attacker must breach two rings
+    // (Krak des Chevaliers, Dover, Caerphilly, Harlech).
+    let cw = Math.round(Math.min(W * 0.5, 44) / SEG) * SEG, cd = Math.round(Math.min(D * 0.5, 36) / SEG) * SEG;
+    while ((cw > 16 || cd > 16) && !fits(keepX - cw - 2, keepZ - cd - 2, keepX + cw + 2, keepZ + cd + 2)) {
+      if (cw >= cd) cw -= SEG; else cd -= SEG;
+      cw = Math.max(16, cw); cd = Math.max(16, cd);
+      if (cw === 16 && cd === 16) break;
+    }
+    const ccx = keepX, ccz = keepZ;
+    const igX = Math.round(rr(-cw * 0.35, cw * 0.35) / SEG) * SEG; // inner gate offset (bent entry)
     const cLines = compound(ccx - cw, ccx + cw, ccz - cd, ccz + cd, ccx + igX, 6, true, cTowers, WH + 4);
     tower(ccx, ccz, true, cTowers); // corner drums on the inner ward
     segs.push({ x0: ccx - 8, x1: ccx + 8, z0: ccz - 7, z1: ccz + 7, h: 24, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
     citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx + igX, z: ccz + cd }, wallLines: cLines };
-  } else if (!pal && (st.strongKeep || W * D > 3200 || R() < 0.45)) {
+  } else if (!pal && (st.strongKeep || blob.area > 14000 || R() < 0.45)) {
     // an offset inner bailey + keep
-    const cw = 19, cd = 15, ccx = Math.round(rr(-W * 0.18, W * 0.18)), ccz = -Math.round(D * 0.34);
+    const cw = 19, cd = 15, ccx = keepX, ccz = keepZ;
     const cLines = compound(ccx - cw, ccx + cw, ccz - cd, ccz + cd, ccx, 6, true, cTowers);
     segs.push({ x0: ccx - 7, x1: ccx + 7, z0: ccz - 6, z1: ccz + 6, h: st.strongKeep ? 24 : 21, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
     citadel = { x0: ccx - cw, x1: ccx + cw, z0: ccz - cd, z1: ccz + cd, cx: ccx, cz: ccz, gate: { x: ccx, z: ccz + cd }, wallLines: cLines };
   } else {
-    // a lone keep dominating an open bailey — a lord's manor in a palisade town
+    // a lone keep dominating an open ward — a lord's manor in a palisade town
     const kh = pal ? 13 : 20, kr = pal ? 7 : 9;
-    segs.push({ x0: -kr, x1: kr, z0: -kr, z1: kr, h: kh, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+    segs.push({ x0: keepX - kr, x1: keepX + kr, z0: keepZ - kr, z1: keepZ + kr, h: kh, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
   }
 
-  // ----- town buildings in the bailey (avoid walls, the gate avenue & citadel) -----
+  // ----- town buildings fill the wards (never straying outside the trace) -----
   const keepProb = 1 - st.town; // chance a slot is left empty
   const buildings: { x: number; z: number; w: number; d: number }[] = [];
-  for (let bx = -W + 14; bx < W - 14; bx += rr(13, 18)) {
-    for (let bz = -D + 14; bz < D - 14; bz += rr(12, 17)) {
+  for (let bx = -W + 10; bx < W - 10; bx += rr(13, 18)) {
+    for (let bz = -D + 10; bz < D - 10; bz += rr(12, 17)) {
       if (R() < keepProb) continue;
       const bw = rr(3.5, 6.5), bd = rr(3.5, 5.5), x = bx + rr(0, 4), z = bz + rr(0, 4);
-      if (Math.abs(x - gateX) < 9 && z > -D * 0.1) continue;                 // keep the gate avenue clear
+      if (Math.abs(x - gateX) < 9 && z > keepZ + 12) continue;                // keep the gate avenue clear
       if (citadel && x > citadel.x0 - 7 && x < citadel.x1 + 7 && z > citadel.z0 - 7 && z < citadel.z1 + 7) continue;
-      if (!citadel && x * x + z * z < 18 * 18) continue;                      // open plaza around the lone keep/manor so it can be stormed and held
-      if (x - bw < -W + T + 3 || x + bw > W - T - 3 || z - bd < -D + T + 3 || z + bd > D - T - 3) continue;
+      if (!citadel && (x - keepX) ** 2 + (z - keepZ) ** 2 < 18 * 18) continue; // open plaza around the lone keep
+      // every corner must sit INSIDE the enceinte, a wall-thickness clear of the trace
+      let ok = true;
+      for (const [px, pz] of [[x - bw - T - 2, z - bd - T - 2], [x + bw + T + 2, z - bd - T - 2], [x - bw - T - 2, z + bd + T + 2], [x + bw + T + 2, z + bd + T + 2]] as const)
+        if (!cellAtW(px, pz)) { ok = false; break; }
+      if (!ok) continue;
       wall(x - bw, x + bw, z - bd, z + bd, 'building', rr(5, 9)); buildings.push({ x, z, w: bw, d: bd });
     }
   }
@@ -292,12 +563,12 @@ export function generateCastle(seed: number, style?: CastleStyle) {
     }
   };
   if (!pal) { // a town has no wall engines either
-    const outerCap = Math.round(rr(3, 5) + W * D / 1700); // more on bigger castles
+    const outerCap = Math.round(rr(3, 5) + blob.area / 5200); // more on bigger castles
     placeBallistae(wallLines, 30, outerCap);
     if (citadel) placeBallistae(citadel.wallLines, 22, ballistae.length + 3);
   }
 
-  LAYOUT = { W, D, front, gate: { x: outerGateX, z: front }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae, palisade: pal };
+  LAYOUT = { W, D, front, gate: { x: outerGateX, z: front }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae, palisade: pal, blob };
   rebuildBlocked();
 }
 
@@ -322,10 +593,16 @@ export interface DefenderPlan {
   total: number;
 }
 export function defenderPlan(L: CastleLayout, difficulty: number): DefenderPlan {
-  const pal = L.palisade, W = L.W, D = L.D;
-  const wallArchers = wallArcherPoints(L.wallLines, pal ? 16 : 2.6, 6, pal ? 5 : WH);
+  const pal = L.palisade;
+  // ward area & curtain perimeter from the REAL trace — a sprawling irregular
+  // enceinte is longer-walled than its bounding box suggests, so archer spacing
+  // widens with perimeter to keep garrison totals in the same family as before
+  const qArea = (L.blob ? L.blob.area : L.W * L.D * 4) / 4;
+  let perim = 0; for (const ln of L.wallLines) perim += ln.horiz ? ln.x1 - ln.x0 : ln.z1 - ln.z0;
+  const spacing = pal ? 16 : Math.max(2.6, Math.min(3.4, perim / 185));
+  const wallArchers = wallArcherPoints(L.wallLines, spacing, 6, pal ? 5 : WH);
   const towerArchers = L.towers.length * 4;
-  const garrison = Math.round((pal ? Math.max(140, Math.min(300, Math.round(W * D / 16))) : Math.max(280, Math.min(900, Math.round(W * D / 11)))) * difficulty);
+  const garrison = Math.round((pal ? Math.max(140, Math.min(300, Math.round(qArea / 16))) : Math.max(300, Math.min(1060, Math.round(qArea / 10)))) * difficulty);
   const reserves = Math.round(garrison * (pal ? 0.35 : 0.6));
   const citGuard = L.citadel ? Math.round(220 * difficulty) : 0;
   const citArchers = L.citadel ? wallArcherPoints(L.citadel.wallLines, 2.4, 4, WH) : [];
@@ -679,8 +956,11 @@ export class Sim {
   // How firm the ground is underfoot (1 = firm): the churned ring at the walls is
   // heavy going, and rain turns the whole field soft. Horses feel it most.
   footing(x: number, z: number): number {
-    const dw = Math.max(Math.abs(x) - LAYOUT.W, Math.abs(z) - LAYOUT.D);
-    let f = dw > 0 && dw < MUD_RING ? MUD_SPEED : 1;
+    // churned ground = just OUTSIDE the enceinte but within a probe of it (the
+    // blob test follows every notch and bastion, unlike the old bounding box)
+    let f = 1;
+    if (!insideCastle(x, z)
+      && (insideCastle(x + MUD_RING, z) || insideCastle(x - MUD_RING, z) || insideCastle(x, z + MUD_RING) || insideCastle(x, z - MUD_RING))) f = MUD_SPEED;
     if (this.weather === 'rain') f *= 0.88;
     return f;
   }
@@ -797,6 +1077,7 @@ export class Sim {
       let x = 0, z = 0;
       for (let t = 0; t < 50; t++) {
         x = R(-(W - T - 2), W - T - 2); z = R(-(D - T - 2), D - T - 2);
+        if (!insideCastle(x, z)) continue; // the bbox lies in the notches of an irregular trace
         if (blockedAt(x, z)) continue;
         if (cit && x > cit.x0 - 2 && x < cit.x1 + 2 && z > cit.z0 - 2 && z < cit.z1 + 2) continue;
         return [x, z, 0];
@@ -1198,7 +1479,7 @@ export class Sim {
   }
   // Did a tap land INSIDE the castle footprint (the bailey/courtyard)? Tapping in
   // there means "get inside" — issue a storm rather than forming up at the wall.
-  insideWalls(x: number, z: number): boolean { return Math.abs(x) < LAYOUT.W - 2 && Math.abs(z) < LAYOUT.D - 2; }
+  insideWalls(x: number, z: number): boolean { return insideCastle(x, z); }
   // Toggle an arm's assault. Pulling out halts it where it stands.
   toggleAssaultDiv(div: number): boolean {
     const cs = this.divCompanies(div); if (!cs.length) return false;
@@ -1370,7 +1651,7 @@ export class Sim {
           if (nearKeep) defKeep++;
           if (cs === 4 && seg >= 0) this.wallDef[seg]++;          // defender holding the battlements
         } else if (this.typ[i] !== UType.Siege) {
-          if (cs === 0 && this.py[i] < 2 && Math.abs(this.px[i]) < LAYOUT.W - 1 && Math.abs(this.pz[i]) < LAYOUT.D - 1) { attInside++; aix += this.px[i]; aiz += this.pz[i]; }
+          if (cs === 0 && this.py[i] < 2 && insideCastle(this.px[i], this.pz[i])) { attInside++; aix += this.px[i]; aiz += this.pz[i]; }
           if (nearKeep) attKeep++;
           if ((cs === 1 || cs === 2) && seg >= 0) this.wallAtt[seg]++; // attacker scaling / on the battlements
         }
