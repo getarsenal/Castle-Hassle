@@ -5,11 +5,11 @@ name: Deploy web build to GitHub Pages
 # TestFlight for the native build.
 #
 # One-time setup: repo Settings → Pages → Build and deployment → Source:
-# "GitHub Actions". After that, every push to main publishes.
+# "GitHub Actions". After that, every push to these branches publishes.
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   workflow_dispatch:
 
 permissions:
