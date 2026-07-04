@@ -1010,10 +1010,10 @@ function devDiagText(): string {
   return rows.map(([k, v]) => `${k}: ${v}`).join('\n');
 }
 // ---- the Castle Workshop: full manual control over castle plans ----
-(window as any).__openWorkshop = () => openEditor((doc) => {
+(window as any).__openWorkshop = () => openEditor((doc, cfg) => {
   pendingDoc = doc;
-  comp.heavy = 600; comp.light = 480; comp.archer = 460; comp.cavalry = 220; comp.siege = 8;
-  currentSeed = 1234; currentDifficulty = 1; currentStyle = undefined as any;
+  comp.heavy = cfg.heavy; comp.light = cfg.light; comp.archer = cfg.archer; comp.cavalry = cfg.cavalry; comp.siege = cfg.siege;
+  currentSeed = 1234; currentDifficulty = cfg.garrison; currentStyle = undefined as any; // garrison slider rides the difficulty scalar
   currentBuff = NO_BUFF; currentDiscount = 1; currentExtraTrebs = 0; currentVet = [1, 1, 1, 1, 1];
   currentTowers = 0; currentRam = false; currentNoArtillery = false;
   activeCastle = null; activeRaid = null;

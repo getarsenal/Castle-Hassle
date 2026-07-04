@@ -7,6 +7,13 @@
 // the coming angled-wall renderer, so nothing authored here ever needs redoing.
 import { CastleDoc } from './sim';
 
+// the Custom Castle Siege setup: your host, their strength — saved between tests
+export interface TestCfg { heavy: number; light: number; archer: number; cavalry: number; siege: number; garrison: number }
+const CFG_KEY = 'castlehassle.workshop.testcfg.v1';
+const defaultCfg = (): TestCfg => ({ heavy: 600, light: 480, archer: 460, cavalry: 220, siege: 8, garrison: 1 });
+function loadCfg(): TestCfg { try { return { ...defaultCfg(), ...JSON.parse(localStorage.getItem(CFG_KEY) || '{}') }; } catch { return defaultCfg(); } }
+function saveCfg(c: TestCfg) { try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch { /* private mode */ } }
+
 const LS_KEY = 'castlehassle.layouts.v1';
 type Tool = 'select' | 'wall' | 'gate' | 'tower' | 'keep' | 'house' | 'tree' | 'works' | 'erase';
 
@@ -18,7 +25,7 @@ function saveDocs(docs: CastleDoc[]) {
 }
 const blank = (): CastleDoc => ({ v: 1, name: 'New Castle', walls: [], gates: [], towers: [], keep: null, houses: [], trees: [], works: null });
 
-export function openEditor(onTest: (doc: CastleDoc) => void) {
+export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
   if (document.getElementById('cwShell')) return;
   const css = document.createElement('style'); css.id = 'cwCss';
   css.textContent = `
@@ -43,6 +50,18 @@ export function openEditor(onTest: (doc: CastleDoc) => void) {
   #cwIO textarea{flex:1;min-height:180px;background:#151009;color:#cfe0c0;border:1px solid #5a4626;border-radius:8px;font:12px ui-monospace,monospace;padding:8px}
   #cwIO .row{display:flex;gap:8px}
   #cwIO button{flex:1;border:1px solid #7a5e2e;background:#4a361e;color:#e8dcc2;border-radius:9px;font:700 13px 'EB Garamond',Georgia,serif;padding:10px}
+  #cwFight{position:fixed;inset:0;z-index:130;background:#000c;display:none;align-items:flex-end;justify-content:center}
+  #cwFight.show{display:flex}
+  #cwFight .card{background:#221809;border:1px solid #7a5e2e;border-radius:16px 16px 0 0;padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 14px);width:min(100vw,480px);max-height:82vh;overflow-y:auto}
+  #cwFight h3{margin:0 0 10px;font:800 17px 'Cinzel',Georgia,serif;color:#ffe1a0;text-align:center;letter-spacing:.5px}
+  #cwFight .frow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  #cwFight .frow label{flex:1;color:#e8dcc2;font:600 14px 'EB Garamond',Georgia,serif}
+  #cwFight .frow output{width:52px;text-align:right;color:#ffd98a;font:700 15px 'EB Garamond',Georgia,serif}
+  #cwFight input[type=range]{flex:2.2;accent-color:#e7b64c}
+  #cwFight .fbtns{display:flex;gap:9px;margin-top:12px}
+  #cwFight .fbtns button{flex:1;border:1px solid #7a5e2e;border-radius:10px;padding:12px;font:700 15px 'EB Garamond',Georgia,serif;cursor:pointer;background:#3a2c18;color:#e8dcc2}
+  #cwFight .fbtns .go{background:linear-gradient(180deg,#b5402f,#8c2b20);color:#fff;border-color:#8c2b20}
+  #cwFight .sub{font-size:11.5px;color:#b6a079;font-style:italic;text-align:center;margin:2px 0 10px}
   #cwList{position:fixed;inset:0;z-index:130;background:#000c;display:none;align-items:center;justify-content:center;padding:18px}
   #cwList.show{display:flex}
   #cwList .card{background:#221809;border:1px solid #7a5e2e;border-radius:14px;padding:14px;width:min(94vw,440px);max-height:80vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
@@ -88,7 +107,18 @@ export function openEditor(onTest: (doc: CastleDoc) => void) {
       <textarea id="cwText" spellcheck="false"></textarea>
       <div class="row"><button id="cwCopy">Copy all layouts</button><button id="cwImport">Import (replace)</button><button id="cwIOX">Close</button></div>
     </div></div>
-    <div id="cwList"><div class="card" id="cwListBody"></div></div>`;
+    <div id="cwList"><div class="card" id="cwListBody"></div></div>
+    <div id="cwFight"><div class="card">
+      <h3>⚔ CUSTOM CASTLE SIEGE</h3>
+      <div class="sub">Your host against this castle — the garrison mans whatever you drew.</div>
+      <div class="frow"><label>Heavy Infantry</label><input type="range" id="cfH" min="0" max="1500" step="50"><output id="cfHv"></output></div>
+      <div class="frow"><label>Light Infantry</label><input type="range" id="cfL" min="0" max="1500" step="50"><output id="cfLv"></output></div>
+      <div class="frow"><label>Archers</label><input type="range" id="cfA" min="0" max="1200" step="50"><output id="cfAv"></output></div>
+      <div class="frow"><label>Cavalry</label><input type="range" id="cfC" min="0" max="800" step="25"><output id="cfCv"></output></div>
+      <div class="frow"><label>Trebuchets</label><input type="range" id="cfS" min="0" max="16" step="1"><output id="cfSv"></output></div>
+      <div class="frow"><label>Garrison strength</label><input type="range" id="cfG" min="50" max="200" step="10"><output id="cfGv"></output></div>
+      <div class="fbtns"><button id="cfCancel">Back</button><button class="go" id="cfGo">Sound the Attack</button></div>
+    </div></div>`;
   document.body.appendChild(shell);
   const $ = (id: string) => document.getElementById(id)!;
   const canvas = $('cwCanvas') as HTMLCanvasElement, ctx2 = canvas.getContext('2d')!;
@@ -382,11 +412,29 @@ export function openEditor(onTest: (doc: CastleDoc) => void) {
     $('cwIO').classList.remove('show');
   });
   $('cwIOX').addEventListener('click', () => $('cwIO').classList.remove('show'));
+  const cfg = loadCfg();
+  const cfgSliders: [string, keyof TestCfg, (v: number) => string][] = [
+    ['cfH', 'heavy', String], ['cfL', 'light', String], ['cfA', 'archer', String],
+    ['cfC', 'cavalry', String], ['cfS', 'siege', String], ['cfG', 'garrison', v => `${Math.round(v * 100)}%`],
+  ];
+  const syncCfg = () => {
+    for (const [id, key, fmt] of cfgSliders) {
+      const el = $(id) as HTMLInputElement;
+      el.value = String(key === 'garrison' ? cfg.garrison * 100 : cfg[key]);
+      ($(id + 'v') as HTMLOutputElement).value = fmt(cfg[key]);
+      el.oninput = () => { (cfg as any)[key] = key === 'garrison' ? el.valueAsNumber / 100 : el.valueAsNumber; ($(id + 'v') as HTMLOutputElement).value = fmt(cfg[key]); };
+    }
+  };
   $('cwTest').addEventListener('click', () => {
     if (!doc.walls.some(w => w.closed && w.pts.length >= 3)) { hint('Draw at least one CLOSED wall ring first (◌ Close ring)'); return; }
     if (!doc.gates.length) { hint('Place a Gate on the south wall so the attack has a way in'); return; }
+    syncCfg(); $('cwFight').classList.add('show');
+  });
+  $('cfCancel').addEventListener('click', () => $('cwFight').classList.remove('show'));
+  $('cfGo').addEventListener('click', () => {
+    saveCfg(cfg);
     doc.name = ($('cwName') as HTMLInputElement).value.trim() || 'Untitled';
-    destroy(); onTest(JSON.parse(JSON.stringify(doc)));
+    destroy(); onTest(JSON.parse(JSON.stringify(doc)), { ...cfg });
   });
   $('cwBack').addEventListener('click', destroy);
   function destroy() { shell.remove(); css.remove(); window.removeEventListener('resize', onRs); }
