@@ -135,6 +135,41 @@ export function openSettings(profile: Profile, onChange: () => void, onClose: ()
   root.querySelector('#stDone')!.addEventListener('click', () => { root.remove(); onClose(); });
 }
 
+// The map's ≡ opens a REAL menu — resume, settings, honours, workshop, a live
+// Director toggle (the fast exit from cinematic mode), campaigns, and the build.
+export function openGameMenu(opts: {
+  onSettings: () => void; onAchievements: () => void; onCampaigns: () => void; onWorkshop: () => void;
+}) {
+  injectStyles();
+  document.getElementById('gmMenu')?.remove();
+  const root = document.createElement('div'); root.className = 'ovPanel'; root.id = 'gmMenu';
+  const dirOn = isDirectorEnabled();
+  root.innerHTML = `<h2>Menu</h2><div class="ovBox">`
+    + `<button class="ovClose gmBtn" id="gmResume" style="margin:0">▶ &nbsp;Continue</button>`
+    + `<button class="ovClose gmBtn" id="gmSettings" style="margin:10px 0 0">⚙ &nbsp;Settings</button>`
+    + `<button class="ovClose gmBtn" id="gmHonours" style="margin:10px 0 0">🏅 &nbsp;Honours</button>`
+    + `<button class="ovClose gmBtn" id="gmWorkshop" style="margin:10px 0 0">🏰 &nbsp;Castle Workshop</button>`
+    + `<div class="setRow" style="margin:10px 0 0"><div class="toggle"><span class="lbl" style="margin:0">Director Mode</span><div class="sw${dirOn ? ' on' : ''}" id="gmDirector"><i></i></div></div></div>`
+    + `<button class="ovClose gmBtn" id="gmCampaigns" style="margin:10px 0 0">🗂 &nbsp;Campaigns</button>`
+    + `</div><button class="ovClose" id="gmClose">Close</button>`
+    + `<div style="text-align:center;font-size:10.5px;color:#7d6a4a;margin-top:10px">Build ${(window as any).__BUILD || 'dev'}</div>`;
+  document.body.appendChild(root);
+  const style = document.createElement('style');
+  style.textContent = '.gmBtn{width:100%;box-sizing:border-box;text-align:left;padding-left:18px}';
+  root.appendChild(style);
+  const close = () => root.remove();
+  root.querySelector('#gmResume')!.addEventListener('click', close);
+  root.querySelector('#gmClose')!.addEventListener('click', close);
+  root.querySelector('#gmSettings')!.addEventListener('click', () => { close(); opts.onSettings(); });
+  root.querySelector('#gmHonours')!.addEventListener('click', () => { close(); opts.onAchievements(); });
+  root.querySelector('#gmWorkshop')!.addEventListener('click', () => { close(); opts.onWorkshop(); });
+  root.querySelector('#gmCampaigns')!.addEventListener('click', () => { close(); opts.onCampaigns(); });
+  root.querySelector('#gmDirector')!.addEventListener('click', () => {
+    const on = !isDirectorEnabled(); setDirectorEnabled(on);
+    (root.querySelector('#gmDirector') as HTMLElement).classList.toggle('on', on);
+  });
+}
+
 export function openAchievements(profile: Profile, onClose: () => void) {
   injectStyles();
   const root = document.createElement('div'); root.className = 'ovPanel';

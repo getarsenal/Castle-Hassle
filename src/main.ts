@@ -3,7 +3,7 @@ import './fonts.css';
 import { Renderer } from './render';
 import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars } from './campaign';
 import { loadProfile, saveProfile, recordBattle, DIFFICULTY, ACHIEVEMENTS } from './profile';
-import { openMainMenu, openSettings, openAchievements } from './menu';
+import { openMainMenu, openSettings, openAchievements, openGameMenu } from './menu';
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
 import { surveyCastle, CastleDoc } from './sim';
@@ -763,7 +763,15 @@ function updateMapHeader() {
       `<div style="font:600 10px 'EB Garamond',serif;letter-spacing:.3px;opacity:.82;margin-top:3px;white-space:normal;color:#e7d3a6">${cc.twist}</div>` +
       `<div class="mapProg"><i style="width:${cc.total ? Math.round(cc.taken / cc.total * 100) : 0}%"></i></div>`;
 }
-document.getElementById('mapMenuBtn')?.addEventListener('click', () => { feedback.open(); if (map) map.destroy(); map = null; show('map', false); showMainMenu(); });
+document.getElementById('mapMenuBtn')?.addEventListener('click', () => {
+  feedback.open();
+  openGameMenu({
+    onSettings: () => openSettings(profile, applySettings, () => { /* stay on map */ }),
+    onAchievements: () => openAchievements(profile, () => { /* stay on map */ }),
+    onWorkshop: () => (window as any).__openWorkshop?.(),
+    onCampaigns: () => { if (map) map.destroy(); map = null; show('map', false); showMainMenu(); }, // the old behaviour, now one level deeper
+  });
+});
 document.getElementById('warCouncilBtn')?.addEventListener('click', () => { feedback.open(); openUpgrades(progress, refreshGoldLabel); });
 document.getElementById('raidsBtn')?.addEventListener('click', () => { feedback.open(); openRaids(progress, raids, enterRaid, refreshGoldLabel); });
 document.getElementById('musterMapBtn')?.addEventListener('click', () => { feedback.open(); openMuster(progress, computeBuffs(progress.upg).recruitDiscount, warBuffs().atk, refreshGoldLabel); });

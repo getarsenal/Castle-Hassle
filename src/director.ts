@@ -117,7 +117,9 @@ function injectStyles() {
       color:#f2e6cf;font:700 12px 'Cinzel',Georgia,serif;letter-spacing:.4px;cursor:pointer;text-align:center;
       user-select:none;-webkit-user-select:none;touch-action:none;}
     #dirPanel .dBtn:active,#dirPanel .dBtn.on{background:#ffd24a;color:#1a2433;border-color:#ffd24a;}
-    #dirHot{position:fixed;left:0;bottom:0;width:64px;height:64px;z-index:58;display:none;pointer-events:auto;cursor:pointer;}
+    #dirHot{position:fixed;left:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:44px;height:44px;z-index:58;display:none;
+      pointer-events:auto;cursor:pointer;border-radius:50%;border:1px solid rgba(255,225,160,.4);
+      background:rgba(20,14,8,.5);color:rgba(255,225,160,.75);font-size:19px;line-height:42px;text-align:center;}
     body.dirclean #dirHot{display:block;}
     body.dirhud ${hud}{display:none!important;}
     body.dirclean ${hud},body.dirclean #dirChip,body.dirclean #dirPanel{display:none!important;}
@@ -157,8 +159,9 @@ function build() {
     <div class="dBtns">
       <div class="dBtn" id="dHud">Hide HUD</div>
       <div class="dBtn" id="dClean">Clean screen</div>
-    </div>`;
-  const hot = document.createElement('div'); hot.id = 'dirHot'; hot.title = 'Show controls';
+    </div>
+    <div class="dBtns"><div class="dBtn" id="dExit" style="border-color:#8a4436;color:#f0b0a0">✕ Exit Director Mode</div></div>`;
+  const hot = document.createElement('div'); hot.id = 'dirHot'; hot.title = 'Show controls'; hot.textContent = '🎬';
 
   document.body.append(chip, panel, hot);
 
@@ -208,6 +211,7 @@ function build() {
     setTimeout(() => { toast!.style.opacity = '0'; }, 2600);
   });
   hot.addEventListener('click', () => { document.body.classList.remove('dirclean'); });
+  $('dExit').addEventListener('click', () => setDirectorEnabled(false)); // one tap out of cinema, from the panel itself
 
   (window as any).__director = { setDirectorEnabled, isDirectorEnabled };
 }
