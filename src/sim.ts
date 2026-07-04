@@ -629,7 +629,7 @@ export function generateCastleFromDoc(doc: CastleDoc) {
       wallLines.push({ x0: r.c - outerSign * T / 2, z0: r.a0, x1: r.c - outerSign * T / 2, z1: r.a1, horiz: false, outer: outerSign, gapC: 1e9, gapH: 0 });
     }
   };
-  const gates = doc.gates.map(TX as any) as unknown as [number, number][];
+  const gates: [number, number][] = doc.gates.map(g => [g.x + ox, g.z + oz]); // gates are {x,z} objects — feeding them through the tuple TX made NaN and blanked the camera
   for (const wl of doc.walls) {
     if (wl.pts.length < 2) continue;
     const pts = wl.pts.map(TX);
@@ -705,7 +705,8 @@ export function generateCastleFromDoc(doc: CastleDoc) {
     }
     if (ins) { cells2[gz * gw2 + gx] = 1; area2 += CSd * CSd; }
   }
-  const gate0 = gates[0] ?? [0, D];
+  let gate0 = gates[0] ?? [0, D];
+  if (!Number.isFinite(gate0[0]) || !Number.isFinite(gate0[1])) gate0 = [0, D]; // belt & braces: a bad marker must never poison the camera
   DOC_DECO = { trees: doc.trees.map(TX), works: doc.works ? doc.works.map(TX) : null };
   LAYOUT = {
     W, D, front: D, gate: { x: gate0[0], z: D },

@@ -99,6 +99,7 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
       <button data-t="tree">🌲<br>Tree</button>
       <button data-t="works">⛏<br>Earthwork</button>
       <button data-t="erase">✕<br>Erase</button>
+      <button id="cwClear">🧹<br>Clear</button>
       <button id="cwUndo">↶<br>Undo</button>
       <button id="cwGrid" class="on">#<br>Snap</button>
       <button id="cwIOBtn">⇅<br>Export</button>
@@ -157,6 +158,22 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
     return [(p[0] - cam.x) * cam.s + r.width / 2, (p[1] - cam.z) * cam.s + r.height / 2];
   };
   const snapP = (p: [number, number]): [number, number] => snap ? [Math.round(p[0] / 4) * 4, Math.round(p[1] / 4) * 4] : [Math.round(p[0]), Math.round(p[1])];
+
+  // nearest point ON a wall edge — gates and towers belong to the curtain
+  function nearestOnWall(w: [number, number]): { x: number; z: number; d: number } | null {
+    let best: { x: number; z: number; d: number } | null = null;
+    for (const wl of doc.walls) {
+      const n = wl.closed ? wl.pts.length : wl.pts.length - 1;
+      for (let e = 0; e < n; e++) {
+        const a = wl.pts[e], b = wl.pts[(e + 1) % wl.pts.length];
+        const dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((w[0] - a[0]) * dx + (w[1] - a[1]) * dz) / L));
+        const px = a[0] + dx * t, pz = a[1] + dz * t, d = Math.hypot(w[0] - px, w[1] - pz);
+        if (!best || d < best.d) best = { x: px, z: pz, d };
+      }
+    }
+    return best;
+  }
 
   // nearest element to a world point (for select/erase); returns dist too
   function pick(w: [number, number]): { kind: string; i: number; vi?: number; d: number } | null {
@@ -263,11 +280,23 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
     canvas.setPointerCapture(e.pointerId);
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     moved = 0; dragT = e.pointerId;
-    if (ptrs.size === 1 && tool === 'select') {
+    // touch-and-drag works in EVERY tool: touching a placed thing grabs it
+    // (while actively laying a wall, taps stay reserved for laying points)
+    if (ptrs.size === 1 && !drawingWall) {
       const p = pick(toW(e.clientX, e.clientY));
-      sel = p ? { kind: p.kind === 'wallpt' ? 'wallpt' : p.kind, i: p.i, vi: p.vi } : null;
-      grabbing = !!p; if (grabbing) push();
-      draw();
+      // each placement tool grabs only its OWN kind (in gate mode a tap on the
+      // wall must PLACE a gate there, not pick the wall up); Move grabs anything
+      const GRABS: Record<string, string[]> = {
+        select: ['wall', 'wallpt', 'gate', 'tower', 'keep', 'house', 'tree', 'workspt'],
+        wall: ['wall', 'wallpt'], gate: ['gate'], tower: ['tower'], keep: ['keep'],
+        house: ['house'], tree: ['tree'], works: ['workspt'], erase: [],
+      };
+      const pk = p ? (p.kind === 'wallpt' ? 'wallpt' : p.kind) : '';
+      if (p && GRABS[tool]?.includes(pk)) {
+        sel = { kind: pk, i: p.i, vi: p.vi };
+        grabbing = true; push();
+        draw();
+      } else if (tool === 'select') { sel = null; draw(); }
     }
   });
   canvas.addEventListener('pointermove', (e) => {
@@ -282,7 +311,7 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
       cam.x -= dx / cam.s / 2; cam.z -= dy / cam.s / 2;
       draw(); return;
     }
-    if (tool === 'select' && grabbing && sel) { // drag the selection
+    if (grabbing && sel) { // drag the selection (any tool)
       const wdx = dx / cam.s, wdz = dy / cam.s;
       const mv = (o: { x?: number; z?: number } | [number, number]) => {
         if (Array.isArray(o)) { o[0] += wdx; o[1] += wdz; } else { o.x! += wdx; o.z! += wdz; }
@@ -306,6 +335,16 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
     if (grabbing) { // finish a move: snap it
       grabbing = false;
       if (sel?.kind === 'wallpt' && sel.vi !== undefined) doc.walls[sel.i].pts[sel.vi] = snapP(doc.walls[sel.i].pts[sel.vi]);
+      if (sel?.kind === 'gate') { // a gate lives ON the curtain, wherever it lands
+        const g = doc.gates[sel.i], on = nearestOnWall([g.x, g.z]);
+        if (on) { g.x = on.x; g.z = on.z; } else { hint('Gates need a wall — draw the curtain first'); }
+      }
+      if (sel?.kind === 'tower') { // towers hug the curtain too
+        const t = doc.towers[sel.i], on = nearestOnWall([t.x, t.z]);
+        if (on && on.d < 26) { t.x = on.x; t.z = on.z; }
+        else if (on) { t.x = on.x; t.z = on.z; hint('Towers stand on the walls — snapped to the nearest curtain'); }
+      }
+      if (tap && moved < 9 && tool === 'select') { /* keep selection for the context buttons */ }
       draw(); return;
     }
     if (!tap) return;
@@ -317,8 +356,17 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
         if (tool === 'wall' && drawingWall.pts.length >= 3 && Math.hypot(w[0] - first[0], w[1] - first[1]) < 10 / cam.s * 3) { finishWall(true); }
         else drawingWall.pts.push(w);
       }
-    } else if (tool === 'tower') { push(); doc.towers.push({ x: w[0], z: w[1], big: false }); }
-    else if (tool === 'gate') { push(); doc.gates.push({ x: w[0], z: w[1] }); }
+    } else if (tool === 'tower') {
+      const on = nearestOnWall(w);
+      if (!on) { hint('Draw a wall first — towers stand on the curtain'); }
+      else if (on.d > 22) { hint('Towers stand ON the walls — tap along the curtain'); }
+      else { push(); doc.towers.push({ x: on.x, z: on.z, big: false }); }
+    } else if (tool === 'gate') {
+      const on = nearestOnWall(w);
+      if (!on) { hint('Draw a wall first — the gate pierces the curtain'); }
+      else if (on.d > 22) { hint('Gates pierce the walls — tap along the curtain'); }
+      else { push(); doc.gates.push({ x: on.x, z: on.z }); }
+    }
     else if (tool === 'keep') { push(); doc.keep = { x: w[0], z: w[1], w: 16, d: 14 }; }
     else if (tool === 'house') { push(); doc.houses.push({ x: w[0], z: w[1], w: 8 + Math.random() * 4, d: 7 + Math.random() * 3 }); }
     else if (tool === 'tree') { push(); doc.trees.push(w); }
@@ -368,6 +416,12 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
     else if (sel.kind === 'keep') doc.keep = null;
     else if (sel.kind === 'workspt') doc.works = null;
     sel = null; draw();
+  });
+  let clearArm = 0;
+  $('cwClear').addEventListener('click', () => {
+    const now = performance.now();
+    if (now - clearArm < 2600) { push(); doc = { ...blank(), name: doc.name }; sel = null; drawingWall = null; clearArm = 0; hint('Cleared — Undo brings it back'); draw(); }
+    else { clearArm = now; hint('Tap Clear again to raze EVERYTHING (Undo can restore it)'); }
   });
   $('cwUndo').addEventListener('click', () => { const u = undo.pop(); if (u) { doc = JSON.parse(u); sel = null; drawingWall = null; draw(); } });
   $('cwGrid').addEventListener('click', () => { snap = !snap; $('cwGrid').classList.toggle('on', snap); });
