@@ -117,6 +117,7 @@ export function openSettings(profile: Profile, onChange: () => void, onClose: ()
     + `<div class="setRow"><div class="toggle"><span class="lbl" style="margin:0">Sound</span><div class="sw${S.muted ? '' : ' on'}" id="stMute"><i></i></div></div></div>`
     + `<div class="setRow"><div class="lbl">Difficulty</div><div class="diffPick">${diffChips}</div><div class="dblurb" id="stDiffBlurb">${DIFFICULTY[S.difficulty].blurb}</div></div>`
     + `<div class="setRow"><div class="toggle"><span class="lbl" style="margin:0">Director Mode</span><div class="sw${isDirectorEnabled() ? ' on' : ''}" id="stDirector"><i></i></div></div><div class="dblurb">A 🎬 chip for filming promos: orbit, auto-cine, hide the HUD.</div></div>`
+    + `<div class="setRow"><button class="ovClose" id="stWorkshop" style="margin:0">🏰 Castle Workshop</button><div class="dblurb">Design your own castles — walls at any angle, towers, gates, the lot. With 5+ saved layouts, campaign sieges use YOUR designs.</div></div>`
     + `</div><button class="ovClose" id="stDone">Done</button>`;
   document.body.appendChild(root);
   const vol = root.querySelector('#stVol') as HTMLInputElement;
@@ -129,6 +130,7 @@ export function openSettings(profile: Profile, onChange: () => void, onClose: ()
     (root.querySelector('#stDiffBlurb') as HTMLElement).textContent = DIFFICULTY[S.difficulty].blurb;
     onChange();
   }));
+  root.querySelector('#stWorkshop')!.addEventListener('click', () => { root.remove(); onClose(); (window as any).__openWorkshop?.(); });
   root.querySelector('#stDone')!.addEventListener('click', () => { root.remove(); onClose(); });
 }
 

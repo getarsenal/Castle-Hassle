@@ -4,7 +4,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { Sim, CASTLE, Faction, WORLD, LAYOUT, T } from './sim';
+import { Sim, CASTLE, Faction, WORLD, LAYOUT, T, DOC_DECO } from './sim';
 import { Biome } from './campaign';
 import { makeSoldierTexture, makeArrowTexture, spriteAspect, SpriteKind } from './sprites';
 import { stoneTexture, stoneNormalTexture, roofTexture, grassTexture, plasterTexture, dirtTexture } from './textures';
@@ -512,9 +512,23 @@ export class Renderer {
     // castle no longer sits on a big tan box on the grass (it hugs the base instead).
     const apW = (LAYOUT.W + 2) * 2, apD = (LAYOUT.D + 2) * 2;
     const apronTex = earth.clone(); apronTex.repeat.set(apW / 12, apD / 12); apronTex.needsUpdate = true;
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry(apW, apD).rotateX(-Math.PI / 2),
-      new THREE.MeshLambertMaterial({ map: apronTex, color: '#b39a72' }));
-    apron.position.set(0, 0.005, 0); apron.receiveShadow = true; this.scene.add(apron);
+    const apronMat = new THREE.MeshLambertMaterial({ map: apronTex, color: '#b39a72' });
+    const blb = LAYOUT.blob;
+    if (blb) {
+      // the courtyard follows the enceinte's REAL footprint (one quad per blob
+      // cell, slightly overgrown) — a bounding-box slab pokes out past angled
+      // and notched walls and reads as a tan carpet under the castle
+      const quads: THREE.BufferGeometry[] = [];
+      for (let gz = 0; gz < blb.gh; gz++) for (let gx = 0; gx < blb.gw; gx++) {
+        if (!blb.cells[gz * blb.gw + gx]) continue;
+        quads.push(new THREE.PlaneGeometry(blb.cs + 2.4, blb.cs + 2.4).rotateX(-Math.PI / 2)
+          .translate(blb.x0 + (gx + 0.5) * blb.cs, 0.005, blb.z0 + (gz + 0.5) * blb.cs));
+      }
+      if (quads.length) { const apron = new THREE.Mesh(mergeGeometries(quads, false), apronMat); apron.receiveShadow = true; this.scene.add(apron); }
+    } else {
+      const apron = new THREE.Mesh(new THREE.PlaneGeometry(apW, apD).rotateX(-Math.PI / 2), apronMat);
+      apron.position.set(0, 0.005, 0); apron.receiveShadow = true; this.scene.add(apron);
+    }
     // a worn approach road from the attacker camp up to the gate — textured ruts, and a
     // soft feathered head/edge (vertex alpha-ish via a darker centre) instead of a hard slab.
     const roadTex = earth.clone(); roadTex.repeat.set(2.0, 18); roadTex.needsUpdate = true;
@@ -825,8 +839,10 @@ export class Renderer {
     const W = LAYOUT.W, D = LAYOUT.D, gx = LAYOUT.gate.x;
     // rejection-sample positions: outside the castle, clear of the south army lane
     const pts: [number, number, number][] = [];
+    // a hand-authored castle plants ITS OWN trees, exactly where the designer put them
+    if (DOC_DECO?.trees?.length) for (const [tx, tz] of DOC_DECO.trees) pts.push([tx, tz, 0.8 + Math.random() * 0.7]);
     let guard = 0;
-    const treeN = this.biomeCfg.sand ? 8 : 40; // deserts are near-barren
+    const treeN = pts.length ? 0 : this.biomeCfg.sand ? 8 : 40; // deserts are near-barren
     while (pts.length < treeN && guard++ < 2000) {
       const x = WORLD.minX + 8 + Math.random() * (WORLD.maxX - WORLD.minX - 16);
       const z = WORLD.minZ + 8 + Math.random() * (WORLD.maxZ - WORLD.minZ - 16);
@@ -875,6 +891,29 @@ export class Renderer {
   // irregular, hand-dug work that follows the walls at a constant gap. Each node
   // carries its outward normal (nx,nz) and bearing-from-centre (ang).
   private siegeRingNodes(ccx: number, ccz: number, hx: number, hz: number, g: number): { x: number; z: number; nx: number; nz: number; ang: number }[] {
+    if (DOC_DECO?.works && DOC_DECO.works.length >= 3) {
+      // the designer drew the siege line — sample their polygon at the same pitch
+      const pts = DOC_DECO.works;
+      let cx2 = 0, cz2 = 0; for (const p of pts) { cx2 += p[0]; cz2 += p[1]; } cx2 /= pts.length; cz2 /= pts.length;
+      const out: { x: number; z: number; nx: number; nz: number; ang: number }[] = [];
+      let per = 0; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; per += Math.hypot(b[0] - a[0], b[1] - a[1]); }
+      const N = Math.max(24, Math.round(per / 9));
+      let acc = 0, e = 0, into = 0;
+      for (let k = 0; k < N; k++) {
+        const target = k * per / N;
+        while (true) {
+          const a = pts[e], b = pts[(e + 1) % pts.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          if (acc + len >= target || e >= pts.length - 1) { into = (target - acc) / Math.max(1e-6, len); break; }
+          acc += len; e = (e + 1) % pts.length;
+        }
+        const a = pts[e], b = pts[(e + 1) % pts.length];
+        const x = a[0] + (b[0] - a[0]) * into, z = a[1] + (b[1] - a[1]) * into;
+        let nx = -(b[1] - a[1]), nz = b[0] - a[0]; const L = Math.hypot(nx, nz) || 1; nx /= L; nz /= L;
+        if ((x - cx2) * nx + (z - cz2) * nz < 0) { nx = -nx; nz = -nz; }  // outward = away from the ring's heart
+        out.push({ x, z, nx, nz, ang: Math.atan2(x - cx2, z - cz2) });
+      }
+      return out;
+    }
     type Piece = { straight: boolean; x0: number; z0: number; x1: number; z1: number; nx: number; nz: number; cx: number; cz: number; a0: number; a1: number; len: number };
     const S = (x0: number, z0: number, x1: number, z1: number, nx: number, nz: number): Piece =>
       ({ straight: true, x0, z0, x1, z1, nx, nz, cx: 0, cz: 0, a0: 0, a1: 0, len: Math.hypot(x1 - x0, z1 - z0) });

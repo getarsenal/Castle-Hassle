@@ -170,9 +170,12 @@ export let LAYOUT: CastleLayout = null as any;
 
 function genRng(seed: number) { let s = (seed >>> 0) || 1; return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
+// hand-authored décor (trees/earthworks) — set by generateCastleFromDoc, cleared by generateCastle
+export let DOC_DECO: { trees: [number, number][]; works: [number, number][] | null } | null = null;
 let lastGen: { seed: number; style?: CastleStyle } | null = null;
 export function generateCastle(seed: number, style?: CastleStyle) {
   lastGen = { seed, style };
+  DOC_DECO = null;
   CASTLE = []; TOWERS.length = 0;
   const segs = CASTLE;
   const R = genRng(Math.imul(seed >>> 0, 2654435761) >>> 0);
@@ -572,6 +575,165 @@ export function generateCastle(seed: number, style?: CastleStyle) {
   rebuildBlocked();
 }
 
+// ===== HAND-AUTHORED CASTLES (the Castle Workshop) =====
+// A CastleDoc is what the in-game editor saves: polyline curtains at ANY angle,
+// plus towers/gate/keep/houses/trees/earthworks. generateCastleFromDoc converts
+// one into the live seg/LAYOUT world: axis-near edges snap straight, diagonal
+// edges become stepped rectilinear runs (real curtains stepped on slopes the
+// same way) — so every siege mechanic runs unchanged. The doc keeps the true
+// angles untouched for the coming angled-wall renderer.
+export interface CastleDoc {
+  v: 1; name: string;
+  walls: { pts: [number, number][]; closed: boolean }[];
+  gates: { x: number; z: number }[];               // attach to the nearest wall run
+  towers: { x: number; z: number; big: boolean }[];
+  keep: { x: number; z: number; w: number; d: number } | null;
+  houses: { x: number; z: number; w: number; d: number }[];
+  trees: [number, number][];
+  works: [number, number][] | null;                 // custom earthworks ring (render)
+}
+export function generateCastleFromDoc(doc: CastleDoc) {
+  lastGen = null; // doc battles aren't part of the seed-restore dance
+  CASTLE = []; TOWERS.length = 0;
+  const segs = CASTLE;
+  const wall = (x0: number, x1: number, z0: number, z1: number, kind: SegKind = 'wall', h = WH, out = 1) => {
+    if (x1 - x0 < 0.3 || z1 - z0 < 0.3) return;
+    const hp = kind === 'gate' ? 1100 : kind === 'building' ? 1e9 : 1700;
+    segs.push({ x0, x1, z0, z1, h: kind === 'gate' ? Math.max(5, h - 1) : h, kind, hp, maxhp: hp, dead: false, out });
+  };
+  // 1) recentre the doc so its wall bbox sits on the origin, gate side south (+z)
+  let mnx = 1e9, mxx = -1e9, mnz = 1e9, mxz = -1e9;
+  for (const w of doc.walls) for (const [x, z] of w.pts) { mnx = Math.min(mnx, x); mxx = Math.max(mxx, x); mnz = Math.min(mnz, z); mxz = Math.max(mxz, z); }
+  if (mxx <= mnx) { mnx = -40; mxx = 40; mnz = -30; mxz = 30; }
+  const ox = -(mnx + mxx) / 2, oz = -(mnz + mxz) / 2;
+  const W = Math.max(30, (mxx - mnx) / 2 + 2), D = Math.max(24, (mxz - mnz) / 2 + 2);
+  const TX = (p: [number, number]): [number, number] => [p[0] + ox, p[1] + oz];
+  // 2) walls: each polyline edge → axis runs (diagonals stair-step at ~SEG pitch)
+  const wallLines: WallLine[] = [];
+  interface RunOut { horiz: boolean; a0: number; a1: number; c: number }
+  const centroidOf = (pts: [number, number][]) => {
+    let cx = 0, cz = 0; for (const p of pts) { cx += p[0]; cz += p[1]; } return [cx / pts.length, cz / pts.length] as const;
+  };
+  const emitRun = (r: RunOut, outerSign: number, isGate: (a: number, c: number) => boolean, gateAt: number) => {
+    if (r.a1 - r.a0 < 1) return;
+    if (r.horiz) {
+      const zlo = outerSign > 0 ? r.c - T : r.c, zhi = outerSign > 0 ? r.c : r.c + T;
+      for (let x = r.a0; x < r.a1 - 0.1; x += SEG) {
+        const e = Math.min(x + SEG, r.a1);
+        wall(x, e, zlo, zhi, isGate((x + e) / 2, r.c) ? 'gate' : 'wall', WH, outerSign);
+      }
+      wallLines.push({ x0: r.a0, z0: r.c - outerSign * T / 2, x1: r.a1, z1: r.c - outerSign * T / 2, horiz: true, outer: outerSign, gapC: gateAt, gapH: gateAt < 1e8 ? 9 : 0 });
+    } else {
+      const xlo = outerSign > 0 ? r.c - T : r.c, xhi = outerSign > 0 ? r.c : r.c + T;
+      for (let z = r.a0; z < r.a1 - 0.1; z += SEG) wall(xlo, xhi, z, Math.min(z + SEG, r.a1), 'wall', WH, outerSign);
+      wallLines.push({ x0: r.c - outerSign * T / 2, z0: r.a0, x1: r.c - outerSign * T / 2, z1: r.a1, horiz: false, outer: outerSign, gapC: 1e9, gapH: 0 });
+    }
+  };
+  const gates = doc.gates.map(TX as any) as unknown as [number, number][];
+  for (const wl of doc.walls) {
+    if (wl.pts.length < 2) continue;
+    const pts = wl.pts.map(TX);
+    const [ccx, ccz] = centroidOf(pts);
+    const edges = wl.closed ? pts.length : pts.length - 1;
+    for (let e = 0; e < edges; e++) {
+      const a = pts[e], b = pts[(e + 1) % pts.length];
+      const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
+      if (len < 2) continue;
+      // outward = away from the polyline's centroid, per edge
+      const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+      // does a gate marker sit on this edge?
+      let gAt = 1e9;
+      for (const g of gates) {
+        const t = Math.max(0, Math.min(1, ((g[0] - a[0]) * dx + (g[1] - a[1]) * dz) / (len * len)));
+        const px = a[0] + dx * t, pz = a[1] + dz * t;
+        if (Math.hypot(g[0] - px, g[1] - pz) < 7) { gAt = t; break; }
+      }
+      const steps = Math.max(1, Math.round(len / SEG));
+      let px = a[0], pz = a[1];
+      for (let k = 0; k < steps; k++) {
+        const t1 = (k + 1) / steps, nx = a[0] + dx * t1, nz = a[1] + dz * t1;
+        // each step becomes an L: horizontal then vertical piece (stair-step)
+        const segments: RunOut[] = [];
+        if (Math.abs(nx - px) >= 1) segments.push({ horiz: true, a0: Math.min(px, nx), a1: Math.max(px, nx), c: pz });
+        if (Math.abs(nz - pz) >= 1) segments.push({ horiz: false, a0: Math.min(pz, nz), a1: Math.max(pz, nz), c: nx });
+        for (const r of segments) {
+          const outer = r.horiz ? (r.c >= ccz ? 1 : -1) : (r.c >= ccx ? 1 : -1);
+          const gateHere = gAt < 1e8 && k / steps <= gAt && gAt <= t1 && r.horiz;
+          const gateX = a[0] + dx * gAt;
+          emitRun(r, outer, (cm) => gateHere && Math.abs(cm - gateX) < 9, gateHere ? gateX : 1e9);
+        }
+        px = nx; pz = nz;
+      }
+      void mx; void mz;
+    }
+  }
+  // 3) towers / keep / houses
+  for (const t of doc.towers) {
+    const [x, z] = TX([t.x, t.z]); const r = t.big ? 5 : 4.2, hp = t.big ? 3200 : 2600;
+    segs.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r, h: t.big ? WH + 6 : WH + 4, kind: 'tower', hp, maxhp: hp, dead: false });
+    TOWERS.push({ x, z, big: t.big });
+  }
+  let keepC: [number, number] = [0, -D * 0.3];
+  if (doc.keep) {
+    const [x, z] = TX([doc.keep.x, doc.keep.z]); keepC = [x, z];
+    segs.push({ x0: x - doc.keep.w / 2, x1: x + doc.keep.w / 2, z0: z - doc.keep.d / 2, z1: z + doc.keep.d / 2, h: 22, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+  } else {
+    segs.push({ x0: keepC[0] - 8, x1: keepC[0] + 8, z0: keepC[1] - 7, z1: keepC[1] + 7, h: 20, kind: 'keep', hp: Infinity, maxhp: Infinity, dead: false });
+  }
+  const buildings: { x: number; z: number; w: number; d: number }[] = [];
+  for (const h of doc.houses) {
+    const [x, z] = TX([h.x, h.z]);
+    wall(x - h.w / 2, x + h.w / 2, z - h.d / 2, z + h.d / 2, 'building', 6.5);
+    buildings.push({ x, z, w: h.w / 2, d: h.d / 2 });
+  }
+  // 4) blob: rasterise the closed curtains for exact inside tests
+  const CSd = 4, gw2 = Math.ceil(W * 2 / CSd) + 2, gh2 = Math.ceil(D * 2 / CSd) + 2;
+  const bx0 = -W - CSd, bz0 = -D - CSd;
+  const cells2 = new Uint8Array(gw2 * gh2);
+  const polys = doc.walls.filter(w => w.closed && w.pts.length >= 3).map(w => w.pts.map(TX));
+  let area2 = 0;
+  for (let gz = 0; gz < gh2; gz++) for (let gx = 0; gx < gw2; gx++) {
+    const x = bx0 + (gx + 0.5) * CSd, z = bz0 + (gz + 0.5) * CSd;
+    let ins = false;
+    for (const poly of polys) { // even-odd ray cast
+      let hit = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, zi] = poly[i], [xj, zj] = poly[j];
+        if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) hit = !hit;
+      }
+      if (hit) { ins = true; break; }
+    }
+    if (ins) { cells2[gz * gw2 + gx] = 1; area2 += CSd * CSd; }
+  }
+  const gate0 = gates[0] ?? [0, D];
+  DOC_DECO = { trees: doc.trees.map(TX), works: doc.works ? doc.works.map(TX) : null };
+  LAYOUT = {
+    W, D, front: D, gate: { x: gate0[0], z: D },
+    wallLines, towers: [...TOWERS], buildings, citadel: null,
+    round: false, concentric: false, ballistae: [], palisade: false,
+    blob: { x0: bx0, z0: bz0, cs: CSd, gw: gw2, gh: gh2, cells: cells2, area: Math.max(area2, 3000) },
+  };
+  // wall ballistae along the authored curtains, same policy as generated castles
+  const segAt2 = (x: number, z: number): number => {
+    for (let i = 0; i < segs.length; i++) { const b = segs[i]; if ((b.kind === 'wall' || b.kind === 'gate') && x >= b.x0 - 0.6 && x <= b.x1 + 0.6 && z >= b.z0 - 0.6 && z <= b.z1 + 0.6) return i; }
+    return -1;
+  };
+  const balls: Ballista[] = []; const cap = Math.round(3 + area2 / 5200);
+  for (const ln of wallLines) {
+    if (balls.length >= cap) break;
+    const a0 = ln.horiz ? ln.x0 : ln.z0, a1 = ln.horiz ? ln.x1 : ln.z1;
+    for (let a = a0 + 18; a < a1 - 12 && balls.length < cap; a += 30) {
+      if (Math.abs(a - ln.gapC) < ln.gapH + 4) continue;
+      const x = ln.horiz ? a : ln.x0, z = ln.horiz ? ln.z0 : a;
+      const sg = segAt2(x, z); if (sg < 0) continue;
+      const b = segs[sg]; if (ln.horiz) { b.x0 -= 1.6; b.x1 += 1.6; } else { b.z0 -= 1.6; b.z1 += 1.6; }
+      balls.push({ x, z: z - ln.outer * 0.6, y: WH, seg: sg, horiz: ln.horiz, outer: ln.outer });
+    }
+  }
+  LAYOUT.ballistae = balls;
+  rebuildBlocked();
+}
+
 // ---- Defender order-of-battle: the SINGLE source of truth for who holds a castle.
 // Both the live siege (Sim.setup) and the campaign-map survey draw from this, so the
 // garrison on the info card is exactly the garrison you fight. ----
@@ -928,12 +1090,12 @@ export class Sim {
   // defends differently, and difficulty scales BEHAVIOUR as well as headcount.
   cmd = { name: 'Castellan', kind: 'steady' as 'aggressive' | 'stubborn' | 'cunning' | 'steady', sortieRange: 38, wallAbandon: 40, plugCompanies: 2, moraleGrit: 0, oilCd: 6.5 };
   weather: Weather = 'clear';
-  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF, vet: number[] = [1, 1, 1, 1, 1], env?: { weather?: Weather; towers?: number; ram?: boolean }) {
+  constructor(seed = 1234, comp: ArmyComp = DEFAULT_COMP, difficulty = 1, style?: CastleStyle, atk: AtkBuff = NO_BUFF, vet: number[] = [1, 1, 1, 1, 1], env?: { weather?: Weather; towers?: number; ram?: boolean; doc?: CastleDoc }) {
     this.seed = seed >>> 0; this.comp = comp; this.difficulty = difficulty; this.atk = atk;
     this.weather = env?.weather ?? 'clear';
     this.equipTowers = Math.max(0, Math.min(3, env?.towers ?? 0)); this.equipRam = !!env?.ram;
     for (let i = 0; i < 5; i++) this.vetMul[i] = vet[i] ?? 1;
-    generateCastle(seed, style);
+    if (env?.doc) generateCastleFromDoc(env.doc); else generateCastle(seed, style);
     // pick the castellan: temperament from the castle's seed; sharper at higher difficulty
     const kinds = [
       { kind: 'aggressive' as const, name: 'Baldric the Bold', sortieRange: 58, wallAbandon: 26, plugCompanies: 2, moraleGrit: 2, oilCd: 5.5 },

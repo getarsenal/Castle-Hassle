@@ -6,7 +6,8 @@ import { loadProfile, saveProfile, recordBattle, DIFFICULTY, ACHIEVEMENTS } from
 import { openMainMenu, openSettings, openAchievements } from './menu';
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
-import { surveyCastle } from './sim';
+import { surveyCastle, CastleDoc } from './sim';
+import { openEditor, loadDocs } from './editor';
 import { assessBattle } from './balance';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
@@ -167,6 +168,7 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 
 // ---------------- New game ----------------
 let currentSeed = (Date.now() & 0xffff) >>> 0;
+let pendingDoc: CastleDoc | undefined; // a Workshop playtest layout, consumed by the next newGame()
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
 let currentBiome: Biome = 'britain';
@@ -184,7 +186,15 @@ function newGame() {
   const WX = ['clear', 'clear', 'clear', 'clear', 'clear', 'rain', 'rain', 'mist', 'mist', 'wind'] as const;
   let weather = WX[(currentSeed >>> 7) % WX.length] as (typeof WX)[number];
   try { const o = localStorage.getItem('castlehassle.weather'); if (o && (WX as readonly string[]).includes(o)) weather = o as typeof weather; } catch { /* private mode */ }
-  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, currentVet ?? vetMulArray(), { weather, towers: currentTowers, ram: currentRam });
+  // hand-authored castles: a Workshop playtest always uses its doc; campaign
+  // sieges draw from your saved designs once you have five or more (each
+  // layout recurs across the map, varied by biome/season/weather)
+  let doc: CastleDoc | undefined = pendingDoc; pendingDoc = undefined;
+  if (!doc && activeCastle) {
+    const docs = loadDocs();
+    if (docs.length >= 5) doc = docs[(currentSeed >>> 2) % docs.length];
+  }
+  sim = new Sim(currentSeed, { ...comp }, currentDifficulty, currentStyle, currentBuff, currentVet ?? vetMulArray(), { weather, towers: currentTowers, ram: currentRam, doc });
   (window as any).__sim = sim; // console/QA access for tuning (like __map / __audio)
   // every siege gets an hour of its own, seeded by the castle so it's stable per
   // stronghold: mostly daylight, dawn/dusk often, the rare night storm.
@@ -985,6 +995,20 @@ function devDiagText(): string {
   const rows = devTelemetry();
   return rows.map(([k, v]) => `${k}: ${v}`).join('\n');
 }
+// ---- the Castle Workshop: full manual control over castle plans ----
+(window as any).__openWorkshop = () => openEditor((doc) => {
+  pendingDoc = doc;
+  comp.heavy = 600; comp.light = 480; comp.archer = 460; comp.cavalry = 220; comp.siege = 8;
+  currentSeed = 1234; currentDifficulty = 1; currentStyle = undefined as any;
+  currentBuff = NO_BUFF; currentDiscount = 1; currentExtraTrebs = 0; currentVet = [1, 1, 1, 1, 1];
+  currentTowers = 0; currentRam = false; currentNoArtillery = false;
+  activeCastle = null; activeRaid = null;
+  stopMenuMusic(); battleAudio.mapAmbience(false);
+  for (const id of ['intro', 'titleScreen', 'map', 'muster', 'banner']) show(id, false);
+  document.getElementById('hud')?.classList.remove('over');
+  newGame();
+});
+
 function startCustomBattle(cfg: DevConfig) {
   currentTowers = 0; currentRam = false; // dev battles never carry campaign equipment
   comp.heavy = cfg.army.heavy; comp.light = cfg.army.light; comp.archer = cfg.army.archer;

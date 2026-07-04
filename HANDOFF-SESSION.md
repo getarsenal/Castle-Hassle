@@ -241,6 +241,31 @@ AABB segs, breaches, plugs, schematic).
 - Verified: bench 6 seeds, overhead + three-quarter screenshots (campaign
   castles 0/24/55/98), map schematic panel, tsc clean.
 
+## CASTLE WORKSHOP (July 2026 — hand-authored castles)
+`src/editor.ts` — phone-first top-down editor, opened from Settings ("Castle
+Workshop") or `window.__openWorkshop()`. Tools: Wall (polyline, ANY angle,
+✓ finish / ◌ close ring), Gate (tap on a wall), Tower (⬤ Big toggle), Keep,
+House, Tree, Earthwork ring, Erase; select/drag anything incl. individual wall
+vertices; pinch zoom, 4u grid snap, undo(50); saves ≤30 named layouts at
+localStorage `castlehassle.layouts.v1`; Export = JSON to clipboard (the user
+sends it to be baked into the build), Import replaces.
+- `CastleDoc` (sim.ts) is the interchange format — TRUE angles preserved.
+- `generateCastleFromDoc(doc)`: recentres, stair-steps diagonal edges at SEG
+  pitch into rectilinear runs (real stepped curtains), gates attach to the
+  nearest edge, rasterises closed rings into LAYOUT.blob (cs=4) for exact
+  inside tests, auto-ballistae. Sim env gains `doc?: CastleDoc`.
+- DOC_DECO (trees/works) consumed by render: authored trees replace the
+  scatter; the earthworks ring follows the drawn polygon (siegeRingNodes).
+  Courtyard apron now follows the blob cells, not the bbox (all castles).
+- Campaign: with ≥5 saved layouts, sieges use docs[(seed>>>2)%n] — each
+  design recurs, varied by biome/TOD/weather. Playtest = default army, d=1.
+- TDZ traps hit twice: module-top `generateCastle(1)` in sim.ts and the menu
+  backdrop's top-level `newGame()` in main.ts both run BEFORE later `let`
+  declarations — DOC_DECO and pendingDoc had to be hoisted above them.
+- NEXT (the promised rewrite): render + collide TRUE angled walls straight
+  from CastleDoc polylines (oriented segs), replacing the stair-step approx.
+  The doc format already carries everything needed.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp
