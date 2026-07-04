@@ -441,17 +441,27 @@ export class Renderer {
 
   private buildSky() {
     // dome sized so the fully zoomed-out camera (dist ≤440 + target offset) never exits it
-    const R = 1200;
-    const geo = new THREE.SphereGeometry(R, 24, 16);
+    const R = 1500;
+    const geo = new THREE.SphereGeometry(R, 24, 20);
     const top = new THREE.Color(this.biomeCfg.skyTop), bot = new THREE.Color(this.biomeCfg.skyBot);
+    const hz = new THREE.Color(this.biomeCfg.fog);
     const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) { const t = Math.max(0, Math.min(1, (pos.getY(i) / R) * 1.4 + 0.25)); c.copy(bot).lerp(top, t); colors.push(c.r, c.g, c.b); }
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      // the lowest band IS the fog colour — the vista's far rims and the sky
+      // meet in the same pigment, so there is no line to see
+      if (y < 60) { c.copy(hz); }
+      else { const t = Math.max(0, Math.min(1, ((y - 60) / R) * 1.5)); c.copy(hz).lerp(bot, Math.min(1, t * 3)).lerp(top, t); }
+      colors.push(c.r, c.g, c.b);
+    }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    this.scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
+    const dome = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false }));
+    dome.name = 'skydome';
+    this.scene.add(dome);
     if (this.todCfg.stars) { // a field of stars over a night assault (HDR → they twinkle in the bloom)
       const sp: number[] = [];
       for (let i = 0; i < 320; i++) {
-        const az = Math.random() * Math.PI * 2, el = 0.12 + Math.random() * 1.4, r2 = 600;
+        const az = Math.random() * Math.PI * 2, el = 0.16 + Math.random() * 1.35, r2 = 1400; // beyond the peaks — stars SET behind the ranges, never below them
         sp.push(Math.cos(az) * Math.cos(el) * r2, Math.sin(el) * r2, Math.sin(az) * Math.cos(el) * r2);
       }
       const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
@@ -496,6 +506,18 @@ export class Renderer {
       c.setRGB(r, gch, b);
       colors.push(c.r, c.g, c.b);
     }
+    { // the outer skirt of the field dissolves into the horizon haze — the old
+      // hard fold line read as a bright hoop at night
+      const hz = new THREE.Color(this.biomeCfg.fog), cc = new THREE.Color();
+      const pp2 = g.attributes.position;
+      for (let i = 0; i < pp2.count; i++) {
+        const rr2 = Math.hypot(pp2.getX(i), pp2.getZ(i));
+        if (rr2 <= 350) continue;
+        const k = Math.min(1, (rr2 - 350) / 85);
+        cc.setRGB(colors[i * 3], colors[i * 3 + 1], colors[i * 3 + 2]).lerp(hz, k * k * 0.9);
+        colors[i * 3] = cc.r; colors[i * 3 + 1] = cc.g; colors[i * 3 + 2] = cc.b;
+      }
+    }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     // biome grass — only a gentle lift (the somber, desaturated base colour must
     // survive), larger tiles so the repeat reads as meadow rather than a checkerboard
@@ -503,7 +525,7 @@ export class Renderer {
     const groundTex = this.biomeCfg.sand ? dirtTexture('#d3ba88') : grassTexture('#' + warmGround.getHexString());
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping; groundTex.repeat.set(40, 40); groundTex.needsUpdate = true;
     const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: groundTex, vertexColors: true }));
-    ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
+    ground.name = 'ground'; ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
 
     // One packed-earth texture drives the road and the castle courtyard so the bare
     // ground reads as trodden earth, not flat tan card. (Generated once — no per-frame cost.)
@@ -549,30 +571,30 @@ export class Renderer {
     road.position.set(LAYOUT.gate.x, 0.012, LAYOUT.D + 72); road.renderOrder = 1; this.scene.add(road);
   }
 
-  // A smooth, continuous ring of rolling hills / mountains / dunes around the field
-  // so the map edge is real scenery, not fog. Built as one annulus mesh with gentle
-  // low-frequency height variation and smooth shading (no jagged faceting), its far
-  // rim dissolving into the horizon haze. Coastal castles get an ocean flank (north).
-  private buildHorizon() {
+  // ===== THE DISTANT LANDS =====
+  // What other games do, done properly: the horizon is THREE overlapping vista
+  // rings. The near foothills are real lit terrain (they must match the field
+  // they touch). The middle ridges and far peaks are UNLIT silhouettes whose
+  // colours are derived from the sky-haze colour itself — tonal steps of the
+  // atmosphere — so they cannot clash with the sky in ANY light: at night they
+  // are night, at dawn they are dawn, by construction. Scene fog (the exact
+  // same colour) finishes the far rims, and the map's border becomes a place
+  // the eye never finds.
+  private vistaRing(r0: number, r1: number, amp: number, ph: [number, number, number],
+    colFn: (t: number, hFrac: number) => THREE.Color, lit: boolean, rise0 = 0.03, rise1 = 0.22) {
     const B = this.biomeCfg;
-    const RINGS = 22, SEG = 120, r0 = 385, r1 = 1250; // outer rim meets the sky dome — no bare band of dome below the hills
-    const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), groundC = new THREE.Color(B.ground).multiplyScalar(1.18), tmp = new THREE.Color();
-    const seaDir = Math.PI, seaHalf = this.coastal ? 1.0 : -1;        // ~57° sea gap to the north
+    const RINGS = 16, SEG = 128;
+    const seaDir = Math.PI, seaHalf = this.coastal ? 1.0 : -1;
     const arc = (a: number) => { let d = Math.abs(a - seaDir); if (d > Math.PI) d = 2 * Math.PI - d; return d; };
     const smooth = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
-    // rolling height as a function of angle and radial position (sum of low-freq
-    // sines → soft ridgelines, never spiky)
     const hAt = (ang: number, t: number) => {
-      const rise = smooth(0.03, 0.22, t);                             // low at the field edge, rising soon after — an enclosing bowl of hills
-      // INTEGER angular frequencies so the ridge wraps seamlessly (ang=0 ≡ ang=2π) —
-      // non-integers tore a visible gap at the closing seam
-      let n = Math.sin(ang * 3 + 1.3) * 0.5 + Math.sin(ang * 5 + 4.1) * 0.28 + Math.sin(ang * 9 + 2.0) * 0.16;
-      n = 0.5 + 0.5 * (n * 0.5 + 0.5);                                // [0.5,1]
-      n *= 0.82 + 0.32 * Math.sin(ang * 2 + t * 3.2);                 // slow swell so ridge depth varies
-      // snow peaks get a sharper, taller profile so the range towers; rolling hills stay gentle
-      if (B.snow) n = Math.pow(n, 0.55) * (0.9 + 0.5 * Math.max(0, Math.sin(ang * 4 + 0.7)));
-      let h = B.hillH * rise * n * (B.dune ? 0.62 : 1);
-      if (this.coastal) h *= smooth(seaHalf - 0.05, seaHalf + 0.45, arc(ang)); // drop to sea level on the coast flank
+      const rise = smooth(rise0, rise1, t) * (1 - smooth(0.72, 1, t) * 0.35); // swell up, ease down toward the rim
+      let n = Math.sin(ang * 3 + ph[0]) * 0.5 + Math.sin(ang * 5 + ph[1]) * 0.28 + Math.sin(ang * 9 + ph[2]) * 0.16;
+      n = 0.5 + 0.5 * (n * 0.5 + 0.5);
+      n *= 0.82 + 0.32 * Math.sin(ang * 2 + ph[0] + t * 3.2);
+      if (B.snow) n = Math.pow(n, 0.55) * (0.9 + 0.5 * Math.max(0, Math.sin(ang * 4 + ph[1])));
+      let h = amp * rise * n * (B.dune ? 0.62 : 1);
+      if (this.coastal) h *= smooth(seaHalf - 0.05, seaHalf + 0.45, arc(ang));
       return h;
     };
     const pos: number[] = [], col: number[] = [], idx: number[] = [];
@@ -581,12 +603,8 @@ export class Renderer {
       for (let si = 0; si <= SEG; si++) {
         const ang = (si / SEG) * Math.PI * 2, y = hAt(ang, t);
         pos.push(Math.sin(ang) * rad, y, Math.cos(ang) * rad);
-        const frac = Math.max(0, Math.min(1, y / (B.hillH * 0.8)));
-        tmp.copy(cBase).lerp(cTop, frac * 0.85);
-        if (B.snow && frac > 0.42) tmp.lerp(snow, smooth(0.42, 0.9, frac));
-        tmp.lerp(groundC, Math.max(0, 1 - frac * 2.4) * 0.82);       // hill feet all but ARE the field colour (kills the tan circle at the seam)
-        tmp.lerp(fog, Math.pow(t, 2.4) * (B.snow ? 0.55 : 0.9));      // far rim melts into the haze (peaks keep their snow)
-        col.push(tmp.r, tmp.g, tmp.b);
+        const c = colFn(t, Math.max(0, Math.min(1, y / (amp * 0.8))));
+        col.push(c.r, c.g, c.b);
       }
     }
     for (let ri = 0; ri < RINGS; ri++) for (let si = 0; si < SEG; si++) {
@@ -596,16 +614,68 @@ export class Renderer {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    g.setIndex(idx); g.computeVertexNormals();
-    this.scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true })));
-    if (this.coastal) this.buildOcean();
+    g.setIndex(idx);
+    if (lit) { // flat up-normals: shade EXACTLY like the flat field it touches, in every
+      // light — a low moon must not rake these slopes bright while the ground stays dark
+      const n = new Float32Array(pos.length);
+      for (let i = 1; i < n.length; i += 3) n[i] = 1;
+      g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
+    }
+    const mat = lit ? new THREE.MeshLambertMaterial({ vertexColors: true }) : new THREE.MeshBasicMaterial({ vertexColors: true });
+    const mesh = new THREE.Mesh(g, mat); mesh.name = 'vista' + r0;
+    this.scene.add(mesh);
+  }
+  private buildHorizon() {
+    const B = this.biomeCfg;
+    const haze = new THREE.Color(B.fog), hillHue = new THREE.Color(B.hill), snow = new THREE.Color('#eef2f4');
+    const tmp = new THREE.Color();
+    // Each ridge tone takes the hill's HUE but is pinned to a fixed luminance step
+    // BELOW the fog colour — silhouettes darker than the sky in every light, by
+    // construction. (A plain lerp toward a bright hill hue could come out LIGHTER
+    // than a dark night haze — that read as a glowing lavender hoop at the rim.)
+    const lum = (c: THREE.Color) => c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
+    const shade = (k: number, s: number) => {
+      const c = new THREE.Color().copy(haze).lerp(hillHue, k);
+      const l = lum(c); if (l > 1e-4) c.multiplyScalar(Math.min(2, (lum(haze) * s) / l));
+      return c;
+    };
+    // L1 — near foothills. UNLIT like the others: the field already dissolves to
+    // the fog colour at its rim, so these feet continue FROM the haze, not from the
+    // day palette — a lit/untextured ring can never match the textured field in
+    // every light (at night it glowed). The deepest tonal step of the three.
+    const ridge1 = shade(0.38, 0.74);
+    this.vistaRing(385, 640, B.hillH * 0.55, [1.3, 4.1, 2.0], (t, f) => {
+      tmp.copy(haze).lerp(ridge1, Math.min(1, f * 1.6 + 0.15)); // low ground melts into the fog rim
+      if (B.snow && f > 0.5) tmp.lerp(snow, (f - 0.5) * 0.9);
+      tmp.lerp(haze, t * t * 0.7); // and the ring's far side hands off to the ridges
+      return tmp;
+    }, false);
+    // L2 — middle ridges: UNLIT haze-toned silhouettes (a shade deeper than the sky)
+    const ridge2 = shade(0.22, 0.84);
+    this.vistaRing(560, 900, B.hillH * 1.7, [3.9, 0.7, 5.1], (t) => {
+      tmp.copy(ridge2).lerp(haze, 0.25 + t * 0.75);
+      return tmp;
+    }, false, 0.06, 0.3);
+    // L3 — far peaks: barely a breath darker than the sky, snow tips in the Alps
+    const ridge3 = shade(0.1, 0.93);
+    this.vistaRing(820, 1240, B.hillH * 3.0, [0.4, 2.9, 4.4], (t, f) => {
+      tmp.copy(ridge3).lerp(haze, 0.45 + t * 0.55);
+      if (B.snow && f > 0.55) tmp.lerp(snow, (f - 0.55) * 0.8 * (1 - t));
+      return tmp;
+    }, false, 0.1, 0.4);
+    // the under-rim skirt: if the camera ever peeks below the world's edge it
+    // sees haze, not the void — the border stays a surprise
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(434, 434, 90, 64, 1, true).translate(0, -43, 0),
+      new THREE.MeshBasicMaterial({ color: haze, side: THREE.DoubleSide, fog: false }));
+    skirt.name = 'skirt';
+    this.scene.add(skirt);
   }
 
   private buildOcean() {
     const beach = new THREE.Mesh(new THREE.PlaneGeometry(2400, 96).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#cdbd92' }));
-    beach.position.set(0, 0.03, -188); beach.receiveShadow = true; this.scene.add(beach);
+    beach.name = 'beach'; beach.position.set(0, 0.03, -188); beach.receiveShadow = true; this.scene.add(beach);
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1500).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#2f6188' })); // reaches past the hills/fog — no floating rectangle edge at full zoom
-    sea.position.set(0, 0.13, -970); this.scene.add(sea); // near edge stays on the coast at z=-220; the rest runs out past the fog
+    sea.name = 'sea'; sea.position.set(0, 0.13, -970); this.scene.add(sea); // near edge stays on the coast at z=-220; the rest runs out past the fog
   }
 
   // shared stone materials (slight tone variation for richness)
@@ -1467,7 +1537,7 @@ export class Renderer {
     const stex = new THREE.CanvasTexture(sc); stex.colorSpace = THREE.SRGBColorSpace;
     const spmat = new THREE.SpriteMaterial({ map: stex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     spmat.color.setRGB(...this.todCfg.glow); // noon gold, dusk amber, night a cool moon
-    this.sunGlow = new THREE.Sprite(spmat); this.sunGlow.scale.set(this.todCfg.glowScale, this.todCfg.glowScale, 1);
+    this.sunGlow = new THREE.Sprite(spmat); this.sunGlow.name = 'sunglow'; this.sunGlow.scale.set(this.todCfg.glowScale, this.todCfg.glowScale, 1);
     this.sunGlow.position.copy(this.sun.position.clone().normalize().multiplyScalar(560));
     this.scene.add(this.sunGlow);
 

@@ -306,6 +306,35 @@ sends it to be baked into the build), Import replaces.
   world bounds); cmdGround only falls back to the old south line when the spot
   is refused. Complex multi-quarter assaults are now possible from setup.
 
+## The Distant Lands horizon (July 2026)
+User's night screenshots exposed the old horizon: one day-coloured lit annulus
+that glowed green against the night sky, stars rendered in front of it, void
+under the rim. Replaced wholesale in render.ts:
+- `vistaRing(r0,r1,amp,phases,colFn,lit,rise0,rise1)` — seamless 16×128 ring
+  mesh, integer angular frequencies so the wrap has no seam; coastal castles
+  smooth the ranges down into a sea gap on the water side.
+- THREE layers, ALL unlit `MeshBasicMaterial` with colours DERIVED from the
+  fog colour (`biomeCfg.fog`, which is TOD-aware): foothills 385-640, ridges
+  560-900 (amp 1.7×hillH), peaks 820-1240 (amp 3×hillH, alpine snow tips).
+- `shade(k,s)`: ridge tone = hill HUE pinned to luminance s×lum(fog)
+  (0.74/0.84/0.93). Guarantees silhouettes darker than the sky in EVERY
+  time of day — a plain lerp toward a bright hill hue came out LIGHTER than
+  the night haze and read as a glowing lavender hoop at the rim (found by
+  headless layer-toggle diagnosis; ALSO tried lit Lambert foothills first:
+  a low moon raked the slopes bright while the flat field stayed dark, and
+  flat normals still couldn't match the texture-darkened ground).
+- buildGround: rim vertex colours dissolve to fog beyond r>350 (over 85u,
+  k²×0.9) — kills the bright fold hoop at the world edge.
+- buildSky: dome R1500; everything below y=60 is EXACTLY the fog colour so
+  vista rims and sky meet in the same pigment; stars at r1400, elevation
+  ≥0.16 rad — they set BEHIND the ranges now, never below the horizon.
+- Under-rim skirt cylinder (r434, haze, fog:false) so a below-rim camera
+  peek shows haze, not void.
+- Named meshes for QA toggles: ground / vista385 / vista560 / vista820 /
+  skirt / skydome / sea / beach / sunglow.
+Verified headless: night low/mid/graze (the complaint views), noon low/mid,
+dusk (desert castle), dawn+mist. Sim untouched — no bench needed.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp
