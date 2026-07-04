@@ -173,7 +173,7 @@ function genRng(seed: number) { let s = (seed >>> 0) || 1; return () => { s |= 0
 // hand-authored décor (trees/earthworks) — set by generateCastleFromDoc, cleared by generateCastle
 export let DOC_DECO: { trees: [number, number][]; works: [number, number][] | null } | null = null;
 let lastGen: { seed: number; style?: CastleStyle } | null = null;
-export function generateCastle(seed: number, style?: CastleStyle) {
+export function generateCastle(seed: number, style?: CastleStyle, skipGrid = false) {
   lastGen = { seed, style };
   DOC_DECO = null;
   CASTLE = []; TOWERS.length = 0;
@@ -572,7 +572,10 @@ export function generateCastle(seed: number, style?: CastleStyle) {
   }
 
   LAYOUT = { W, D, front, gate: { x: outerGateX, z: front }, wallLines, towers: [...TOWERS], buildings, citadel, round: st.round, concentric: st.concentric, ballistae, palisade: pal, blob };
-  rebuildBlocked();
+  // The flow-grid rebuild costs ~30ms on the widened world — battles need it,
+  // map SURVEYS don't. Skipping it for surveys turned a 7-second campaign-map
+  // freeze (99 castles x survey + restore) into ~200ms of background work.
+  if (!skipGrid) rebuildBlocked();
 }
 
 // ===== HAND-AUTHORED CASTLES (the Castle Workshop) =====
@@ -815,7 +818,7 @@ export interface CastleSurvey {
 }
 export function surveyCastle(seed: number, style: CastleStyle, difficulty: number): CastleSurvey {
   const prev = lastGen; // CASTLE/LAYOUT are module globals a live scene may be reading
-  generateCastle(seed, style);
+  generateCastle(seed, style, true);
   const L = LAYOUT, plan = defenderPlan(L, difficulty);
   const gates = L.wallLines.filter(ln => ln.gapH > 0 && Math.abs(ln.gapC) < 1e8).length + (L.citadel ? 1 : 0);
   const kp = CASTLE.find(b => b.kind === 'keep');
@@ -826,7 +829,7 @@ export function surveyCastle(seed: number, style: CastleStyle, difficulty: numbe
     keep: kp ? { x0: kp.x0, x1: kp.x1, z0: kp.z0, z1: kp.z1 } : null,
   };
   // put the globals back the way the live scene had them (generation is seed-deterministic)
-  if (prev && (prev.seed !== seed || prev.style !== style)) generateCastle(prev.seed, prev.style);
+  if (prev && (prev.seed !== seed || prev.style !== style)) generateCastle(prev.seed, prev.style, true); // restore is survey-grade too — a live Sim's grid is untouched either way
   return survey;
 }
 

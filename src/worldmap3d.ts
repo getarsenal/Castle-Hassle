@@ -303,8 +303,18 @@ export class WorldMap3D {
 
     this.frameOn(mask, this.nodes[Math.min(this.prog.unlocked, this.nodes.length - 1)]);
     this.ready = true;
-    // pre-warm the campaign-wide threat survey off the first tap's critical path
-    setTimeout(() => { try { if (this.nodes.length) this.starsFor(this.nodes[0]); } catch { /* map torn down */ } }, 1100);
+    // pre-warm the campaign-wide threat survey off the first tap's critical
+    // path — in SLICES, so even the cheap surveys never hitch a frame
+    const warm = new Map<number, number>(); let wi = 0;
+    const slice = () => {
+      if (this.threat || !document.body.contains(this.canvas)) return; // torn down or already built
+      const end = Math.min(this.nodes.length, wi + 12);
+      try { for (; wi < end; wi++) { const n = this.nodes[wi]; warm.set(n.id, this.threatOf(n)); } }
+      catch { return; }
+      if (wi >= this.nodes.length) { this.threat = warm; return; }
+      setTimeout(slice, 60);
+    };
+    setTimeout(slice, 900);
   }
 
   // Aim the oblique camera so LAND fills the view: look at the centroid of the
