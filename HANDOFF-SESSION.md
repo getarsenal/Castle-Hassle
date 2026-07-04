@@ -283,6 +283,29 @@ sends it to be baked into the build), Import replaces.
   GitHub Pages via custom domain; DNS A records → Pages IPs since June 9).
   Keep pushing all three branches; every push deploys.
 
+## TRUE ANGLED WALLS + the broad theatre (July 2026)
+- Seg gains ang/olen: an ORIENTED wall chunk (x0..z1 = bounding box only).
+  inSeg() does the OBB test inside blockedAt/crossAt — the flow grid, LOS
+  (pathBlocked sampling) and climbing all ride on those, so no other sim
+  changes were needed. Climb/ladders approximate via the chunk AABB (fine at
+  SEG=8 chunks; ladders on angled walls render axis-aligned — known v1 nit).
+- WallLine gains nx/nz (outward normal); when set, gapC = distance ALONG the
+  line from (x0,z0). wallArcherPoints walks angled lines generically; the doc
+  converter emits oriented chunks + one true wallLine per non-axis edge
+  (near-axis edges keep the exact old path). Doc ballistae skip angled lines.
+- render: wall/gate parts build in a LOCAL frame (length x, thickness z) and
+  rotate by seg angle. GATEHOUSE look on every gate h>3: flanking jambs above
+  the parapet + capstones + machicolation lip in the stone mass; dark extras
+  mesh = arch panels both faces + portcullis bars outside (addGateDoors no
+  longer called — keep the fn or cull later).
+- WORLD → x±224, z -160..296 (was ±158/-128..214). Ground plane 960, RIM 435,
+  hill ring r0 385/r1 1250, battle camDist max 560. simbench: former stall
+  seeds now grind out as WINS (~150s, ~40% losses) — pathing changed with the
+  field; acceptable equilibrium, retune later from telemetry if needed.
+- Deploy ANYWHERE: sim.deployOk(x,z) (outside enceinte + 12u clearance, inside
+  world bounds); cmdGround only falls back to the old south line when the spot
+  is refused. Complex multi-quarter assaults are now possible from setup.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

@@ -4,7 +4,7 @@
 // flow field per destination (no per-agent A*). Fixed-timestep & seeded so it's
 // deterministic (replays / future PvP come cheap).
 
-export const WORLD = { minX: -158, maxX: 158, minZ: -128, maxZ: 214 }; // widened for the blob-traced great fortresses
+export const WORLD = { minX: -224, maxX: 224, minZ: -160, maxZ: 296 }; // a broad theatre: room to flank wide, camp deep, and assault from any quarter
 export const CELL = 2;
 export const COLS = Math.round((WORLD.maxX - WORLD.minX) / CELL); // 100
 export const ROWS = Math.round((WORLD.maxZ - WORLD.minZ) / CELL); // 90
@@ -125,8 +125,8 @@ export function maxHp(t: UType) { return HP[t]; }
 // and defender deployment. Bigger than before, varied per seed, with a town of
 // buildings inside and (on larger ones) an inner CITADEL that must be taken. ----
 export type SegKind = 'wall' | 'gate' | 'tower' | 'keep' | 'building';
-export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; ramCrew?: number; out?: number; }
-export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; }
+export interface Seg { x0: number; x1: number; z0: number; z1: number; h: number; kind: SegKind; hp: number; maxhp: number; dead: boolean; ramT?: number; ramCrew?: number; out?: number; ang?: number; olen?: number; } // ang/olen: an ORIENTED wall chunk — x0..z1 is just its bounding box
+export interface WallLine { x0: number; z0: number; x1: number; z1: number; horiz: boolean; outer: number; gapC: number; gapH: number; nx?: number; nz?: number; } // nx/nz: outward normal of an ANGLED line (gapC then = distance along from x0,z0)
 export interface Citadel { x0: number; x1: number; z0: number; z1: number; cx: number; cz: number; gate: { x: number; z: number }; wallLines: WallLine[]; }
 // A scaling ladder raised against a wall section. Attackers queue at the foot
 // and climb it single-file; `raise` animates it swinging up (0..1).
@@ -648,21 +648,39 @@ export function generateCastleFromDoc(doc: CastleDoc) {
         const px = a[0] + dx * t, pz = a[1] + dz * t;
         if (Math.hypot(g[0] - px, g[1] - pz) < 7) { gAt = t; break; }
       }
-      const steps = Math.max(1, Math.round(len / SEG));
-      let px = a[0], pz = a[1];
-      for (let k = 0; k < steps; k++) {
-        const t1 = (k + 1) / steps, nx = a[0] + dx * t1, nz = a[1] + dz * t1;
-        // each step becomes an L: horizontal then vertical piece (stair-step)
-        const segments: RunOut[] = [];
-        if (Math.abs(nx - px) >= 1) segments.push({ horiz: true, a0: Math.min(px, nx), a1: Math.max(px, nx), c: pz });
-        if (Math.abs(nz - pz) >= 1) segments.push({ horiz: false, a0: Math.min(pz, nz), a1: Math.max(pz, nz), c: nx });
-        for (const r of segments) {
-          const outer = r.horiz ? (r.c >= ccz ? 1 : -1) : (r.c >= ccx ? 1 : -1);
-          const gateHere = gAt < 1e8 && k / steps <= gAt && gAt <= t1 && r.horiz;
-          const gateX = a[0] + dx * gAt;
-          emitRun(r, outer, (cm) => gateHere && Math.abs(cm - gateX) < 9, gateHere ? gateX : 1e9);
+      // near-axis edges keep the exact axis path; everything else becomes TRUE
+      // ANGLED wall chunks — straight stone between the points you drew.
+      if (Math.abs(dx) < 1.5 || Math.abs(dz) < 1.5) {
+        const horiz = Math.abs(dx) >= Math.abs(dz);
+        const r: RunOut = horiz
+          ? { horiz: true, a0: Math.min(a[0], b[0]), a1: Math.max(a[0], b[0]), c: (a[1] + b[1]) / 2 }
+          : { horiz: false, a0: Math.min(a[1], b[1]), a1: Math.max(a[1], b[1]), c: (a[0] + b[0]) / 2 };
+        const outer = r.horiz ? (r.c >= ccz ? 1 : -1) : (r.c >= ccx ? 1 : -1);
+        const gateHere = gAt < 1e8 && r.horiz;
+        const gateX = a[0] + dx * gAt;
+        emitRun(r, outer, (cm) => gateHere && Math.abs(cm - gateX) < 9, gateHere ? gateX : 1e9);
+      } else {
+        const ang = Math.atan2(dz, dx), ux = dx / len, uz = dz / len;
+        let nrmx = -uz, nrmz = ux;                          // left normal of the walk direction
+        const midx2 = (a[0] + b[0]) / 2, midz2 = (a[1] + b[1]) / 2;
+        let out = 1;                                        // local +z IS the left normal
+        if (Math.hypot(midx2 + nrmx * 3 - ccx, midz2 + nrmz * 3 - ccz) < Math.hypot(midx2 - ccx, midz2 - ccz)) {
+          nrmx = -nrmx; nrmz = -nrmz; out = -1;             // left points INTO the ward — outward is the right side
         }
-        px = nx; pz = nz;
+        const gAlong = gAt < 1e8 ? gAt * len : 1e9;
+        const n = Math.max(1, Math.round(len / SEG));
+        for (let k = 0; k < n; k++) {
+          const m0 = k * len / n, m1 = (k + 1) * len / n, mc = (m0 + m1) / 2, half = (m1 - m0) / 2;
+          const cx2 = a[0] + ux * mc, cz2 = a[1] + uz * mc;
+          const isG = gAlong < 1e8 && Math.abs(mc - gAlong) < 9;
+          const exx = Math.abs(ux * half) + Math.abs(nrmx * T / 2), ezz = Math.abs(uz * half) + Math.abs(nrmz * T / 2);
+          const kind: SegKind = isG ? 'gate' : 'wall';
+          const hp = kind === 'gate' ? 1100 : 1700;
+          segs.push({ x0: cx2 - exx, x1: cx2 + exx, z0: cz2 - ezz, z1: cz2 + ezz,
+            h: kind === 'gate' ? WH - 1 : WH, kind, hp, maxhp: hp, dead: false, out, ang, olen: half });
+        }
+        wallLines.push({ x0: a[0], z0: a[1], x1: b[0], z1: b[1], horiz: Math.abs(dx) >= Math.abs(dz),
+          outer: out, gapC: gAlong, gapH: gAlong < 1e8 ? 9 : 0, nx: nrmx, nz: nrmz });
       }
       void mx; void mz;
     }
@@ -721,6 +739,7 @@ export function generateCastleFromDoc(doc: CastleDoc) {
   };
   const balls: Ballista[] = []; const cap = Math.round(3 + area2 / 5200);
   for (const ln of wallLines) {
+    if (ln.nx !== undefined) continue; // angled curtains carry archers, not engines (v1)
     if (balls.length >= cap) break;
     const a0 = ln.horiz ? ln.x0 : ln.z0, a1 = ln.horiz ? ln.x1 : ln.z1;
     for (let a = a0 + 18; a < a1 - 12 && balls.length < cap; a += 30) {
@@ -742,6 +761,17 @@ export function generateCastleFromDoc(doc: CastleDoc) {
 function wallArcherPoints(lines: WallLine[], spacing: number, inset: number, wallTop: number): [number, number, number][] {
   const pts: [number, number, number][] = [];
   for (const ln of lines) {
+    if (ln.nx !== undefined && ln.nz !== undefined) {
+      // an ANGLED curtain: walk the true line, ranks stepped inward off the normal
+      const dx = ln.x1 - ln.x0, dz = ln.z1 - ln.z0, L = Math.hypot(dx, dz);
+      if (L < 2) continue;
+      const ux = dx / L, uz = dz / L;
+      for (let a = inset; a <= L - inset; a += spacing) {
+        if (Math.abs(a - ln.gapC) < ln.gapH + 1) continue;
+        for (let rk = 0; rk < 2; rk++) pts.push([ln.x0 + ux * a - ln.nx * rk * 1.3, ln.z0 + uz * a - ln.nz * rk * 1.3, wallTop]);
+      }
+      continue;
+    }
     const a0 = (ln.horiz ? ln.x0 : ln.z0) + inset, a1 = (ln.horiz ? ln.x1 : ln.z1) - inset;
     for (let a = a0; a <= a1; a += spacing) {
       if (Math.abs(a - ln.gapC) < ln.gapH + 1) continue; // leave the gate clear
@@ -800,10 +830,18 @@ export function surveyCastle(seed: number, style: CastleStyle, difficulty: numbe
   return survey;
 }
 
+function inSeg(b: Seg, x: number, z: number): boolean {
+  if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) return false;
+  if (b.ang === undefined) return true;
+  // oriented chunk: the AABB is only the broad phase — test the true rotated box
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2, ca = Math.cos(b.ang), sa = Math.sin(b.ang);
+  const lx = (x - cx) * ca + (z - cz) * sa, lz = -(x - cx) * sa + (z - cz) * ca;
+  return Math.abs(lx) <= (b.olen ?? SEG / 2) && Math.abs(lz) <= T / 2;
+}
 function blockedAt(x: number, z: number): boolean {
   for (let i = 0; i < CASTLE.length; i++) {
     const b = CASTLE[i];
-    if (!b.dead && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) return true;
+    if (!b.dead && inSeg(b, x, z)) return true;
   }
   return false;
 }
@@ -868,7 +906,7 @@ function crossAt(x: number, z: number): number {
   let pen = 0;
   for (let i = 0; i < CASTLE.length; i++) {
     const b = CASTLE[i]; if (b.dead) continue;
-    if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) {
+    if (inSeg(b, x, z)) {
       if (b.kind === 'gate') pen = Math.max(pen, X_GATE);
       else if (b.kind === 'wall') pen = Math.max(pen, X_WALL);
       else return X_INF; // tower, keep, building — impassable even to a storm
@@ -1519,6 +1557,12 @@ export class Sim {
   }
   // southernmost line you may muster on during deploy (just outside the walls)
   deployLine(): number { return LAYOUT.front + 8; }
+  // Deploy ANYWHERE outside the castle (complex assaults from every quarter) —
+  // refused only inside the enceinte or pressed right against it.
+  deployOk(x: number, z: number): boolean {
+    if (x < WORLD.minX + 6 || x > WORLD.maxX - 6 || z < WORLD.minZ + 6 || z > WORLD.maxZ - 6) return false;
+    return !insideCastle(x, z) && !insideCastle(x + 12, z) && !insideCastle(x - 12, z) && !insideCastle(x, z + 12) && !insideCastle(x, z - 12);
+  }
   // A battery ordered onto a target beyond its reach ADVANCES to firing range on
   // its own (with its crews in tow) — an order should never silently do nothing.
   private advanceBattery(div: number, tx: number, tz: number) {

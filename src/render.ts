@@ -462,10 +462,10 @@ export class Renderer {
   }
 
   private buildGround() {
-    const g = new THREE.PlaneGeometry(760, 760, 96, 96); g.rotateX(-Math.PI / 2);
+    const g = new THREE.PlaneGeometry(960, 960, 110, 110); g.rotateX(-Math.PI / 2);
     { // shape the square sheet into a DISC: corners fold onto the rim circle, which
       // hides under the horizon ring's inner flats — the world edge is one circle now
-      const pp = g.attributes.position, RIM = 300;
+      const pp = g.attributes.position, RIM = 435;
       for (let i = 0; i < pp.count; i++) {
         const x = pp.getX(i), z = pp.getZ(i), r = Math.hypot(x, z);
         if (r > RIM) { pp.setX(i, x / r * RIM); pp.setZ(i, z / r * RIM); }
@@ -555,7 +555,7 @@ export class Renderer {
   // rim dissolving into the horizon haze. Coastal castles get an ocean flank (north).
   private buildHorizon() {
     const B = this.biomeCfg;
-    const RINGS = 22, SEG = 120, r0 = 250, r1 = 1150; // outer rim meets the sky dome — no bare band of dome below the hills
+    const RINGS = 22, SEG = 120, r0 = 385, r1 = 1250; // outer rim meets the sky dome — no bare band of dome below the hills
     const cBase = new THREE.Color(B.hill), cTop = new THREE.Color(B.hillTop), snow = new THREE.Color('#eef2f4'), fog = new THREE.Color(B.fog), groundC = new THREE.Color(B.ground).multiplyScalar(1.18), tmp = new THREE.Color();
     const seaDir = Math.PI, seaHalf = this.coastal ? 1.0 : -1;        // ~57° sea gap to the north
     const arc = (a: number) => { let d = Math.abs(a - seaDir); if (d > Math.PI) d = 2 * Math.PI - d; return d; };
@@ -624,6 +624,8 @@ export class Renderer {
   }
 
   private buildCastle() {
+    const SEGC = 4; // fallback half-length for oriented chunks
+
     // Per-castle STONE + ROOF palette, chosen deterministically from the layout so no
     // two neighbouring strongholds read the same: grey granite, warm sandstone, pale
     // limestone, reddish stone — with slate / terracotta / lead roofs to match.
@@ -671,28 +673,53 @@ export class Renderer {
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'wall' || b.kind === 'gate') {
-        // every part of the section merges into ONE mesh (origin at ground)
-        const parts: THREE.BufferGeometry[] = [this.boxG(w, b.h, d, 0, b.h / 2, 0)];
-        const isStone = b.kind === 'wall';
-        const horiz = w > d, len = horiz ? w : d;
-        const outer = b.out ?? ((horiz ? Math.sign(cz) : Math.sign(cx)) || 1); // stored by the generator — sign-of-centre lies on irregular traces
-        // both a curtain wall AND a gatehouse get a crenellated parapet on top
-        parts.push(this.boxG(horiz ? w : w - 0.8, 0.5, horiz ? d - 0.8 : d, 0, b.h + 0.25, 0)); // walkway
+        // Build in a LOCAL frame — length along x, thickness along z — then spin
+        // the merged geometry to the seg's angle. Axis walls use angle 0/90; an
+        // ORIENTED chunk (hand-drawn diagonal curtain) uses its true bearing, so
+        // the stone runs straight between the points the designer set.
+        const oriented = b.ang !== undefined;
+        const horiz = oriented ? true : w > d;
+        const len = oriented ? (b.olen ?? SEGC) * 2 : (horiz ? w : d);
+        const thick = oriented ? 4 : (horiz ? d : w);
+        const segAng = oriented ? b.ang! : (horiz ? 0 : Math.PI / 2);
+        const outer = b.out ?? ((w > d ? Math.sign(cz) : Math.sign(cx)) || 1);
+        const gh = b.kind === 'gate' && b.h > 3;
+        const parts: THREE.BufferGeometry[] = [this.boxG(len, b.h, thick, 0, b.h / 2, 0)];
+        parts.push(this.boxG(len, 0.5, thick - 0.8, 0, b.h + 0.25, 0)); // walkway
         const n = Math.floor(len / 1.7);
         for (let k = 0; k <= n; k++) {
           if (k % 2) continue;
-          if (horiz) parts.push(this.boxG(1.0, 1.7, 0.7, b.x0 + 0.85 + k * 1.7 - cx, b.h + 0.85, outer * (d / 2 - 0.35)));
-          else parts.push(this.boxG(0.7, 1.7, 1.0, outer * (w / 2 - 0.35), b.h + 0.85, b.z0 + 0.85 + k * 1.7 - cz));
+          parts.push(this.boxG(1.0, 1.7, 0.7, -len / 2 + 0.85 + k * 1.7, b.h + 0.85, outer * (thick / 2 - 0.35)));
         }
-        if (b.kind === 'wall') parts.push(this.boxG(horiz ? w : 0.5, 0.7, horiz ? 0.5 : d, horiz ? 0 : -outer * (w / 2 - 0.25), b.h + 0.35, horiz ? -outer * (d / 2 - 0.25) : 0)); // inner rail
+        if (b.kind === 'wall') parts.push(this.boxG(len, 0.7, 0.5, 0, b.h + 0.35, -outer * (thick / 2 - 0.25))); // inner rail
+        if (gh) { // A GATEHOUSE, not a wall with a hole: flanking jambs risen past the parapet
+          for (const jx of [-len / 2 + 1.1, len / 2 - 1.1]) {
+            parts.push(this.boxG(2.2, b.h + 3.2, thick + 2.6, jx, (b.h + 3.2) / 2, 0));
+            parts.push(this.boxG(2.8, 0.9, thick + 3.2, jx, b.h + 3.6, 0)); // capstones
+          }
+          parts.push(this.boxG(len - 4, 1.1, thick + 1.2, 0, b.h + 1.0, 0)); // machicolation lip over the arch
+        }
         const wood = LAYOUT.palisade; // a town's walls are timber, not dressed stone
-        // the gatehouse mass is dressed stone (or a timber frame in a palisade town);
-        // the actual planked gate is added as detailed doors below.
         const mat = !wood ? tintStone(this.stone(b.kind === 'gate' ? '#cdb892' : '#e6d6af')) : this.stone(b.kind === 'gate' ? '#6e4a28' : '#8a5a31');
         if (!wood) { mat.map = this.texStone; mat.normalMap = this.texStoneN; mat.normalScale.set(0.8, 0.8); }
-        const box = new THREE.Mesh(mergeGeometries(parts, false), mat);
+        const merged = mergeGeometries(parts, false);
+        if (segAng) merged.rotateY(-segAng);
+        const box = new THREE.Mesh(merged, mat);
         box.position.set(cx, 0, cz); box.castShadow = box.receiveShadow = true; this.scene.add(box);
-        if (b.kind === 'gate') this.addGateDoors(extras, cx, cz, w, d, b.h, horiz, outer, wood);
+        if (gh) { // the dark heart of the gate: recessed arch + portcullis grate
+          const dark = this.stone(wood ? '#3a2614' : '#241a10');
+          const gp: THREE.BufferGeometry[] = [];
+          const aw = Math.min(len - 6, 9), ah = Math.min(b.h - 1.5, 6.5);
+          for (const zc of [thick / 2 + 0.12, -thick / 2 - 0.12]) {
+            gp.push(this.boxG(aw, ah, 0.3, 0, ah / 2, zc));                       // arch shadow panel
+            gp.push(this.boxG(aw * 0.72, aw * 0.36, 0.3, 0, ah + aw * 0.1, zc));  // rounded head hint
+          }
+          for (let gk = -2; gk <= 2; gk++) gp.push(this.boxG(0.32, ah - 0.4, 0.32, gk * (aw / 5.4), (ah - 0.4) / 2, outer * (thick / 2 + 0.34))); // portcullis bars
+          for (let gy = 1; gy <= 2; gy++) gp.push(this.boxG(aw * 0.8, 0.3, 0.3, 0, ah * gy / 3, outer * (thick / 2 + 0.36)));
+          const gm = mergeGeometries(gp, false);
+          if (segAng) gm.rotateY(-segAng);
+          const gmesh = new THREE.Mesh(gm, dark); gmesh.position.set(cx, 0, cz); this.scene.add(gmesh); extras.push(gmesh);
+        }
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
         const round = LAYOUT.round;
@@ -2349,7 +2376,7 @@ export class Renderer {
     // free-range camera: right down among the soldiers, out to a full theatre
     // view, and low enough to skim the grass — anywhere but underground
     // (updateCamera floors the eye at y=1.1).
-    this.camDist = Math.max(11, Math.min(440, this.camDist));
+    this.camDist = Math.max(11, Math.min(560, this.camDist)); // the broad theatre needs the longer pull-back
     this.camPitch = Math.max(0.07, Math.min(1.46, this.camPitch));
   }
 }

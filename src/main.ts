@@ -561,7 +561,13 @@ let pinchDist = 0, panMid = { x: 0, y: 0 };
 const ndc = (cx: number, cy: number): [number, number] => [(cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1];
 function groundAt(cx: number, cy: number) { const [a, b] = ndc(cx, cy); return renderer.raycastGround(a, b); }
 // a command point, kept outside the walls while mustering (matches orderDivision)
-function cmdGround(cx: number, cy: number) { const p = groundAt(cx, cy); if (p && sim.phase === 'deploy') p.z = Math.max(p.z, sim.deployLine()); return p; }
+function cmdGround(cx: number, cy: number) {
+  const p = groundAt(cx, cy);
+  // deploy ANYWHERE outside the walls — only spots inside/against the castle
+  // fall back to the old south line (complex assaults start where you like)
+  if (p && sim.phase === 'deploy' && !sim.deployOk(p.x, p.z)) p.z = Math.max(p.z, sim.deployLine());
+  return p;
+}
 function lineFacing(p0: THREE.Vector3, p1: THREE.Vector3): [number, number] {
   const dx = p1.x - p0.x, dz = p1.z - p0.z, w = Math.hypot(dx, dz) || 1; let fx = -dz / w, fz = dx / w;
   const mx = (p0.x + p1.x) / 2, mz = (p0.z + p1.z) / 2; if (fx * (0 - mx) + fz * (0 - mz) < 0) { fx = -fx; fz = -fz; } return [fx, fz];
