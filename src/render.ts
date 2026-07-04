@@ -683,7 +683,7 @@ export class Renderer {
         const thick = oriented ? 4 : (horiz ? d : w);
         const segAng = oriented ? b.ang! : (horiz ? 0 : Math.PI / 2);
         const outer = b.out ?? ((w > d ? Math.sign(cz) : Math.sign(cx)) || 1);
-        const gh = b.kind === 'gate' && b.h > 3;
+        const gh = b.kind === 'gate' && b.h > 3 && !LAYOUT.palisade; // a wooden town gets timber doors, not a stone gatehouse
         const parts: THREE.BufferGeometry[] = [this.boxG(len, b.h, thick, 0, b.h / 2, 0)];
         parts.push(this.boxG(len, 0.5, thick - 0.8, 0, b.h + 0.25, 0)); // walkway
         const n = Math.floor(len / 1.7);
@@ -720,6 +720,7 @@ export class Renderer {
           if (segAng) gm.rotateY(-segAng);
           const gmesh = new THREE.Mesh(gm, dark); gmesh.position.set(cx, 0, cz); this.scene.add(gmesh); extras.push(gmesh);
         }
+        if (b.kind === 'gate' && b.h > 3 && !gh) this.addGateDoors(extras, cx, cz, w, d, b.h, w > d, outer, true); // palisade gate doors
         this.segVis[s] = { box, mat, base: mat.color.clone(), extras, h: b.h, maxhp: b.maxhp, prevHp: b.hp, crumbling: 0 };
       } else if (b.kind === 'tower') {
         const round = LAYOUT.round;

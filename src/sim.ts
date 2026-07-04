@@ -2136,7 +2136,24 @@ export class Sim {
 
       let nx = this.px[i] + this.vx[i] * dt, nz = this.pz[i] + this.vz[i] * dt;
       if (this.py[i] < 1 && blockedFast(nx, nz)) { // ground units collide with walls (grid-accelerated, gap-precise)
-        if (!blockedFast(nx, this.pz[i])) { nz = this.pz[i]; this.vz[i] = 0; }
+        if (blockedFast(this.px[i], this.pz[i])) {
+          // ALREADY inside the stone (a climb landing, or shoved in by the press):
+          // freezing would entomb him forever — the raid bug where whole columns
+          // vanished into the palisade. Tunnel toward the NEAREST free ground: a
+          // crowd-shoved man pops back out the face he came from; a climber who
+          // landed inside the wall band pops out the inner face. (Keep-ward
+          // tunnelling was tried and turned walls into one-way membranes.)
+          let ex = this.keepX - this.px[i], ez = this.keepZ - this.pz[i], found = false;
+          for (const rr of [1.4, 2.8, 4.2]) {
+            for (const [ox, oz] of OBST_DIR) {
+              if (!blockedFast(this.px[i] + ox * rr, this.pz[i] + oz * rr)) { ex = ox; ez = oz; found = true; break; }
+            }
+            if (found) break;
+          }
+          const el = Math.hypot(ex, ez) || 1;
+          nx = this.px[i] + (ex / el) * 2.8 * dt; nz = this.pz[i] + (ez / el) * 2.8 * dt;
+        }
+        else if (!blockedFast(nx, this.pz[i])) { nz = this.pz[i]; this.vz[i] = 0; }
         else if (!blockedFast(this.px[i], nz)) { nx = this.px[i]; this.vx[i] = 0; }
         else { nx = this.px[i]; nz = this.pz[i]; this.vx[i] = 0; this.vz[i] = 0; }
       }
