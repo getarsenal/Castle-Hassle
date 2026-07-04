@@ -2,9 +2,10 @@
 // (named after the input template). Copy it to the two places that get deployed
 // and remove the oddly-named original. Cross-platform (no shell `cp`) so it runs
 // the same on Windows, macOS, and the Codemagic/CI Linux runners.
-import { copyFileSync, rmSync, existsSync } from 'node:fs';
+import { copyFileSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const src = resolve(root, 'www', 'index.dev.html');
@@ -13,6 +14,14 @@ if (!existsSync(src)) {
   console.error('postbuild: expected build output not found at', src);
   process.exit(1);
 }
+
+// Stamp the build so any device can prove WHICH build it is showing
+// (Settings displays window.__BUILD — ends the "did the deploy land?" guessing)
+let sha = 'local';
+try { sha = execSync('git rev-parse --short HEAD', { cwd: root }).toString().trim(); } catch { /* no git in some CI images */ }
+const when = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+const stamped = readFileSync(src, 'utf8').replace('</body>', `<script>window.__BUILD='${sha} \u00b7 ${when}';</script></body>`);
+writeFileSync(src, stamped);
 
 copyFileSync(src, resolve(root, 'www', 'index.html')); // Capacitor webDir
 copyFileSync(src, resolve(root, 'index.html'));        // repo-root deployable

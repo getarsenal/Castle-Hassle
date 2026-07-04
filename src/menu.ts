@@ -117,8 +117,9 @@ export function openSettings(profile: Profile, onChange: () => void, onClose: ()
     + `<div class="setRow"><div class="toggle"><span class="lbl" style="margin:0">Sound</span><div class="sw${S.muted ? '' : ' on'}" id="stMute"><i></i></div></div></div>`
     + `<div class="setRow"><div class="lbl">Difficulty</div><div class="diffPick">${diffChips}</div><div class="dblurb" id="stDiffBlurb">${DIFFICULTY[S.difficulty].blurb}</div></div>`
     + `<div class="setRow"><div class="toggle"><span class="lbl" style="margin:0">Director Mode</span><div class="sw${isDirectorEnabled() ? ' on' : ''}" id="stDirector"><i></i></div></div><div class="dblurb">A 🎬 chip for filming promos: orbit, auto-cine, hide the HUD.</div></div>`
-    + `<div class="setRow"><button class="ovClose" id="stWorkshop" style="margin:0">🏰 Castle Workshop</button><div class="dblurb">Design your own castles — walls at any angle, towers, gates, the lot. With 5+ saved layouts, campaign sieges use YOUR designs.</div></div>`
-    + `</div><button class="ovClose" id="stDone">Done</button>`;
+    + `<div class="setRow"><button class="ovClose" id="stWorkshop" style="margin:0 0 8px">🏰 Castle Workshop</button><div class="dblurb" style="margin-top:0">Design your own castles — walls at any angle, towers, gates, the lot. With 5+ saved layouts, campaign sieges use YOUR designs.</div></div>`
+    + `</div><button class="ovClose" id="stDone">Done</button>`
+    + `<div style="text-align:center;font-size:10.5px;color:#7d6a4a;margin-top:10px">Build ${(window as any).__BUILD || 'dev'}</div>`;
   document.body.appendChild(root);
   const vol = root.querySelector('#stVol') as HTMLInputElement;
   vol.addEventListener('input', () => { S.volume = vol.valueAsNumber / 100; onChange(); });
