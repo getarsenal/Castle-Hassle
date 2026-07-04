@@ -266,6 +266,23 @@ sends it to be baked into the build), Import replaces.
   from CastleDoc polylines (oriented segs), replacing the stair-step approx.
   The doc format already carries everything needed.
 
+## UI alignment pass (July 2026 — post-launch phone polish)
+- Map top bar: #mapMenuBtn + #muteBtn are now 44px twins (12px radius, opaque
+  leather, right 64/12 — they used to OVERLAP by 4px at different sizes);
+  #mapHeader max-width min(62vw, 100vw-212px) so it never runs under them.
+- Map right rail: compass + host/world chips share one axis (chips right:25
+  centres them on the compass at right:14/66w), both safe-top offset; chip
+  glyphs are drawn SVGs in the compass ink (#4a3514) — emoji were mismatched.
+- Muster: h1 ribbon margin-top 58px under 560px width (cleared the fixed
+  Map/sound chips); #muteBtn opaque so scrolling under it reads deliberate.
+- Siege Works row: buttons moved to the 'rec' grid row (.worksBtns 1fr 1fr,
+  full-width) — they overflowed the qty column off-screen on phones; icon is
+  an inline SVG timber tower (the red 🗼 emoji read as a broadcast mast).
+- DEPLOY TOPOLOGY RESTORED: on.push [main, claude/**] again — the main-only
+  audit change broke the user's months-old push→live flow (getarsenal.app is
+  GitHub Pages via custom domain; DNS A records → Pages IPs since June 9).
+  Keep pushing all three branches; every push deploys.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

@@ -120,10 +120,16 @@ function buildMuster() {
   // ---- Siege Works: per-siege assault equipment (spent for THIS battle only) ----
   if (!currentNoArtillery) {
     const row = document.createElement('div'); row.className = 'rrow';
-    row.innerHTML = `<span class="ic" style="font-size:26px;line-height:44px;text-align:center">🗼</span>
+    // a drawn timber siege tower in the parchment palette (the red emoji tower read as a broadcast mast)
+    const towerSvg = `<svg viewBox="0 0 24 24" width="46" height="46" style="display:block;background:linear-gradient(180deg,#4a361e,#241a0e)">
+      <g stroke="#e0c084" stroke-width="1.5" fill="none" stroke-linecap="round">
+        <path d="M8 20 L9 5 h6 l1 15"/><path d="M9 5 h6 M8.6 9.5 h6.8 M8.3 14 h7.4"/>
+        <path d="M9 3.4 v1.6 M12 3.4 v1.6 M15 3.4 v1.6"/></g>
+      <circle cx="8.6" cy="20" r="1.7" fill="#7a5e2e"/><circle cx="15.4" cy="20" r="1.7" fill="#7a5e2e"/></svg>`;
+    row.innerHTML = `<span class="ic">${towerSvg}</span>
       <div class="info"><div class="nm">Siege Works</div><div class="dsc">Built for this siege alone: towers drop a three-abreast ramp on the wall; the covered ram shelters its crew from oil and arrows.</div>
         <div class="own" data-skip id="worksOwn"></div></div>
-      <div class="qty"><button class="rbtn" id="buyTower">Tower 250g</button><button class="rbtn" id="buyRam">Ram 300g</button></div>`;
+      <div class="worksBtns"><button class="rbtn" id="buyTower">Siege Tower · 250g</button><button class="rbtn" id="buyRam">Covered Ram · 300g</button></div>`;
     const own = row.querySelector('#worksOwn') as HTMLElement;
     // Selections are PENDING until the march — gold is only spent when the battle
     // actually begins, so backing out of the muster costs nothing.

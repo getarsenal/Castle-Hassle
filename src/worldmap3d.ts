@@ -1002,7 +1002,7 @@ export class WorldMap3D {
     if (document.getElementById('map3d-styles')) { this.styleEl = document.getElementById('map3d-styles')!; return; }
     const s = document.createElement('style'); s.id = 'map3d-styles';
     s.textContent = `
-    .mapCompass{position:absolute;top:86px;right:14px;width:66px;height:66px;border-radius:50%;
+    .mapCompass{position:absolute;top:calc(env(safe-area-inset-top,0px) + 66px);right:14px;width:66px;height:66px;border-radius:50%;
       background:radial-gradient(circle at 50% 36%,#fbf2db,#e7d2a4 62%,#cdb588);border:3px solid #7a5e2e;
       box-shadow:0 4px 12px rgba(0,0,0,.42),inset 0 2px 5px rgba(255,255,255,.55),inset 0 -3px 7px rgba(120,90,46,.4);
       z-index:6;font:700 13px 'EB Garamond',Georgia,serif;color:#4a3514;cursor:pointer}
@@ -1039,10 +1039,12 @@ export class WorldMap3D {
     .castlePanel button{flex:1;border:none;border-radius:10px;padding:12px 10px;font:600 15px 'EB Garamond',Georgia,serif;cursor:pointer;line-height:1.15}
     .castlePanel .go{background:linear-gradient(#b5402f,#8c2b20);color:#fff}
     .castlePanel .close{background:#3a2e1e;color:#d9c8a8}
-    .mapChips{position:absolute;top:160px;right:14px;display:flex;flex-direction:column;gap:8px;z-index:6}
-    .mapChips button{width:44px;height:44px;border-radius:50%;border:2px solid #7a5e2e;cursor:pointer;
-      background:radial-gradient(circle at 50% 34%,#f4e7c8,#d9c294 66%,#c0a878);color:#4a3514;font-size:19px;line-height:1;
+    .mapChips{position:absolute;top:calc(env(safe-area-inset-top,0px) + 142px);right:25px;display:flex;flex-direction:column;gap:9px;z-index:6}
+    .mapChips button{width:44px;height:44px;border-radius:50%;border:2px solid #7a5e2e;cursor:pointer;padding:0;
+      display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(circle at 50% 34%,#f4e7c8,#d9c294 66%,#c0a878);color:#4a3514;line-height:0;
       box-shadow:0 3px 9px rgba(0,0,0,.4),inset 0 2px 4px rgba(255,255,255,.5)}
+    .mapChips button svg{width:22px;height:22px;display:block}
     .mapChips button:active{transform:scale(.93)}
     .mapVig{position:absolute;inset:0;pointer-events:none;z-index:5;
       background:radial-gradient(120% 96% at 50% 42%,transparent 56%,rgba(13,9,4,.3) 100%)}
@@ -1084,17 +1086,21 @@ export class WorldMap3D {
     this.host().appendChild(c); this.compassEl = c; this.compassRose = c.querySelector('.rose') as HTMLElement;
     // two glide chips: home to your encamped host, or pull back to survey the world
     const chips = document.createElement('div'); chips.className = 'mapChips';
-    const mk = (label: string, title: string, fn: () => void) => {
-      const b = document.createElement('button'); b.textContent = label; b.title = title;
+    const mk = (svg: string, title: string, fn: () => void) => {
+      const b = document.createElement('button'); b.innerHTML = svg; b.title = title;
       b.addEventListener('click', fn); chips.appendChild(b);
     };
-    mk('⚑', 'Return to your host', () => {
-      const sp = this.settlementSpots()[Math.min(this.prog.unlocked, this.nodes.length - 1)];
-      if (sp) this.clampTweenTo(sp.x, sp.z, 140, 0.9);
-    });
-    mk('🌍', 'Survey the whole world', () => {
-      this.clampTweenTo((this.wX(this.bb.w) + this.wX(this.bb.e)) / 2, (this.wZ(this.bb.n) + this.wZ(this.bb.s)) / 2 + 20, 345, 1.1);
-    });
+    // hand-drawn glyphs in the compass's ink, so the rail reads as ONE instrument set
+    const INK = '#4a3514';
+    mk(`<svg viewBox="0 0 24 24" fill="none" stroke="${INK}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 21 V4"/><path d="M7 5 h9 l-2.4 3 L16 11 H7" fill="${INK}"/></svg>`,
+      'Return to your host', () => {
+        const sp = this.settlementSpots()[Math.min(this.prog.unlocked, this.nodes.length - 1)];
+        if (sp) this.clampTweenTo(sp.x, sp.z, 140, 0.9);
+      });
+    mk(`<svg viewBox="0 0 24 24" fill="none" stroke="${INK}" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.2"/><ellipse cx="12" cy="12" rx="3.6" ry="8.2"/><path d="M4.2 9.4 h15.6 M4.2 14.6 h15.6"/></svg>`,
+      'Survey the whole world', () => {
+        this.clampTweenTo((this.wX(this.bb.w) + this.wX(this.bb.e)) / 2, (this.wZ(this.bb.n) + this.wZ(this.bb.s)) / 2 + 20, 345, 1.1);
+      });
     this.host().appendChild(chips); this.chipsEl = chips;
     const vig = document.createElement('div'); vig.className = 'mapVig'; this.host().appendChild(vig); this.vigEl = vig;
   }

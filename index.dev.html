@@ -97,8 +97,8 @@
       width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0;
       cursor: pointer; pointer-events: auto; color: var(--gold-soft);
       border: 1px solid rgba(255,225,160,0.22); border-radius: 12px;
-      background: linear-gradient(180deg, rgba(40,30,18,0.9), rgba(20,15,9,0.9));
-      box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08); }
+      background: linear-gradient(180deg, #2c2113, #17100a);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,225,160,0.08); }
     #muteBtn:active { transform: translateY(1px); }
     #muteBtn svg { width: 23px; height: 23px; }
     #muteBtn .slash { display: none; }
@@ -386,17 +386,17 @@
     #map.show #devMapBtn { display: flex; }
     #devMapBtn svg { width: 19px; height: 19px; display: block; }
     #devMapBtn:active { transform: translateY(1px); }
-    #mapMenuBtn { position: absolute; top: calc(var(--safe-top) + 10px); right: 52px; z-index: 6; display: none;
-      width: 38px; height: 38px; align-items: center; justify-content: center; padding: 0; cursor: pointer;
-      border-radius: var(--r-pill); border: 1px solid rgba(255,225,160,0.32); color: var(--gold-soft);
-      background: linear-gradient(180deg, rgba(64,46,24,0.95), rgba(30,21,11,0.95)); box-shadow: var(--sh-1); }
+    #mapMenuBtn { position: absolute; top: calc(var(--safe-top) + 10px); right: 64px; z-index: 6; display: none;
+      width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; cursor: pointer;
+      border-radius: 12px; border: 1px solid rgba(255,225,160,0.22); color: var(--gold-soft);
+      background: linear-gradient(180deg, #2c2113, #17100a); box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,225,160,0.08); }
     #map.show #mapMenuBtn { display: flex; }
     #mapMenuBtn svg { width: 20px; height: 20px; display: block; }
     #mapMenuBtn:active { transform: translateY(1px); }
     #mapHeader { position: absolute; top: calc(var(--safe-top) + 12px); left: 50%; transform: translateX(-50%);
       background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.94)); border: 1px solid rgba(255,225,160,0.3);
       color: var(--gold-soft); font: 700 14px 'Cinzel', Georgia, serif;
-      padding: 9px 20px; border-radius: var(--r-md); pointer-events: none; text-align: center; max-width: 62vw;
+      padding: 9px 20px; border-radius: var(--r-md); pointer-events: none; text-align: center; max-width: min(62vw, calc(100vw - 212px));
       box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.18); text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
     #mapHeader .mapProg { margin: 7px auto 1px; width: 132px; max-width: 48vw; height: 5px; border-radius: 999px;
       background: rgba(0,0,0,0.42); box-shadow: inset 0 1px 2px rgba(0,0,0,0.55); overflow: hidden; }
@@ -439,6 +439,7 @@
       opacity: 0.55;
     }
     #muster h1 { margin: 28px 0 2px; line-height: 1; font-weight: 400; }
+    @media (max-width: 560px) { #muster h1 { margin-top: 58px; } } /* clear the fixed Map/sound chips */
     #muster .sub { font-size: var(--fs-label); color: rgba(255,255,255,0.66); margin: 4px 0 18px; }
     #musterBar { width: 100%; max-width: 440px; z-index: 1; display: flex; justify-content: space-between;
       font-size: var(--fs-label); font-weight: 700; margin-bottom: 18px; color: #ffe6b0; }
@@ -461,6 +462,8 @@
     .rrow .dsc { font-size: var(--fs-caption); color: rgba(255,255,255,0.58); line-height: 1.25; margin-top: 1px; }
     .rrow .own { font-size: var(--fs-caption); font-weight: 700; color: #9fd0ff; margin-top: 3px; }
     .rrow .qty { grid-area: qty; display: flex; align-items: center; gap: 9px; }
+    .rrow .worksBtns { grid-area: rec; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .rrow .worksBtns .rbtn { width: 100%; min-height: 46px; font-size: var(--fs-label); white-space: nowrap; }
     .rrow .ct { font-size: 20px; font-weight: 800; min-width: 46px; text-align: center; color: #ffe6b0; }
     .rbtn { width: 44px; height: 44px; border-radius: var(--r-sm); border: none; font: inherit; font-size: 22px; font-weight: 800; color: #1a2433; background: linear-gradient(180deg,#ffe27a,#ffc23a); box-shadow: 0 3px 0 #c79a20; cursor: pointer; flex: 0 0 auto; }
     .rbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 #c79a20; }
