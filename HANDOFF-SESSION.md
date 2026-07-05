@@ -370,6 +370,11 @@ causes in sim.ts, all fixed:
   always accepted; fleeing men execute on rally.
 - Committed assaults (objKind storm/breach) take fear contagion ×0.5 — an
   ordered assault shoulders past fleeing friends.
+Follow-up: men who flee OFF the field are tallied in sim.attFled (per arm,
+crews excluded) at the edge-despawn, exposed via attackerFled(); main.ts
+counts them as SURVIVORS for the campaign roster + veterancy rate, and the
+Butcher's Bill shows "N fled (rejoin after)". spawned = alive + fled + dead
+verified across bench seeds (13319: 40 fled, formerly written off as dead).
 Verified: simbench 3/3 wins (62/64/165s, healthy range); dedicated test =
 one assault order at t=0, never re-issued → 64 rout→rally cycles on seed
 13319 and ZERO order-reverted frames (script pattern in git history as

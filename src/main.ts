@@ -402,6 +402,7 @@ function showEnd() {
   // The Butcher's Bill — a per-arm tally of who marched out and who came home, shown
   // for every battle. In a campaign the survival rate also attrits your standing host.
   const sp = sim.attackerSpawned(), al = sim.attackerAlive(), kills = sim.attackerKills;
+  const fled = sim.attackerFled(); // runners are not corpses — they rejoin the roster
   const surg = win && inCampaign ? (warBuffs().atk.surgeons ?? 0) : 0;
   let brought = 0, fell = 0, healed = 0;
   const rows: string[] = [];
@@ -409,10 +410,10 @@ function showEnd() {
   let tookCastle = false, battleSpoils = 0; // for the lifetime record
   for (let i = 0; i < ARMY_KEYS.length; i++) {
     const k = ARMY_KEYS[i];
-    const rate0 = sp[i] > 0 ? al[i] / sp[i] : 1;
+    const rate0 = sp[i] > 0 ? Math.min(1, (al[i] + fled[i]) / sp[i]) : 1; // fled men survive the battle
     // the surgeon corps walks the field after a victory — some of the fallen rise
     const rate = i < 4 ? Math.min(1, rate0 + (1 - rate0) * surg) : rate0;
-    const lost = Math.max(0, sp[i] - al[i]);
+    const lost = Math.max(0, sp[i] - al[i] - fled[i]);
     if (i < 4) healed += Math.round(lost * surg);
     if (inCampaign) progress.army[k] = Math.max(0, Math.round(progress.army[k] * rate));
     // veterancy: only an arm that actually FOUGHT earns experience — it must have
@@ -430,7 +431,8 @@ function showEnd() {
     if (sp[i] <= 0) continue;                         // arm wasn't mustered for this battle
     // engines are "wrecked", men "fell"; an untouched arm reports all returned
     const verb = i === 4 ? 'wrecked' : 'fell';
-    const val = (lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`) + (kills[i] > 0 ? ` \u00b7 slew ${kills[i]}` : '');
+    const val = (lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`)
+      + (fled[i] > 0 ? ` \u00b7 ${fled[i]} fled (rejoin after)` : '') + (kills[i] > 0 ? ` \u00b7 slew ${kills[i]}` : '');
     rows.push(`<div class="lrow${lost > 0 ? '' : ' none'}"><span class="ln">${TYPE_NAME[i]}</span><span class="lv">${val}</span></div>`);
   }
   if (rows.length) {

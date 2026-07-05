@@ -1173,6 +1173,9 @@ export class Sim {
   vetMul = [1, 1, 1, 1, 1];
   // kills credited to each attacker arm this battle, indexed by UType — drives XP.
   attackerKills = [0, 0, 0, 0, 0];
+  // men who broke and ran clean off the field — they are NOT dead. They find
+  // their way back to camp after the battle and rejoin the campaign roster.
+  attFled = [0, 0, 0, 0, 0];
   // transient: while a projectile's impact is being resolved, which attacker arm
   // (UType) loosed it, so a felling shot can be credited. -1 = not an attacker shot.
   private _shotCredit = -1;
@@ -1983,7 +1986,12 @@ export class Sim {
         const fz = u.faction === Faction.Attacker ? 1 : -1;
         dx = (this.px[i] > 0 ? 0.4 : -0.4); dz = fz;
         if (this.px[i] < WORLD.minX + 3 || this.px[i] > WORLD.maxX - 3 ||
-            this.pz[i] < WORLD.minZ + 3 || this.pz[i] > WORLD.maxZ - 3) { this.kill(i, u); continue; }
+            this.pz[i] < WORLD.minZ + 3 || this.pz[i] > WORLD.maxZ - 3) {
+          // off the field: gone from THIS battle, but a runner isn't a corpse —
+          // attackers are tallied as fled and rejoin the roster afterwards
+          if (u.faction === Faction.Attacker && u.crewFor < 0) this.attFled[u.type]++;
+          this.kill(i, u); continue;
+        }
       } else if (t === UType.Siege) {
         let seg = u.siegeTargetSeg;
         if (seg >= 0 && CASTLE[seg].dead) {
@@ -3111,6 +3119,7 @@ export class Sim {
   // counting them here once let crew casualties wipe the player's SAVED light infantry.
   attackerSpawned(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker && u.crewFor < 0) a[u.type] += u.count; return a; }
   attackerAlive(): number[] { const a = [0, 0, 0, 0, 0]; for (const u of this.units) if (u.faction === Faction.Attacker && u.crewFor < 0) a[u.type] += u.alive; return a; }
+  attackerFled(): number[] { return this.attFled.slice(); }
 
   // aggregate counts for HUD
   countAlive(faction: Faction): number { let n = 0; for (const u of this.units) if (u.faction === faction) n += u.alive; return n; }
