@@ -130,16 +130,20 @@ const ROSTER = [
 ] as const;
 
 const RECRUIT_STEP: Record<string, number> = { heavy: 50, light: 50, archer: 50, cavalry: 25, siege: 1 };
+// the HOST HEADER — the commander's name over a hand-tinted line of the arms they
+// lead. (A standalone function, NOT an inline block: a nested `{` inside
+// buildMuster minified to `){{`, which GitHub Pages' Jekyll pass then ate as a
+// Liquid tag — corrupting the deployed bundle. .nojekyll now guards this too.)
+function renderMusterHero() {
+  const hero = document.getElementById('musterHero');
+  if (!hero) return;
+  const counts: [ArmyKey, number][] = [['heavy', progress.army.heavy], ['light', progress.army.light + LEVY_LIGHT], ['archer', progress.army.archer], ['cavalry', progress.army.cavalry], ['siege', progress.army.siege]];
+  hero.innerHTML = `<div class="mhName">The Host of ${gname()}</div><div class="mhRow">`
+    + counts.filter(([, n]) => n > 0).map(([k, n]) => `<div class="mhArm"><img src="${UNIT_ART[k]}" alt=""><b>${n}</b></div>`).join('')
+    + '</div>';
+}
 function buildMuster() {
-  { // the HOST HEADER — the commander's name over a hand-tinted line of the arms they lead
-    const hero = document.getElementById('musterHero');
-    if (hero) {
-      const counts: [ArmyKey, number][] = [['heavy', progress.army.heavy], ['light', progress.army.light + LEVY_LIGHT], ['archer', progress.army.archer], ['cavalry', progress.army.cavalry], ['siege', progress.army.siege]];
-      hero.innerHTML = `<div class="mhName">The Host of ${gname()}</div><div class="mhRow">`
-        + counts.filter(([, n]) => n > 0).map(([k, n]) => `<div class="mhArm"><img src="${UNIT_ART[k]}" alt=""><b>${n}</b></div>`).join('')
-        + '</div>';
-    }
-  }
+  renderMusterHero();
   const rows = $('rosterRows'); rows.innerHTML = '';
   for (const r of ROSTER) {
     if (currentNoArtillery && r.key === 'siege') continue; // no siege train on a town raid

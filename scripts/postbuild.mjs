@@ -32,6 +32,13 @@ copyFileSync(src, resolve(root, 'www', 'index.html')); // Capacitor webDir
 copyFileSync(src, resolve(root, 'index.html'));        // repo-root deployable
 rmSync(src);
 
+// .nojekyll — the single most important deploy guard. Without it, GitHub Pages
+// runs the pre-built index.html through Jekyll's Liquid processor, which eats any
+// `{{ … }}` it finds in the MINIFIED JS (a nested `){{` from an inline block was
+// enough) and silently corrupts the shipped bundle. This makes Pages serve the
+// file byte-for-byte, no templating, no surprises.
+for (const dir of [root, resolve(root, 'www')]) writeFileSync(resolve(dir, '.nojekyll'), '');
+
 // Vite copies everything in public/ into www/. Mirror the icon/preview assets to
 // the repo root too, so the directly-deployable set (index.html + icons) is
 // self-contained when you drop it at getarsenal.app/castle-hassle/.
