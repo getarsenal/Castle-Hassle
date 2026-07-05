@@ -1456,7 +1456,7 @@ export class Sim {
   // Quick move: form up centred on a point, facing the castle (origin).
   orderMove(unitId: number, x: number, z: number) {
     const u = this.units[unitId];
-    if (!u || u.faction !== Faction.Attacker || u.routing) return;
+    if (!u || u.faction !== Faction.Attacker) return; // routing men take the order too — they execute it the moment they rally
     const facing = Math.atan2(0 - x, 0 - z);
     this.setAnchor(u, x, z, facing, Math.round(Math.sqrt(u.count) * 1.7));
   }
@@ -1465,7 +1465,7 @@ export class Sim {
   // toward the castle. Width of the drag sets the formation width.
   orderFormation(unitId: number, x0: number, z0: number, x1: number, z1: number) {
     const u = this.units[unitId];
-    if (!u || u.faction !== Faction.Attacker || u.routing) return;
+    if (!u || u.faction !== Faction.Attacker) return;
     const dx = x1 - x0, dz = z1 - z0;
     const width = Math.hypot(dx, dz);
     if (width < 4) { this.orderMove(unitId, x1, z1); return; }
@@ -1638,7 +1638,7 @@ export class Sim {
     const keep = cellOf(this.keepX, this.keepZ); this.field(keep);
     const fz = LAYOUT.front + 6; // archers' standoff, just short of the gate
     for (const u of this.divCompanies(div)) {
-      if (u.type === UType.Siege || u.crewFor >= 0 || u.routing) continue; // engine crews stay with their battery
+      if (u.type === UType.Siege || u.crewFor >= 0) continue; // engine crews stay with their battery (routing companies take the order and execute it on rally)
       u.hold = false; u.assault = true; u.objKind = 'storm'; u.objSeg = -1;
       if (u.type === UType.Archer) {
         const ax = Math.max(WORLD.minX + 4, Math.min(WORLD.maxX - 4, u.ax));
@@ -1664,7 +1664,7 @@ export class Sim {
     }
     if (!span.length) span.push(seg);
     for (const u of this.divCompanies(div)) {
-      if (u.type === UType.Siege || u.crewFor >= 0 || u.routing) continue; // engine crews stay with their battery
+      if (u.type === UType.Siege || u.crewFor >= 0) continue; // engine crews stay with their battery (routing companies take the order and execute it on rally)
       u.hold = false; u.assault = true;
       if (u.type === UType.Archer) {
         u.objKind = 'storm'; // archers don't batter — they shoot from a standoff by the breach
@@ -1825,6 +1825,10 @@ export class Sim {
           if ((v.cx - u.cx) ** 2 + (v.cz - u.cz) ** 2 < 25 * 25 && ++fear >= 3) break;
         }
         if (u.bearer >= 0) fear *= 0.6; else if (u.count >= 12 && u.type !== UType.Siege && u.crewFor < 0) fear *= 1.3; // the standard steadies men; its absence haunts them
+        // a company COMMITTED to the storm shoulders past fleeing friends — an
+        // ordered assault presses on; it takes real blows, not second-hand panic,
+        // to turn it back (the player's "assault the keep" must mean something)
+        if (u.faction === Faction.Attacker && (u.objKind === 'storm' || u.objKind === 'breach')) fear *= 0.5;
         if (!u.routing) {
           u.morale = Math.min(100, Math.max(0, u.morale - fear * MOR_FEAR * dt + (inContact ? 0 : MOR_RECOVER * dt)));
           u.shaken = u.morale < MOR_SHAKEN;
@@ -1837,9 +1841,12 @@ export class Sim {
           // stream for the gates, which is how a castle falls)
           if (!inContact) u.morale = Math.min(60, u.morale + MOR_RECOVER * 0.8 * dt);
           if (u.faction === Faction.Attacker && u.morale >= MOR_RALLY + 8 && u.alive / u.count >= ROUT_FRAC + 0.05) {
+            // Steadied — and the STANDING ORDER STANDS. A company told to storm the
+            // keep re-forms and goes back in; one on a hold order marches back to its
+            // ordered ground. (Rallying used to wipe the order and anchor the company
+            // wherever it stopped running — the player read that as "my arms do
+            // whatever they want".)
             u.routing = false; u.shaken = true; u.rallyCd = 8;
-            this.setAnchor(u, u.cx, u.cz, u.facing, Math.max(3, Math.round(Math.sqrt(u.alive) * 1.4)));
-            u.assault = false; u.objKind = 'hold'; u.objSeg = -1;
           }
         }
       }
@@ -2830,9 +2837,9 @@ export class Sim {
     for (const u of this.divCompanies(div)) {
       if (u.rallyCd > 0) continue;
       if (u.routing && u.alive / u.count >= ROUT_FRAC) {
+        // the horn steadies them AND the standing order stands — a storming company
+        // re-forms and goes back at the walls, it doesn't stand about where it rallied
         u.routing = false; u.shaken = true; u.morale = Math.max(u.morale, MOR_RALLY); u.rallyCd = 18; any = true;
-        u.assault = false; u.objKind = 'hold'; u.objSeg = -1;
-        this.setAnchor(u, u.cx, u.cz, u.facing, Math.max(3, Math.round(Math.sqrt(Math.max(1, u.alive)) * 1.4)));
       } else if (!u.routing && u.shaken) { u.morale = Math.max(u.morale, MOR_SHAKEN + 14); u.shaken = false; u.rallyCd = 12; any = true; }
     }
     return any;

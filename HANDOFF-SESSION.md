@@ -358,6 +358,23 @@ dusk (desert castle), dawn+mist. Sim untouched — no bench needed.
   sim ticking, rain streaks + closer fog, mist murk, wind drift note),
   night + portrait regressions clean.
 
+## Orders are STICKY now (July 2026 — "arms do whatever they want" fix)
+User: light infantry told to assault the keep ran away / stood idle. Root
+causes in sim.ts, all fixed:
+- Self-rally and rallyDiv() WIPED the standing order (assault=false,
+  objKind='hold') and re-anchored wherever the company stopped fleeing →
+  rallied companies stood in a field. Now: rally only clears routing; the
+  standing order stands (storm resumes, hold marches back to its ground).
+- assaultDiv/breachSegDiv/orderMove/orderFormation silently SKIPPED routing
+  companies → half an arm never received re-issued orders. Now orders are
+  always accepted; fleeing men execute on rally.
+- Committed assaults (objKind storm/breach) take fear contagion ×0.5 — an
+  ordered assault shoulders past fleeing friends.
+Verified: simbench 3/3 wins (62/64/165s, healthy range); dedicated test =
+one assault order at t=0, never re-issued → 64 rout→rally cycles on seed
+13319 and ZERO order-reverted frames (script pattern in git history as
+scripts/_orders.mjs).
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp
