@@ -424,6 +424,21 @@ Verified headless: noon fight (dust, crows, clouds), night (windows/moon/
 stars/campfires — beautiful), rain, feed fired "The gate is torn open!" at
 103s with screenshot.
 
+## GOTY pass, second helping (July 2026)
+- Weather AMBIENCE audio: battleAudio.wxAmbience(kind|null) in audio.ts —
+  rain = hiss band (hp1500/lp6400) + breathing low rumble; wind/mist = roaming
+  bandpass gusts (mist softer/lower). Started in newGame, stopped in openMap.
+  QA: window.__audio.wxAmb truthy when weather ≠ clear.
+- Distant SUPPLY COLUMN: 26 instanced billboards (every 9th a wagon) filing
+  west→east along a bowed road at z≈262-284, full circuit ~7.5 min
+  (lvColumn/lvColT in render.ts stepLiving).
+- Crows are CHEVRONS now (two swept-wing triangles) — the flat quad read as
+  a floating dark bar in stills.
+- Director PHOTO MODE: 📷 Photograph button (#dPhoto in director.ts panel) —
+  re-renders the frame, composites vignette + double gold rule + CASTLE
+  HASSLE caption on a 2D canvas, downloads PNG. Verified headless via CDP
+  download capture.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

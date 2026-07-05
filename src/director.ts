@@ -160,12 +160,39 @@ function build() {
       <div class="dBtn" id="dHud">Hide HUD</div>
       <div class="dBtn" id="dClean">Clean screen</div>
     </div>
+    <div class="dBtns"><div class="dBtn" id="dPhoto">📷 Photograph</div></div>
     <div class="dBtns"><div class="dBtn" id="dExit" style="border-color:#8a4436;color:#f0b0a0">✕ Exit Director Mode</div></div>`;
   const hot = document.createElement('div'); hot.id = 'dirHot'; hot.title = 'Show controls'; hot.textContent = '🎬';
 
   document.body.append(chip, panel, hot);
 
   const $ = (id: string) => panel.querySelector('#' + id) as HTMLElement;
+  $('dPhoto').addEventListener('click', () => {
+    // a FRAMED keepsake: the live frame, vignetted, ruled in gold and titled —
+    // saved as a PNG the player can post without touching an editor
+    const r = (window as any).__r; if (!r?.gl?.domElement) return;
+    try {
+      r.render(0); // freshen the buffer, then read it in the same task
+      const src = r.gl.domElement as HTMLCanvasElement;
+      const W = src.width, H = src.height;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d')!;
+      x.drawImage(src, 0, 0);
+      const vg = x.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.44, W / 2, H / 2, Math.max(W, H) * 0.72);
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(8,5,2,0.6)');
+      x.fillStyle = vg; x.fillRect(0, 0, W, H);
+      const m = Math.round(Math.min(W, H) * 0.024);
+      x.strokeStyle = 'rgba(232,206,138,0.9)'; x.lineWidth = Math.max(2, m * 0.2); x.strokeRect(m, m, W - 2 * m, H - 2 * m);
+      x.strokeStyle = 'rgba(232,206,138,0.38)'; x.lineWidth = Math.max(1, m * 0.09); x.strokeRect(m * 1.8, m * 1.8, W - 3.6 * m, H - 3.6 * m);
+      x.textAlign = 'center';
+      x.fillStyle = 'rgba(242,224,182,0.95)'; x.font = `700 ${Math.round(H * 0.034)}px Cinzel, Georgia, serif`;
+      x.fillText('CASTLE HASSLE', W / 2, H - m * 3.1);
+      x.fillStyle = 'rgba(242,224,182,0.66)'; x.font = `600 ${Math.round(H * 0.019)}px Georgia, serif`;
+      x.fillText('— a chronicle of the siege —', W / 2, H - m * 1.9);
+      const a = document.createElement('a');
+      a.download = `castle-hassle-${Date.now()}.png`; a.href = c.toDataURL('image/png'); a.click();
+    } catch (e) { console.error('photo failed', e); }
+  });
   const orbit = $('dOrbit') as HTMLInputElement;
   const autoBtn = $('dAuto'), hudBtn = $('dHud');
 

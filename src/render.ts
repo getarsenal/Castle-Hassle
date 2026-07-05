@@ -201,6 +201,7 @@ export class Renderer {
   private lvCrows?: THREE.InstancedMesh; private lvCrowN = 0;
   private lvDustT = 0; private lvCrumbled = new Set<number>();
   private lvPrevProj?: Uint8Array;
+  private lvColumn?: THREE.InstancedMesh; private lvColN = 0; private lvColT = 0;
   private hazeMesh?: THREE.InstancedMesh; private haze: { x: number; y: number; z: number; s: number }[] = [];
   private rainMesh?: THREE.InstancedMesh; private rain: { x: number; y: number; z: number; v: number }[] = [];
   private pennantMesh?: THREE.InstancedMesh; // one small standard per company, above its bearer
@@ -2366,7 +2367,13 @@ export class Renderer {
     if (!night) {
       // crows wheeling over the siege — the oldest omen there is
       this.lvCrowN = 11;
-      const crow = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.7, 0.42), new THREE.MeshBasicMaterial({ color: '#171310', side: THREE.DoubleSide }), this.lvCrowN);
+      // a chevron silhouette — two swept wings, not a rectangle
+      const cg = new THREE.BufferGeometry();
+      cg.setAttribute('position', new THREE.Float32BufferAttribute([
+        -0.95, 0.3, 0, -0.08, 0, 0, 0, 0.14, 0,
+        0.08, 0, 0, 0.95, 0.3, 0, 0, 0.14, 0,
+      ], 3));
+      const crow = new THREE.InstancedMesh(cg, new THREE.MeshBasicMaterial({ color: '#171310', side: THREE.DoubleSide }), this.lvCrowN);
       crow.frustumCulled = false; this.scene.add(crow); this.lvCrows = crow;
     }
     // campfires: real flames on the ground fires the camp already smokes from
@@ -2398,6 +2405,13 @@ export class Renderer {
         w.position.set(this.sim.keepX + (k - 1) * 3.2, 10 + k * 2.4, this.sim.keepZ + (k % 2 ? 2.5 : -2.5));
         w.scale.set(1.7, 2.2, 1); this.scene.add(w);
       }
+    }
+    { // a DISTANT SUPPLY COLUMN — men and wagons filing along the southern rim
+      // toward the camp, far enough to be tiny: the war is bigger than this field
+      this.lvColN = 26;
+      const cm = new THREE.MeshBasicMaterial({ color: '#241c12', side: THREE.DoubleSide });
+      const col = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.9, 1.7), cm, this.lvColN);
+      col.frustumCulled = false; this.scene.add(col); this.lvColumn = col;
     }
     this.lvHemiBase = this.hemi.intensity;
   }
@@ -2481,6 +2495,21 @@ export class Renderer {
         const mx = (b.x0 + b.x1) / 2, mz = (b.z0 + b.z1) / 2;
         for (let k = 0; k < 3; k++) this.spawnDust(mx + (Math.random() - 0.5) * (b.x1 - b.x0), 1.2, mz + (Math.random() - 0.5) * (b.z1 - b.z0), 5.5, 4);
       }
+    }
+    // the distant column files along its road, man after man, wagons amid them
+    if (this.lvColumn) {
+      this.lvColT += dt * 0.0022; // full circuit ~7.5 min — always something moving out there
+      for (let i = 0; i < this.lvColN; i++) {
+        let t = (this.lvColT + i * 0.011) % 1;
+        const x = -220 + t * 440;                       // west rim → east rim
+        const z = 262 + Math.sin(t * Math.PI) * 22 + Math.sin(x * 0.05) * 4; // bowed road, gentle wander
+        const wagon = i % 9 === 4;                      // every ninth place, a wagon
+        this.dummy.position.set(x, wagon ? 1.1 : 0.9 + Math.abs(Math.sin(this.time * 5 + i)) * 0.12, z);
+        this.dummy.quaternion.copy(this.billboard);
+        this.dummy.scale.set(wagon ? 2.6 : 1, wagon ? 1.1 : 1, 1);
+        this.dummy.updateMatrix(); this.lvColumn.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.lvColumn.instanceMatrix.needsUpdate = true;
     }
     // arrows that find only earth kick a little of it up — massed volleys READ
     const prj = sim.projectiles;

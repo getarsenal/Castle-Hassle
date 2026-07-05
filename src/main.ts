@@ -261,6 +261,7 @@ function newGame() {
   try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod, weather });
   currentWeather = weather; battleStartAt = 0;
+  battleAudio.wxAmbience(weather); // the sky you fight under is the sky you hear
   evSt.walls = 0; evSt.gates = 0; evSt.keep = false; evSt.defBreak = false; evSt.attWaver = false; evSt.t = 0;
   document.getElementById('evFeed')?.replaceChildren();
   { // the light weather note under the top-left cluster — what the sky is doing
@@ -813,6 +814,7 @@ function warBuffs(): { atk: AtkBuff; discount: number; trebs: number } {
 // into the Sim so a long-served arm fields hardier, deadlier men.
 function vetMulArray(): number[] { return ARMY_KEYS.map(k => vetMultiplier(vetRank(progress.vet[k].xp))); }
 function openMap() {
+  battleAudio.wxAmbience(null); // leave the weather on the field
   battleAudio.mapAmbience(true); // wind + gulls over the campaign world
   activeCastle = null; activeRaid = null;
   show('titleScreen', false); show('muster', false); show('map', true); // (the sting overlay, if up, fades itself out over the now-visible map)

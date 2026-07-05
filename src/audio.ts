@@ -167,6 +167,46 @@ class BattleAudioImpl {
       stop: () => { clearInterval(iv); try { src.stop(); roam.stop(); bre.stop(); src.disconnect(); band.disconnect(); lp.disconnect(); g.disconnect(); roamG.disconnect(); breG.disconnect(); } catch { /* ctx closed */ } },
     };
   }
+  // ---- battle weather ambience: rain patter / wind gusts / mist hush ----
+  private wxAmb?: { gain: GainNode; stop: () => void };
+  wxAmbience(kind: 'clear' | 'rain' | 'mist' | 'wind' | null) {
+    if (this.wxAmb) { // stop whatever sky was playing
+      const a = this.wxAmb; this.wxAmb = undefined;
+      if (this.ctx) a.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.4);
+      setTimeout(() => a.stop(), 1800);
+    }
+    if (!kind || kind === 'clear') return;
+    this.ensure(); const ctx = this.ctx; if (!ctx) return;
+    const g = this.g(0); g.connect(this.master);
+    const nodes: (AudioNode | OscillatorNode | AudioBufferSourceNode)[] = [g];
+    if (kind === 'rain') {
+      // patter: bright hissy noise band; body: a low washing rumble that breathes
+      const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
+      const hp = this.bq('highpass', 1500), lp = this.bq('lowpass', 6400), pg = this.g(0.55);
+      src.connect(hp).connect(lp).connect(pg).connect(g);
+      const src2 = ctx.createBufferSource(); src2.buffer = this.noiseBuf; src2.loop = true;
+      const rum = this.bq('lowpass', 130), rg = this.g(0.5);
+      src2.connect(rum).connect(rg).connect(g);
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.09; const lg = this.g(0.14);
+      lfo.connect(lg).connect(rg.gain); lfo.start();
+      src.start(); src2.start(Math.random());
+      g.gain.setTargetAtTime(0.075, ctx.currentTime, 1.2);
+      nodes.push(src, src2, hp, lp, pg, rum, rg, lfo, lg);
+    } else {
+      // wind (and the mist's hush — the same air, softer and lower)
+      const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
+      const band = this.bq('bandpass', kind === 'mist' ? 240 : 330, 0.5), lp = this.bq('lowpass', kind === 'mist' ? 620 : 1100);
+      src.connect(band).connect(lp).connect(g);
+      const roam = ctx.createOscillator(); roam.frequency.value = 0.06; const roamG = this.g(kind === 'mist' ? 60 : 130);
+      roam.connect(roamG).connect(band.frequency); roam.start();
+      const gust = ctx.createOscillator(); gust.frequency.value = kind === 'mist' ? 0.1 : 0.16; const gustG = this.g(kind === 'mist' ? 0.012 : 0.03);
+      gust.connect(gustG).connect(g.gain); gust.start();
+      src.start(Math.random());
+      g.gain.setTargetAtTime(kind === 'mist' ? 0.035 : 0.06, ctx.currentTime, 1.4);
+      nodes.push(src, band, lp, roam, roamG, gust, gustG);
+    }
+    this.wxAmb = { gain: g, stop: () => { for (const n of nodes) { try { (n as OscillatorNode).stop?.(); } catch { /* not a source */ } try { n.disconnect(); } catch { /* ctx closed */ } } } };
+  }
   private gullCry() {
     const ctx = this.ctx; if (!ctx) return;
     const out = this.bus(0.16, (Math.random() - 0.5) * 1.1, 0.3);
