@@ -386,6 +386,19 @@ the wall-bbox centre (the sim recentres docs, so the frame follows the
 drawing); dashed "typical stronghold" box 160×140; adaptive scale bar
 (10/20/40/80/160 paces) bottom-left. All drawn under the walls, bar on top.
 
+## Battle HUD: no-overlap guarantee + Workshop round-trip (July 2026)
+- #topLeft is flex-shrink:0, #topRight flex-wraps (row-gap 6px) → the right
+  cluster wraps to a second row instead of sliding over the counter. ≤700px
+  the Push button goes icon-only 44px (.pushLbl hidden). Verified 320/390/
+  1170px with a pairwise getBoundingClientRect overlap check: 0 overlaps.
+- Push now ANNOUNCES itself via #hint (auto-dismiss 5.2s) — the morale surge
+  was invisible and read as a dead button.
+- Workshop test battles show a "‹ Workshop" button (#wsBack, in the stacking
+  #topLeft column): pauses the sim, reopens the editor, restores the tested
+  doc via __editor.setDoc + name input. workshopTest state hoisted next to
+  pendingDoc (TDZ: updateTopbar reads it during the boot backdrop); cleared
+  in enterCastle/enterRaid/startCustomBattle.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

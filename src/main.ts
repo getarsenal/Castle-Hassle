@@ -7,7 +7,7 @@ import { openMainMenu, openSettings, openAchievements, openGameMenu } from './me
 import { playConquest } from './conquest';
 import { nextQuality } from './adaptres';
 import { surveyCastle, CastleDoc } from './sim';
-import { openEditor, loadDocs } from './editor';
+import { openEditor, loadDocs, TestCfg } from './editor';
 import { assessBattle } from './balance';
 import { WorldMap3D } from './worldmap3d';
 import { computeBuffs, openUpgrades } from './upgrades';
@@ -68,7 +68,14 @@ function gameConfirm(opts: { title: string; body: string; confirm: string; cance
   el.classList.add('show');
 }
 document.getElementById('pushBtn')?.addEventListener('click', () => {
-  if (sim.generalsPush()) { battleAudio.horn('call'); renderer.shake(0.5); updateTopbar(); }
+  if (sim.generalsPush()) {
+    battleAudio.horn('call'); renderer.shake(0.5); updateTopbar();
+    // the effect is morale — invisible unless we SAY it (players read a silent
+    // button as broken). Announce it, then tidy the note away.
+    hintEl.classList.remove('dismissed');
+    hintText.textContent = "THE GENERAL'S PUSH — the whole host finds its blood: harder blows, steadier nerves, for a time.";
+    window.setTimeout(() => hintEl.classList.add('dismissed'), 5200);
+  }
 });
 retreatBtn?.addEventListener('click', () => gameConfirm({
   title: 'Sound the Retreat?', body: 'Your surviving troops withdraw in good order — the castle is not taken.',
@@ -175,6 +182,7 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 // ---------------- New game ----------------
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let pendingDoc: CastleDoc | undefined; // a Workshop playtest layout, consumed by the next newGame()
+let workshopTest: { doc: CastleDoc; cfg: TestCfg } | null = null; // the doc under test — powers the "back to Workshop" button (hoisted: updateTopbar reads it during the boot backdrop)
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
 let currentBiome: Biome = 'britain';
@@ -269,6 +277,7 @@ function updateTopbar() {
   pauseBtn?.classList.toggle('show', inBattle);
   const pushBtn = document.getElementById('pushBtn') as HTMLButtonElement | null;
   if (pushBtn) { pushBtn.classList.toggle('show', inBattle && !sim.pushUsed); }
+  document.getElementById('wsBack')?.classList.toggle('show', !!workshopTest);
   speedBtn?.classList.toggle('show', inBattle);
   retreatBtn?.classList.toggle('show', inBattle);
   helpBtn?.classList.toggle('show', sim.phase === 'deploy'); // help lives on the deploy screen; battle top stays uncluttered
@@ -806,6 +815,7 @@ function bringable(key: ArmyKey): number {
   return progress.army[key];
 }
 function enterCastle(c: CampaignCastle) {
+  workshopTest = null;
   activeCastle = c; activeRaid = null; currentNoArtillery = false; currentVet = null;
   currentTowers = 0; currentRam = false; // assault works are bought per siege
   const w = warBuffs(); currentBuff = w.atk; currentDiscount = w.discount; currentExtraTrebs = w.trebs;
@@ -826,6 +836,7 @@ function enterCastle(c: CampaignCastle) {
 // pays its gold reward (repeatable) instead of unlocking the next siege. A fresh
 // seed each time so the fort varies from raid to raid.
 function enterRaid(r: Raid) {
+  workshopTest = null;
   activeRaid = r; activeCastle = null; currentVet = null;
   currentTowers = 0; currentRam = false;
   // a palisade-town raid is an infantry affair — no siege train
@@ -1029,7 +1040,9 @@ function devDiagText(): string {
   return rows.map(([k, v]) => `${k}: ${v}`).join('\n');
 }
 // ---- the Castle Workshop: full manual control over castle plans ----
-(window as any).__openWorkshop = () => openEditor((doc, cfg) => {
+function openWorkshop() {
+  return openEditor((doc, cfg) => {
+  workshopTest = { doc: JSON.parse(JSON.stringify(doc)), cfg };
   pendingDoc = doc;
   comp.heavy = cfg.heavy; comp.light = cfg.light; comp.archer = cfg.archer; comp.cavalry = cfg.cavalry; comp.siege = cfg.siege;
   currentSeed = 1234; currentDifficulty = cfg.garrison; currentStyle = undefined as any; // garrison slider rides the difficulty scalar
@@ -1040,9 +1053,21 @@ function devDiagText(): string {
   for (const id of ['intro', 'titleScreen', 'map', 'muster', 'banner']) show(id, false);
   document.getElementById('hud')?.classList.remove('over');
   newGame();
+  });
+}
+(window as any).__openWorkshop = openWorkshop;
+document.getElementById('wsBack')?.addEventListener('click', () => {
+  if (!workshopTest) return;
+  paused = true; pauseBtn?.classList.add('on'); // freeze the test while you edit
+  const t = workshopTest;
+  openWorkshop();
+  (window as any).__editor?.setDoc(JSON.parse(JSON.stringify(t.doc)));
+  const ni = document.getElementById('cwName') as HTMLInputElement | null;
+  if (ni) ni.value = t.doc.name || 'New Castle';
 });
 
 function startCustomBattle(cfg: DevConfig) {
+  workshopTest = null;
   currentTowers = 0; currentRam = false; // dev battles never carry campaign equipment
   comp.heavy = cfg.army.heavy; comp.light = cfg.army.light; comp.archer = cfg.army.archer;
   comp.cavalry = cfg.army.cavalry; comp.siege = cfg.army.siege;
