@@ -296,7 +296,7 @@ export class Renderer {
     // light, far biome haze so the horizon hills read with depth without the old
     // wall of fog swallowing the field
     let fogNear = B.fogNear, fogFar = B.fogFar, fogCol = B.fog;
-    if (this.weather === 'mist') { fogNear = 90; fogFar = 420; fogCol = '#cfd3cd'; }       // the field swims in murk
+    if (this.weather === 'mist') { fogNear = 190, fogFar = 820, fogCol = '#cfd3cd'; }      // a soft veil — the FIELD stays readable for deploy/orders; the murk takes the distance
     else if (this.weather === 'rain') { fogNear = B.fogNear * 0.6; fogFar = B.fogFar * 0.7; }
     this.scene.fog = new THREE.Fog(fogCol, fogNear, fogFar);
     this.fogC.set(fogCol);

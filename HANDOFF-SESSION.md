@@ -344,6 +344,7 @@ dusk (desert castle), dawn+mist. Sim untouched — no bench needed.
 - `this.fogC` = EFFECTIVE fog colour (biome × TOD × weather) set in the
   constructor; vista haze, sky band, ground dissolve, skirt, apron and smoke
   fade all key off it (mist's #cfd3cd wall now matches the horizon kit).
+- Mist lightened after playtest ("can't see to deploy"): 90/420 → 190/820.
 - Scene fog OFF for vista rings in clear/wind (their haze falloff is baked
   from the same pigment; scene fog was re-washing the far side to 70-100%
   white — the "washed out slopes"). Mist/rain keep fog:true so the murk
