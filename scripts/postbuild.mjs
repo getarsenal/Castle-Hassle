@@ -5,7 +5,7 @@
 import { copyFileSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const src = resolve(root, 'www', 'index.dev.html');
@@ -16,12 +16,17 @@ if (!existsSync(src)) {
 }
 
 // Stamp the build so any device can prove WHICH build it is showing
-// (Settings displays window.__BUILD — ends the "did the deploy land?" guessing)
-let sha = 'local';
-try { sha = execSync('git rev-parse --short HEAD', { cwd: root }).toString().trim(); } catch { /* no git in some CI images */ }
+// (Settings displays window.__BUILD — ends the "did the deploy land?" guessing).
+// The id is a CONTENT hash of the actual shipped bytes, NOT the git SHA: the
+// build runs before the commit exists, so a git SHA always stamped the PARENT
+// commit (off by one — the source of every "it says an old build" confusion).
+// A content fingerprint is correct by construction and verifiable on any device.
+const raw = readFileSync(src, 'utf8');
+const id = createHash('sha256').update(raw).digest('hex').slice(0, 8);
 const when = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
-const stamped = readFileSync(src, 'utf8').replace('</body>', `<script>window.__BUILD='${sha} \u00b7 ${when}';</script></body>`);
+const stamped = raw.replace('</body>', `<script>window.__BUILD='${id} \u00b7 ${when}';</script></body>`);
 writeFileSync(src, stamped);
+console.log('postbuild: build id', id);
 
 copyFileSync(src, resolve(root, 'www', 'index.html')); // Capacitor webDir
 copyFileSync(src, resolve(root, 'index.html'));        // repo-root deployable
