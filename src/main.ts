@@ -1,7 +1,7 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF, CASTLE } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars, rollGeneralName } from './campaign';
 import { loadProfile, saveProfile, recordBattle, DIFFICULTY, ACHIEVEMENTS } from './profile';
 import { openMainMenu, openSettings, openAchievements, openGameMenu } from './menu';
 import { playConquest } from './conquest';
@@ -39,10 +39,10 @@ declare const __BUILD__: string; // injected at build time (commit + timestamp)
     const P = Array.from({ length: 34 }, () => ({ x: Math.random(), y: Math.random(), s: 0.6 + Math.random() * 1.7, v: 0.008 + Math.random() * 0.03, w: Math.random() * 6.28 }));
     let lastT = 0;
     const tick = (tm: number) => {
+      if (!host.classList.contains('show') || !ex) { window.setTimeout(() => requestAnimationFrame(tick), 600); return; }
       requestAnimationFrame(tick);
-      if (!host.classList.contains('show') || !ex) return;
       const dtm = Math.min(0.05, (tm - lastT) / 1000); lastT = tm;
-      if (cv.width !== host.clientWidth) { cv.width = host.clientWidth; cv.height = host.clientHeight; }
+      if (cv.width !== host.clientWidth || cv.height !== host.clientHeight) { cv.width = host.clientWidth; cv.height = host.clientHeight; }
       ex.clearRect(0, 0, cv.width, cv.height);
       for (const m of P) {
         m.y -= m.v * dtm * 12; m.w += dtm; m.x += Math.sin(m.w) * 0.0004;
@@ -102,8 +102,9 @@ document.getElementById('pushBtn')?.addEventListener('click', () => {
     // the effect is morale — invisible unless we SAY it (players read a silent
     // button as broken). Announce it, then tidy the note away.
     hintEl.classList.remove('dismissed');
-    hintText.textContent = "THE GENERAL'S PUSH — the whole host finds its blood: harder blows, steadier nerves, for a time.";
-    window.setTimeout(() => hintEl.classList.add('dismissed'), 5200);
+    const pushMsg = "THE GENERAL'S PUSH — the whole host finds its blood: harder blows, steadier nerves, for a time.";
+    hintText.textContent = pushMsg;
+    window.setTimeout(() => { if (hintText.textContent === pushMsg) hintEl.classList.add('dismissed'); }, 5200);
   }
 });
 retreatBtn?.addEventListener('click', () => gameConfirm({
@@ -130,6 +131,15 @@ const ROSTER = [
 
 const RECRUIT_STEP: Record<string, number> = { heavy: 50, light: 50, archer: 50, cavalry: 25, siege: 1 };
 function buildMuster() {
+  { // the HOST HEADER — the commander's name over a hand-tinted line of the arms they lead
+    const hero = document.getElementById('musterHero');
+    if (hero) {
+      const counts: [ArmyKey, number][] = [['heavy', progress.army.heavy], ['light', progress.army.light + LEVY_LIGHT], ['archer', progress.army.archer], ['cavalry', progress.army.cavalry], ['siege', progress.army.siege]];
+      hero.innerHTML = `<div class="mhName">The Host of ${gname()}</div><div class="mhRow">`
+        + counts.filter(([, n]) => n > 0).map(([k, n]) => `<div class="mhArm"><img src="${UNIT_ART[k]}" alt=""><b>${n}</b></div>`).join('')
+        + '</div>';
+    }
+  }
   const rows = $('rosterRows'); rows.innerHTML = '';
   for (const r of ROSTER) {
     if (currentNoArtillery && r.key === 'siege') continue; // no siege train on a town raid
@@ -204,15 +214,19 @@ $('musterBtn').addEventListener('click', () => {
   while (currentTowers * 250 + (currentRam ? 300 : 0) > progress.gold) { if (currentRam) currentRam = false; else if (currentTowers > 0) currentTowers--; else break; }
   const worksCost = currentTowers * 250 + (currentRam ? 300 : 0);
   if (worksCost > 0) { progress.gold -= worksCost; saveProgress(progress); }
-  battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame(); startTutorial();
+  battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame();
+  // the FIRST siege of a campaign always walks its commander through the craft,
+  // even for a player who once skipped the tour in another mode
+  if (activeCastle && progress.completed.length === 0) startTutorial(true); else startTutorial();
 });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
 // ---------------- New game ----------------
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let pendingDoc: CastleDoc | undefined; // a Workshop playtest layout, consumed by the next newGame()
+const gname = () => progress?.name || 'the Crusader';
 let currentWeather = 'clear'; // for the battle-report flavour line
-let battleStartAt = 0; // when the assault was sounded (report flavour)
+let battleSecs = 0; // accumulated real BATTLE time (skips pause + overlays) for the report
 // battle EVENT FEED trackers — reset each newGame
 const evSt = { walls: 0, gates: 0, keep: false, defBreak: false, attWaver: false, t: 0 };
 function battleEvent(msg: string, vib = 0) {
@@ -260,8 +274,11 @@ function newGame() {
   let tod = TODS[(currentSeed >>> 3) % 8] as (typeof TODS)[number];
   try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod, weather });
-  currentWeather = weather; battleStartAt = 0;
-  battleAudio.wxAmbience(weather); // the sky you fight under is the sky you hear
+  currentWeather = weather; battleSecs = 0;
+  // the sky you fight under is the sky you hear — but only in a REAL battle
+  // (the boot-time backdrop sim must not create an AudioContext or hiss under menus)
+  if (activeCastle || activeRaid || workshopTest) battleAudio.wxAmbience(weather);
+  else battleAudio.wxAmbience(null);
   evSt.walls = 0; evSt.gates = 0; evSt.keep = false; evSt.defBreak = false; evSt.attWaver = false; evSt.t = 0;
   document.getElementById('evFeed')?.replaceChildren();
   { // the light weather note under the top-left cluster — what the sky is doing
@@ -299,12 +316,14 @@ function buildCards() {
     card.innerHTML = `<div class="cardTop"><img class="cardIc" src="${art}" alt=""><div class="cardTxt"><div class="name">${TYPE_NAME[a.type]}</div><div class="count">${a.alive}</div></div></div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
     let lastTap = 0;
     card.addEventListener('click', () => {
-      const now = performance.now();
-      if (now - lastTap < 380 && selected === div) { // double-tap: fly to the arm
+      const now = performance.now(); const dbl = now - lastTap < 380; lastTap = now;
+      if (dbl) { // double-tap: fly the camera to the arm (and keep it selected)
         const agg = sim.divAgg(div);
         if (agg.alive > 0) { renderer.introT = 0; renderer.camTarget.x = agg.cx; renderer.camTarget.z = agg.cz; }
-      } else { selected = selected === div ? -1 : div; attackArm = -1; refreshCards(); updateHint(); updateTools(); }
-      lastTap = now;
+        if (selected !== div) { selected = div; attackArm = -1; refreshCards(); updateHint(); updateTools(); }
+        return;
+      }
+      selected = selected === div ? -1 : div; attackArm = -1; refreshCards(); updateHint(); updateTools();
     });
     cardsEl.appendChild(card);
   }
@@ -446,7 +465,12 @@ function updateTools() {
 }
 
 startBtn.addEventListener('click', () => { sim.begin(); startbar.style.display = 'none'; updateHint(); battleAudio.ensure(); battleAudio.horn('call'); battleAudio.startAmbience(); renderer.cinematicIntro(); });
-restartBtn.addEventListener('click', () => { banner.classList.remove('show'); if (activeCastle || activeRaid) openMap(); else { buildMuster(); $('muster').classList.add('show'); } });
+restartBtn.addEventListener('click', () => {
+  banner.classList.remove('show');
+  if (activeCastle || activeRaid) openMap();
+  else if (workshopTest) { pendingDoc = JSON.parse(JSON.stringify(workshopTest.doc)); newGame(); } // re-test the SAME design
+  else { buildMuster(); $('muster').classList.add('show'); }
+});
 
 function showEnd() {
   const win = sim.winner === Faction.Attacker;
@@ -495,7 +519,7 @@ function showEnd() {
     if (sp[i] <= 0) continue;                         // arm wasn't mustered for this battle
     // engines are "wrecked", men "fell"; an untouched arm reports all returned
     const verb = i === 4 ? 'wrecked' : 'fell';
-    const val = (lost > 0 ? `${lost} of ${sp[i]} ${verb}` : `all ${sp[i]} returned`)
+    const val = (lost > 0 ? `${lost} of ${sp[i]} ${verb}` : fled[i] > 0 ? `${al[i]} of ${sp[i]} returned` : `all ${sp[i]} returned`)
       + (fled[i] > 0 ? ` \u00b7 ${fled[i]} fled (rejoin after)` : '') + (kills[i] > 0 ? ` \u00b7 slew ${kills[i]}` : '');
     rows.push(`<div class="lrow${lost > 0 ? '' : ' none'}"><span class="ln">${TYPE_NAME[i]}</span><span class="lv">${val}</span></div>`);
   }
@@ -519,7 +543,7 @@ function showEnd() {
   } else if (win) {
     bannerTitle.textContent = 'CASTLE TAKEN';
     bannerTitle.style.color = '#5fd16a';
-    bannerText.textContent = sim.captureProgress >= 0.999 ? 'Your banner flies over the keep — the castle is yours.' : 'The garrison is shattered — the castle is yours.';
+    bannerText.textContent = sim.captureProgress >= 0.999 ? `The banner of ${gname()} flies over the keep — the castle is yours.` : `The garrison is shattered — the castle is yours, ${gname()}.`;
     if (activeCastle) {
       const firstTake = !progress.completed.includes(activeCastle.id);
       const goldBefore = progress.gold; let goldGained = 0;
@@ -553,8 +577,8 @@ function showEnd() {
     bannerText.textContent = activeRaid ? 'They drove your raiders off empty-handed.' : 'Your assault was thrown back from the walls.';
   }
   bannerText.textContent += casualtyLine;
-  if (battleStartAt) { // how long the assault ran, and under what sky
-    const secs = Math.max(1, Math.round((performance.now() - battleStartAt) / 1000));
+  if (battleSecs > 0.5) { // how long the assault ran, and under what sky
+    const secs = Math.max(1, Math.round(battleSecs));
     const WXW: Record<string, string> = { clear: 'clear skies', rain: 'driving rain', mist: 'the mist', wind: 'a crosswind' };
     bannerText.textContent += `  The assault lasted ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`} under ${WXW[currentWeather] ?? 'open skies'}.`;
     try { if (win && navigator.vibrate) navigator.vibrate([70, 60, 110]); } catch { /* unsupported */ }
@@ -765,6 +789,26 @@ const castles = generateCastles();
 const raids = generateRaids();
 let progress: Progress = loadProgress();
 let profile = loadProfile();
+// Name the commander of a fresh crusade: a rolled name, a reroll die, an input.
+function askGeneralName(done: (name: string) => void) {
+  let el = document.getElementById('gname') as HTMLElement | null;
+  if (!el) { el = document.createElement('div'); el.id = 'gname'; el.className = 'gameConfirm'; document.body.appendChild(el); }
+  el.innerHTML = `<div class="gcCard"><div class="gcTitle">Who leads this crusade?</div>
+    <div class="gcBody">History will remember the name.</div>
+    <div style="display:flex;gap:8px;margin:10px 0 4px">
+      <input id="gnameIn" maxlength="28" style="flex:1;min-width:0;background:#2e2311;border:1px solid #6b532b;border-radius:9px;color:#f3e6cf;font:600 15px 'EB Garamond',Georgia,serif;padding:9px 11px">
+      <button class="ui-btn" id="gnameRoll" title="Roll another name" style="flex:0 0 auto">⚄</button>
+    </div>
+    <div class="gcRow"><button class="ui-btn gcOk" style="width:100%">Begin the Crusade</button></div></div>`;
+  const input = el.querySelector('#gnameIn') as HTMLInputElement;
+  input.value = rollGeneralName();
+  el.querySelector('#gnameRoll')!.addEventListener('click', () => { input.value = rollGeneralName(); });
+  el.querySelector('.gcOk')!.addEventListener('click', () => {
+    el!.classList.remove('show');
+    done(input.value.trim() || rollGeneralName());
+  });
+  el.classList.add('show');
+}
 // The main menu: pick a save slot (or start fresh), reachable from the title.
 function showMainMenu() {
   battleAudio.mapAmbience(false); // menu music takes over from the map wind
@@ -773,7 +817,11 @@ function showMainMenu() {
     onPlay: (slot, isNew) => {
       setActiveSlot(slot);
       progress = isNew ? freshProgress() : loadProgress();
-      if (isNew) { progress.started = Date.now(); saveProgress(progress); }
+      if (isNew) {
+        progress.started = Date.now();
+        askGeneralName((nm) => { progress.name = nm; saveProgress(progress); openMap(); });
+        return;
+      }
       openMap();
     },
     onSettings: () => openSettings(profile, applySettings, () => {}),
@@ -1120,7 +1168,7 @@ function openWorkshop() {
 (window as any).__openWorkshop = openWorkshop;
 document.getElementById('wsBack')?.addEventListener('click', () => {
   if (!workshopTest) return;
-  paused = true; pauseBtn?.classList.add('on'); // freeze the test while you edit
+  paused = true; pauseBtn?.classList.add('on'); document.getElementById('pausedTag')?.classList.add('show'); // freeze the test while you edit
   const t = workshopTest;
   openWorkshop();
   (window as any).__editor?.setDoc(JSON.parse(JSON.stringify(t.doc)));
@@ -1333,21 +1381,21 @@ function frame(now: number) {
   // Skip the battle render while a full-screen overlay covers it (the 3D map,
   // title or splash) — no point drawing two WebGL scenes at once.
   const covered = ['map', 'titleScreen', 'intro', 'muster'].some(id => document.getElementById(id)?.classList.contains('show'))
-    || !!document.querySelector('.menuScreen, .upgScreen, .raidScreen, .ovPanel'); // opaque overlays: menus, War Council, Raids, settings
+    || !!document.querySelector('.menuScreen, .upgScreen, .raidScreen, .ovPanel, #cwShell'); // opaque overlays: menus, War Council, Raids, settings, the Workshop
   const tg = performance.now();
   if (!covered) renderer.render(Math.min(dt, 0.05));
   gfxMs += performance.now() - tg;
   refreshCards(); updateTopbar(); tickChargeBtn();
   // ---- the CHRONICLE: moments called out as they happen ----
   if (sim.phase === 'battle') {
-    if (!battleStartAt) battleStartAt = performance.now();
+    if (!paused) battleSecs += dt; // count only live battle time
     evSt.t -= dt;
     if (evSt.t <= 0) {
       evSt.t = 0.4;
       let walls = 0, gates = 0;
       for (const b of CASTLE) { if (!b.dead) continue; if (b.kind === 'wall') walls++; else if (b.kind === 'gate' && b.h > 3) gates++; }
       if (gates > evSt.gates) battleEvent('The gate is torn open!', 60);
-      else if (walls > evSt.walls) battleEvent('A breach — the wall comes down!', 45);
+      if (walls > evSt.walls) battleEvent('A breach — the wall comes down!', 45);
       evSt.walls = walls; evSt.gates = gates;
       if (!evSt.keep && sim.captureProgress > 0.02) { evSt.keep = true; battleEvent('Your banners reach the keep!', 40); }
       let dTot = 0, dRout = 0, aTot = 0, aRout = 0;

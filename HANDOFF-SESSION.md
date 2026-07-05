@@ -439,6 +439,37 @@ stars/campfires — beautiful), rain, feed fired "The gate is torn open!" at
   HASSLE caption on a 2D canvas, downloads PNG. Verified headless via CDP
   download capture.
 
+## Playthrough deep-dive + code-review fixes (July 2026)
+FEATURES (main.ts/campaign.ts/muster.ts/worldmap3d.ts):
+- Named commander: Progress.name, rollGeneralName() (first+epithet tables),
+  askGeneralName() dialog (#gname, reroll die) on fresh-campaign start;
+  gname() helper; muster HOST HEADER (#musterHero, illuminated strip of
+  sepia arm portraits, "The Host of <name>"); map muster roll h2 named;
+  victory banner speaks the name.
+- Forced first-siege tutorial: activeCastle && completed.length===0 →
+  startTutorial(true) even if the battle tour was skipped elsewhere.
+- Conquered COUNTRY turns ashen: worldmap3d conqueredRegions() (all a
+  region's nodes done) → ash stone/roof materials + every stronghold of a
+  fallen country smoulders (hearth-smoke site list prioritises conquered).
+CODE-REVIEW FIXES (8-angle review of HEAD~6..HEAD, 3 finders):
+- render: campfires (brazier seg<0) skip the battlement bowl + dup smoke;
+  wall-collapse dust moved INTO crumble() (one-shot, deleted per-frame
+  segVis scan + lvCrumbled Set); lvPrevProj grows by COPY not zero.
+- main: wxAmbience only in real battles (was hissing under title/menus from
+  the boot backdrop sim); #cwShell added to `covered` (battle stops
+  rendering under the Workshop); Fight Again re-tests the workshop doc;
+  wsBack shows #pausedTag; Butcher's Bill "N of M returned" when only
+  runners; orderMove/orderFormation CANCEL a standing storm (pull-back
+  sticks through rally); Push hint only self-dismisses; card double-tap
+  flies from any state; battle-report duration = accumulated live secs
+  (skips pause/overlays); gate+wall same-tick both announce; ember canvas
+  resizes on height; title embers park while hidden.
+- director: Photograph captures the ACTIVE scene (map when up, else battle).
+- audio: rain/wind decorrelate via start(0, offset) not start(offset).
+Bench 3/3 unchanged. Full new-campaign flow verified headless (name dialog
++ reroll, forced tutorial, named muster, resume-to-map, conquered ash),
+zero console errors.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

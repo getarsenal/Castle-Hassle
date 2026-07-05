@@ -170,10 +170,18 @@ function build() {
   $('dPhoto').addEventListener('click', () => {
     // a FRAMED keepsake: the live frame, vignetted, ruled in gold and titled —
     // saved as a PNG the player can post without touching an editor
-    const r = (window as any).__r; if (!r?.gl?.domElement) return;
+    // photograph whichever scene the player is LOOKING at — the campaign map
+    // when it's up, else the battle (__r would happily re-render a stale battle)
+    const mapLive = document.getElementById('map')?.classList.contains('show');
+    const wm = (window as any).__map;
+    let src: HTMLCanvasElement;
     try {
-      r.render(0); // freshen the buffer, then read it in the same task
-      const src = r.gl.domElement as HTMLCanvasElement;
+      if (mapLive && wm?.renderer) { wm.renderer.render(wm.scene, wm.camera); src = wm.renderer.domElement; }
+      else {
+        const r = (window as any).__r; if (!r?.gl?.domElement) return;
+        r.render(0); // freshen the buffer, then read it in the same task
+        src = r.gl.domElement as HTMLCanvasElement;
+      }
       const W = src.width, H = src.height;
       const c = document.createElement('canvas'); c.width = W; c.height = H;
       const x = c.getContext('2d')!;

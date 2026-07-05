@@ -199,7 +199,7 @@ export class Renderer {
   private lvBoltT = 12; private lvFlashT = 0; private lvHemiBase = 1;
   private lvSnow?: THREE.Points;
   private lvCrows?: THREE.InstancedMesh; private lvCrowN = 0;
-  private lvDustT = 0; private lvCrumbled = new Set<number>();
+  private lvDustT = 0;
   private lvPrevProj?: Uint8Array;
   private lvColumn?: THREE.InstancedMesh; private lvColN = 0; private lvColT = 0;
   private hazeMesh?: THREE.InstancedMesh; private haze: { x: number; y: number; z: number; s: number }[] = [];
@@ -1558,6 +1558,7 @@ export class Renderer {
     }
     const bowlMat = this.stone('#2a2320');
     for (const p of this.braziers) {
+      if (p.seg < 0) continue; // a ground campfire: it already has its own smoke, and no battlement bowl
       const bowls: THREE.BufferGeometry[] = [new THREE.CylinderGeometry(1.0, 0.6, 0.7, 8).translate(p.x, p.y - 0.4, p.z)];
       for (let k = 0; k < 3; k++) { const a = k / 3 * 6.28; bowls.push(new THREE.CylinderGeometry(0.09, 0.09, 1.5, 4).translate(p.x + Math.cos(a) * 0.5, p.y - 1.25, p.z + Math.sin(a) * 0.5)); }
       const bowl = new THREE.Mesh(mergeGeometries(bowls, false), bowlMat); this.scene.add(bowl);
@@ -1877,6 +1878,10 @@ export class Renderer {
   private crumble(s: number) {
     const v = this.segVis[s]; if (!v || v.crumbling > 0) return;
     v.crumbling = 0.0001; v.mat.color.copy(this.rubbleMat.color);
+    { // the collapse buries its own foot in a rolling dust billow
+      const b = CASTLE[s];
+      if (b) for (let k = 0; k < 3; k++) this.spawnDust((b.x0 + b.x1) / 2 + (Math.random() - 0.5) * (b.x1 - b.x0), 1.2, (b.z0 + b.z1) / 2 + (Math.random() - 0.5) * (b.z1 - b.z0), 5.5, 4);
+    }
     // a real collapse leaves a MOUND of fallen ashlar spilling from the breach
     const seg = CASTLE[s], sw = seg.x1 - seg.x0, sd = seg.z1 - seg.z0;
     this.spawnRubble(v.box.position.x, v.box.position.z, Math.max(sw, sd), v.h, sw >= sd);
@@ -2486,16 +2491,6 @@ export class Renderer {
       }
       for (const pr of sim.projectiles) if (pr.active && pr.big) this.spawnDust(pr.x, pr.y, pr.z, 0.9, 1);
     }
-    // a wall coming down buries its foot in a rolling dust billow
-    for (let sg = 0; sg < this.segVis.length; sg++) {
-      const v = this.segVis[sg];
-      if (v && v.crumbling > 0 && !this.lvCrumbled.has(sg)) {
-        this.lvCrumbled.add(sg);
-        const b = CASTLE[sg]; if (!b) continue;
-        const mx = (b.x0 + b.x1) / 2, mz = (b.z0 + b.z1) / 2;
-        for (let k = 0; k < 3; k++) this.spawnDust(mx + (Math.random() - 0.5) * (b.x1 - b.x0), 1.2, mz + (Math.random() - 0.5) * (b.z1 - b.z0), 5.5, 4);
-      }
-    }
     // the distant column files along its road, man after man, wagons amid them
     if (this.lvColumn) {
       this.lvColT += dt * 0.0022; // full circuit ~7.5 min — always something moving out there
@@ -2513,7 +2508,9 @@ export class Renderer {
     }
     // arrows that find only earth kick a little of it up — massed volleys READ
     const prj = sim.projectiles;
-    if (!this.lvPrevProj || this.lvPrevProj.length < prj.length) this.lvPrevProj = new Uint8Array(Math.max(64, prj.length));
+    if (!this.lvPrevProj || this.lvPrevProj.length < prj.length) {
+      const bigger = new Uint8Array(Math.max(64, prj.length)); if (this.lvPrevProj) bigger.set(this.lvPrevProj); this.lvPrevProj = bigger; // keep prior flags so grown frames don't miss landings
+    }
     let hits = 0;
     for (let i = 0; i < prj.length; i++) {
       const was = this.lvPrevProj[i], is = prj[i].active ? 1 : 0;

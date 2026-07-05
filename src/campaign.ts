@@ -152,7 +152,7 @@ export function battleXP(opts: { engaged: boolean; kills: number; survivalRate: 
   return Math.round(10 + opts.kills + (opts.won ? 25 : 0) + opts.survivalRate * 15);
 }
 
-export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; started?: number; }
+export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; started?: number; name?: string; }
 
 // ---- save slots: several independent campaigns, plus the single lifetime profile ----
 export const NUM_SLOTS = 3;
@@ -162,13 +162,19 @@ let activeSlot = 0;
 export function setActiveSlot(n: number) { activeSlot = Math.max(0, Math.min(NUM_SLOTS - 1, n | 0)); }
 export function getActiveSlot() { return activeSlot; }
 
+// a name for the commander of the crusade — rolled at campaign start, editable there
+const GENERAL_FIRST = ['Baldwin', 'Godfrey', 'Raymond', 'Tancred', 'Bohemond', 'Roger', 'Fulk', 'Hugh', 'Stephen', 'Robert', 'Eleanor', 'Matilda', 'Isabella', 'Adela', 'Sibylla'];
+const GENERAL_EPITHET = ['the Bold', 'of the March', 'Ironhand', 'the Pious', 'the Lion', 'the Unbowed', 'of the Long Road', 'the Stern', 'Greymantle', 'the Younger', 'the Steadfast', 'of the Broken Tower'];
+export function rollGeneralName(): string {
+  return `${GENERAL_FIRST[Math.floor(Math.random() * GENERAL_FIRST.length)]} ${GENERAL_EPITHET[Math.floor(Math.random() * GENERAL_EPITHET.length)]}`;
+}
 export function freshProgress(): Progress { return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY }, vet: freshVet() }; }
 // bring any saved blob up to the current shape (army/vet added over the campaign)
 function normalize(p: any): Progress | null {
   if (!p || typeof p.unlocked !== 'number') return null;
   return {
     unlocked: p.unlocked, completed: p.completed || [], gold: typeof p.gold === 'number' ? p.gold : STARTING_GOLD,
-    upg: p.upg || {}, army: { ...STARTING_ARMY, ...(p.army || {}) }, vet: { ...freshVet(), ...(p.vet || {}) }, started: p.started,
+    upg: p.upg || {}, army: { ...STARTING_ARMY, ...(p.army || {}) }, vet: { ...freshVet(), ...(p.vet || {}) }, started: p.started, name: typeof p.name === 'string' ? p.name : undefined,
   };
 }
 function rawSlot(n: number): Progress | null {

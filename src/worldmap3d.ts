@@ -468,6 +468,11 @@ export class WorldMap3D {
   private buildSettlements() {
     const doneM = new THREE.MeshLambertMaterial({ color: '#cf9b3a' });
     const lockM = new THREE.MeshLambertMaterial({ color: '#9a978f' });
+    // a WHOLE COUNTRY brought to heel turns ashen — its strongholds grey and
+    // quiet under thin hearth smoke, so the map itself tells the campaign's story
+    const ashM = new THREE.MeshLambertMaterial({ color: '#98948c' });
+    const ashRoofM = new THREE.MeshLambertMaterial({ color: '#6e6a64' });
+    const regionConq = this.conqueredRegions();
     const spots = this.settlementSpots();
     for (const node of this.nodes) {
       const { x, z, y } = spots[node.id];
@@ -479,8 +484,9 @@ export class WorldMap3D {
       // stay ghost-grey; conquered ones turn gold.
       const st = node.style, hsh = (s: number) => hash(node.id * 3.31 + s, s * 1.7 + 1);
       const stone = new THREE.Color('#efe0bb').lerp(new THREE.Color(node.lat < 36 ? '#e8d5a8' : '#d9d3c4'), hsh(1) * 0.8);
-      const wm = locked ? lockM : done ? doneM : new THREE.MeshLambertMaterial({ color: stone });
-      const rm = locked ? lockM : new THREE.MeshLambertMaterial({ color: ['#c8643f', '#8a4436', '#5a6a8a', '#7a6a4a'][Math.floor(hsh(2) * 4) % 4] });
+      const conq = done && regionConq.has(node.region);
+      const wm = locked ? lockM : conq ? ashM : done ? doneM : new THREE.MeshLambertMaterial({ color: stone });
+      const rm = locked ? lockM : conq ? ashRoofM : new THREE.MeshLambertMaterial({ color: ['#c8643f', '#8a4436', '#5a6a8a', '#7a6a4a'][Math.floor(hsh(2) * 4) % 4] });
       const holy = node.name === 'Jerusalem';
       const towers = st.round ? 'drum' : 'square';
       const twr = (tx: number, tz: number, h: number, r: number) => {
@@ -790,10 +796,24 @@ export class WorldMap3D {
       this.scene.add(sp); this.sparkles.push({ sp, phase: Math.random() * 6.28, k: 1.4 + Math.random() * 1.6 }); placed++;
     }
   }
+  // regions where EVERY stronghold has fallen — the map's conquered countries
+  private conqueredRegions(): Set<string> {
+    const total = new Map<string, number>(), done = new Map<string, number>();
+    for (const n of this.nodes) {
+      total.set(n.region, (total.get(n.region) || 0) + 1);
+      if (this.prog.completed.includes(n.id)) done.set(n.region, (done.get(n.region) || 0) + 1);
+    }
+    const out = new Set<string>();
+    for (const [r, t] of total) if ((done.get(r) || 0) >= t) out.add(r);
+    return out;
+  }
   // ---- hearth smoke rising from settlements you hold (and the one you besiege) ----
   private buildSmoke() {
     const spots = this.settlementSpots();
-    const sites = this.nodes.filter(n => this.prog.completed.includes(n.id)).slice(-8).map(n => spots[n.id]);
+    const conq = this.conqueredRegions();
+    const held = this.nodes.filter(n => this.prog.completed.includes(n.id));
+    // every stronghold of a conquered country smoulders gently; elsewhere, the latest conquests
+    const sites = [...held.filter(n => conq.has(n.region)), ...held.filter(n => !conq.has(n.region)).slice(-6)].slice(0, 14).map(n => spots[n.id]);
     const cur = spots[Math.min(this.prog.unlocked, this.nodes.length - 1)]; if (cur) sites.push(cur);
     const tex = this.softSprite('rgba(214,206,196,0.5)');
     for (const st of sites) for (let w = 0; w < 2; w++) this.addSmoke(tex, st.x + (w - 0.5) * 1.6, st.y + 5.2, st.z, Math.random() * 6.28);

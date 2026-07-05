@@ -164,6 +164,19 @@
       font: 800 24px 'Cinzel', Georgia, serif; color: rgba(240,222,180,0.82); letter-spacing: 7px;
       text-shadow: 0 2px 14px rgba(0,0,0,0.9); pointer-events: none; z-index: 6; }
     #pausedTag.show { display: block; }
+    /* the muster HOST HEADER — an illuminated strip of the army you actually lead */
+    #musterHero { margin: 8px auto 2px; max-width: 520px; padding: 10px 12px 8px;
+      background: linear-gradient(180deg, #efe0bd, #e0cb99); border-radius: 10px;
+      border: 1px solid #8a6a33; box-shadow: inset 0 0 0 3px rgba(122,90,40,0.25), inset 0 0 34px rgba(102,70,26,0.28), 0 4px 14px rgba(0,0,0,0.45); }
+    #musterHero .mhName { text-align: center; font: 700 13px 'Cinzel', Georgia, serif; letter-spacing: 1.6px;
+      color: #4a3312; text-transform: uppercase; margin-bottom: 7px; }
+    #musterHero .mhName::before, #musterHero .mhName::after { content: ' ❧ '; color: #8a6a33; }
+    #musterHero .mhRow { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    #musterHero .mhArm { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    #musterHero .mhArm img { width: 46px; height: 46px; border-radius: 50%; object-fit: cover;
+      border: 2px solid #8a6a33; box-shadow: 0 0 0 1px #4a3312, 0 2px 6px rgba(0,0,0,0.4);
+      filter: sepia(0.35) saturate(0.82) contrast(0.96); }
+    #musterHero .mhArm b { font: 700 12px 'Cinzel', Georgia, serif; color: #4a3312; }
     #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto; width: 44px; height: 44px; padding: 0;
       align-items: center; justify-content: center; flex-shrink: 0;
       border: 1px solid rgba(255,225,160,0.26); background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.92)); color: var(--gold-soft);
@@ -629,6 +642,7 @@
   <div id="muster">
     <button id="musterBack"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M15 5 L8 12 L15 19"/></svg>Map</button>
     <h1><span class="gameRibbon">Muster Your Army</span></h1>
+    <div id="musterHero"></div>
     <div class="sub" id="musterTitle">Recruit with your gold, then march the host you can afford.</div>
     <div id="musterBar">
       <span><span id="musterGold">0</span> gold in the war chest</span>

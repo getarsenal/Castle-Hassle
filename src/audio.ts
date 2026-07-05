@@ -189,7 +189,7 @@ class BattleAudioImpl {
       src2.connect(rum).connect(rg).connect(g);
       const lfo = ctx.createOscillator(); lfo.frequency.value = 0.09; const lg = this.g(0.14);
       lfo.connect(lg).connect(rg.gain); lfo.start();
-      src.start(); src2.start(Math.random());
+      src.start(); src2.start(0, Math.random() * 1.9); // offset INTO the buffer so the rumble layer decorrelates from the patter
       g.gain.setTargetAtTime(0.075, ctx.currentTime, 1.2);
       nodes.push(src, src2, hp, lp, pg, rum, rg, lfo, lg);
     } else {
@@ -201,7 +201,7 @@ class BattleAudioImpl {
       roam.connect(roamG).connect(band.frequency); roam.start();
       const gust = ctx.createOscillator(); gust.frequency.value = kind === 'mist' ? 0.1 : 0.16; const gustG = this.g(kind === 'mist' ? 0.012 : 0.03);
       gust.connect(gustG).connect(g.gain); gust.start();
-      src.start(Math.random());
+      src.start(0, Math.random() * 1.9);
       g.gain.setTargetAtTime(kind === 'mist' ? 0.035 : 0.06, ctx.currentTime, 1.4);
       nodes.push(src, band, lp, roam, roamG, gust, gustG);
     }

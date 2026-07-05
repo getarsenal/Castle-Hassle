@@ -175,7 +175,8 @@ export function openMuster(prog: Progress, discount: number, buff: AtkBuff, onCl
     const a = prog.army;
     const men = a.heavy + a.light + a.archer + a.cavalry;
     const sub = `${men.toLocaleString()} fighting men${a.siege > 0 ? ` and ${a.siege} engine${a.siege === 1 ? '' : 's'}` : ''} under your banner`;
-    root.innerHTML = `<div class="musTop"><div class="musBar"><button class="musClose">Done</button><div class="musGold"><b>${prog.gold}</b> gold</div></div><h2>Your Host</h2></div>`
+    const lord = prog.name ? `The Host of ${prog.name}` : 'Your Host';
+    root.innerHTML = `<div class="musTop"><div class="musBar"><button class="musClose">Done</button><div class="musGold"><b>${prog.gold}</b> gold</div></div><h2>${lord}</h2></div>`
       + `<div class="musSub">${sub}</div><div class="musRule"></div>`
       + `<div class="musBody">${ROSTER.map(r => {
         const price = recruitPrice(r.key, r.step, discount);

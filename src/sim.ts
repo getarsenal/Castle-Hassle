@@ -1460,6 +1460,7 @@ export class Sim {
   orderMove(unitId: number, x: number, z: number) {
     const u = this.units[unitId];
     if (!u || u.faction !== Faction.Attacker) return; // routing men take the order too — they execute it the moment they rally
+    u.assault = false; u.objKind = 'hold'; u.objSeg = -1; // a ground order CANCELS a standing storm — the pull-back must stick through a rally
     const facing = Math.atan2(0 - x, 0 - z);
     this.setAnchor(u, x, z, facing, Math.round(Math.sqrt(u.count) * 1.7));
   }
@@ -1469,6 +1470,7 @@ export class Sim {
   orderFormation(unitId: number, x0: number, z0: number, x1: number, z1: number) {
     const u = this.units[unitId];
     if (!u || u.faction !== Faction.Attacker) return;
+    u.assault = false; u.objKind = 'hold'; u.objSeg = -1; // a drawn line CANCELS a standing storm, same as orderMove
     const dx = x1 - x0, dz = z1 - z0;
     const width = Math.hypot(dx, dz);
     if (width < 4) { this.orderMove(unitId, x1, z1); return; }
