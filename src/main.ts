@@ -1,4 +1,4 @@
-import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF } from './sim';
+import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF, CASTLE } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
 import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars } from './campaign';
@@ -29,6 +29,32 @@ declare const __BUILD__: string; // injected at build time (commit + timestamp)
 { const ti = document.getElementById('titleIcon') as HTMLImageElement | null; if (ti) ti.src = LOGO; }
 
 (window as any).__started = true;
+{ // golden embers drifting up the title screen — the first thing anyone sees breathes
+  const host = document.getElementById('titleScreen');
+  if (host) {
+    const cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1';
+    host.appendChild(cv);
+    const ex = cv.getContext('2d');
+    const P = Array.from({ length: 34 }, () => ({ x: Math.random(), y: Math.random(), s: 0.6 + Math.random() * 1.7, v: 0.008 + Math.random() * 0.03, w: Math.random() * 6.28 }));
+    let lastT = 0;
+    const tick = (tm: number) => {
+      requestAnimationFrame(tick);
+      if (!host.classList.contains('show') || !ex) return;
+      const dtm = Math.min(0.05, (tm - lastT) / 1000); lastT = tm;
+      if (cv.width !== host.clientWidth) { cv.width = host.clientWidth; cv.height = host.clientHeight; }
+      ex.clearRect(0, 0, cv.width, cv.height);
+      for (const m of P) {
+        m.y -= m.v * dtm * 12; m.w += dtm; m.x += Math.sin(m.w) * 0.0004;
+        if (m.y < -0.02) { m.y = 1.02; m.x = Math.random(); }
+        const a = Math.min(1, (1 - m.y) * 3) * Math.min(1, m.y * 3) * 0.55;
+        ex.fillStyle = `rgba(255,${180 + ((m.s * 40) | 0)},90,${a.toFixed(3)})`;
+        ex.beginPath(); ex.arc(m.x * cv.width, m.y * cv.height, m.s, 0, 7); ex.fill();
+      }
+    };
+    requestAnimationFrame(tick);
+  }
+}
 (window as any).__audio = battleAudio; // console access for tuning / preview render
 // warm the bundled fonts so canvas-baked labels (map place names) get Cinzel
 try { (document as any).fonts?.load("600 30px 'Cinzel'"); (document as any).fonts?.load("400 20px 'EB Garamond'"); } catch { /* ignore */ }
@@ -45,7 +71,10 @@ let paused = false;
 let gameSpeed = 1; // battle tempo: 1x / 2x / 3x
 const pauseBtn = document.getElementById('pauseBtn'), retreatBtn = document.getElementById('retreatBtn');
 const speedBtn = document.getElementById('speedBtn');
-pauseBtn?.addEventListener('click', () => { paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.title = paused ? 'Resume' : 'Pause'; }); // icon swaps via .on in CSS
+pauseBtn?.addEventListener('click', () => {
+  paused = !paused; pauseBtn.classList.toggle('on', paused); pauseBtn.title = paused ? 'Resume' : 'Pause'; // icon swaps via .on in CSS
+  document.getElementById('pausedTag')?.classList.toggle('show', paused);
+});
 function applySpeed() { if (!speedBtn) return; speedBtn.textContent = `${gameSpeed}x`; speedBtn.classList.toggle('fast', gameSpeed > 1); }
 speedBtn?.addEventListener('click', () => { gameSpeed = gameSpeed >= 3 ? 1 : gameSpeed + 1; applySpeed(); });
 const helpBtn = document.getElementById('helpBtn');
@@ -182,6 +211,19 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 // ---------------- New game ----------------
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let pendingDoc: CastleDoc | undefined; // a Workshop playtest layout, consumed by the next newGame()
+let currentWeather = 'clear'; // for the battle-report flavour line
+let battleStartAt = 0; // when the assault was sounded (report flavour)
+// battle EVENT FEED trackers — reset each newGame
+const evSt = { walls: 0, gates: 0, keep: false, defBreak: false, attWaver: false, t: 0 };
+function battleEvent(msg: string, vib = 0) {
+  const feed = document.getElementById('evFeed'); if (!feed) return;
+  while (feed.children.length >= 3) feed.firstChild?.remove();
+  const el = document.createElement('div'); el.className = 'evMsg'; el.textContent = msg;
+  feed.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('in'));
+  window.setTimeout(() => { el.classList.remove('in'); window.setTimeout(() => el.remove(), 450); }, 4200);
+  try { if (vib && navigator.vibrate) navigator.vibrate(vib); } catch { /* unsupported */ }
+}
 let workshopTest: { doc: CastleDoc; cfg: TestCfg } | null = null; // the doc under test — powers the "back to Workshop" button (hoisted: updateTopbar reads it during the boot backdrop)
 let currentDifficulty = 1;
 let currentStyle: import('./sim').CastleStyle | undefined;
@@ -218,6 +260,9 @@ function newGame() {
   let tod = TODS[(currentSeed >>> 3) % 8] as (typeof TODS)[number];
   try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod, weather });
+  currentWeather = weather; battleStartAt = 0;
+  evSt.walls = 0; evSt.gates = 0; evSt.keep = false; evSt.defBreak = false; evSt.attWaver = false; evSt.t = 0;
+  document.getElementById('evFeed')?.replaceChildren();
   { // the light weather note under the top-left cluster — what the sky is doing
     // and what it means for the fight, in six words or fewer
     const wxChip = document.getElementById('wxChip');
@@ -231,6 +276,7 @@ function newGame() {
   }
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
+  document.getElementById('pausedTag')?.classList.remove('show');
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
   banner.classList.remove('show'); document.getElementById('hud')?.classList.remove('over'); startbar.style.display = 'block';
   slowmoT = 0; sawBreach = false; sawBreak = false;
@@ -250,7 +296,15 @@ function buildCards() {
     const ranged = a.type === UType.Archer || a.type === UType.Siege;
     const art = UNIT_ART[UTYPE_KEY[a.type]];
     card.innerHTML = `<div class="cardTop"><img class="cardIc" src="${art}" alt=""><div class="cardTxt"><div class="name">${TYPE_NAME[a.type]}</div><div class="count">${a.alive}</div></div></div><div class="bar"><i></i></div>${ranged ? '<div class="ammo"><i></i></div>' : ''}`;
-    card.addEventListener('click', () => { selected = selected === div ? -1 : div; attackArm = -1; refreshCards(); updateHint(); updateTools(); });
+    let lastTap = 0;
+    card.addEventListener('click', () => {
+      const now = performance.now();
+      if (now - lastTap < 380 && selected === div) { // double-tap: fly to the arm
+        const agg = sim.divAgg(div);
+        if (agg.alive > 0) { renderer.introT = 0; renderer.camTarget.x = agg.cx; renderer.camTarget.z = agg.cz; }
+      } else { selected = selected === div ? -1 : div; attackArm = -1; refreshCards(); updateHint(); updateTools(); }
+      lastTap = now;
+    });
     cardsEl.appendChild(card);
   }
 }
@@ -498,6 +552,12 @@ function showEnd() {
     bannerText.textContent = activeRaid ? 'They drove your raiders off empty-handed.' : 'Your assault was thrown back from the walls.';
   }
   bannerText.textContent += casualtyLine;
+  if (battleStartAt) { // how long the assault ran, and under what sky
+    const secs = Math.max(1, Math.round((performance.now() - battleStartAt) / 1000));
+    const WXW: Record<string, string> = { clear: 'clear skies', rain: 'driving rain', mist: 'the mist', wind: 'a crosswind' };
+    bannerText.textContent += `  The assault lasted ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`} under ${WXW[currentWeather] ?? 'open skies'}.`;
+    try { if (win && navigator.vibrate) navigator.vibrate([70, 60, 110]); } catch { /* unsupported */ }
+  }
   // ---- lifetime record + achievements (every battle, campaign or not) ----
   const campaignWon = win && tookCastle && progress.completed.length >= castles.length; // tookCastle = first capture only, so replaying old sieges can't re-count the crusade
   const totalKills = kills.reduce((a, b) => a + b, 0);
@@ -1276,6 +1336,28 @@ function frame(now: number) {
   if (!covered) renderer.render(Math.min(dt, 0.05));
   gfxMs += performance.now() - tg;
   refreshCards(); updateTopbar(); tickChargeBtn();
+  // ---- the CHRONICLE: moments called out as they happen ----
+  if (sim.phase === 'battle') {
+    if (!battleStartAt) battleStartAt = performance.now();
+    evSt.t -= dt;
+    if (evSt.t <= 0) {
+      evSt.t = 0.4;
+      let walls = 0, gates = 0;
+      for (const b of CASTLE) { if (!b.dead) continue; if (b.kind === 'wall') walls++; else if (b.kind === 'gate' && b.h > 3) gates++; }
+      if (gates > evSt.gates) battleEvent('The gate is torn open!', 60);
+      else if (walls > evSt.walls) battleEvent('A breach — the wall comes down!', 45);
+      evSt.walls = walls; evSt.gates = gates;
+      if (!evSt.keep && sim.captureProgress > 0.02) { evSt.keep = true; battleEvent('Your banners reach the keep!', 40); }
+      let dTot = 0, dRout = 0, aTot = 0, aRout = 0;
+      for (const u of sim.units) {
+        if (u.alive <= 0 || u.type === UType.Siege || u.crewFor >= 0) continue;
+        if (u.faction === Faction.Defender) { dTot++; if (u.routing) dRout++; }
+        else { aTot++; if (u.routing) aRout++; }
+      }
+      if (!evSt.defBreak && dTot > 3 && dRout / dTot > 0.34) { evSt.defBreak = true; battleEvent('The garrison is breaking!'); }
+      if (!evSt.attWaver && aTot > 3 && aRout / aTot > 0.34) { evSt.attWaver = true; battleEvent('Your host wavers — rally them!'); }
+    }
+  }
   if (sim.phase === 'over' && !ended) { ended = true; showEnd(); }
   if (sim.phase !== 'over') ended = false;
   requestAnimationFrame(frame);

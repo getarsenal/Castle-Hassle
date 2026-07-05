@@ -153,6 +153,17 @@
       font: 700 12px 'Cinzel', Georgia, serif; border-radius: var(--r-md); padding: 8px 12px; cursor: pointer;
       box-shadow: var(--sh-1), inset 0 1px 0 rgba(255,235,190,0.14); }
     #wsBack.show { display: inline-block; }
+    /* the battle chronicle — moments called out as they happen */
+    #evFeed { position: absolute; top: calc(var(--safe-top) + 118px); left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; z-index: 6; }
+    .evMsg { background: rgba(22,15,8,0.74); color: #f0dfb6; font: 600 13px 'Cinzel', Georgia, serif;
+      padding: 6px 16px; border-radius: 15px; border: 1px solid rgba(255,220,150,0.24); letter-spacing: 0.4px;
+      opacity: 0; transform: translateY(-8px); transition: opacity 0.4s, transform 0.4s; white-space: nowrap; }
+    .evMsg.in { opacity: 1; transform: none; }
+    #pausedTag { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%); display: none;
+      font: 800 24px 'Cinzel', Georgia, serif; color: rgba(240,222,180,0.82); letter-spacing: 7px;
+      text-shadow: 0 2px 14px rgba(0,0,0,0.9); pointer-events: none; z-index: 6; }
+    #pausedTag.show { display: block; }
     #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto; width: 44px; height: 44px; padding: 0;
       align-items: center; justify-content: center; flex-shrink: 0;
       border: 1px solid rgba(255,225,160,0.26); background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.92)); color: var(--gold-soft);
@@ -607,6 +618,8 @@
       </div>
     </div>
     <div id="startbar"><button id="startbtn">Begin Battle</button></div>
+    <div id="evFeed"></div>
+    <div id="pausedTag">— PAUSED —</div>
     <div id="keepBar"><div id="keepLabel">HOLD THE KEEP</div><div id="keepTrack"><div id="keepFill"></div></div></div>
     <div id="hint"><span id="hintText">Tap a unit card, then tap the field to send them. Drag to pan, pinch to zoom.</span><button id="hintClose" aria-label="Dismiss">×</button></div>
     <div id="tools"></div>

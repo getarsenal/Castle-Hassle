@@ -399,6 +399,31 @@ drawing); dashed "typical stronghold" box 160×140; adaptive scale bar
   pendingDoc (TDZ: updateTopbar reads it during the boot backdrop); cleared
   in enterCastle/enterRaid/startCustomBattle.
 
+## The GOTY pass — 20 living-world & enjoyment upgrades (July 2026)
+render.ts gains buildLiving()/stepLiving() (called before buildAtmosphere so
+campfire flames can append to `braziers` with seg:-1; the seg guard tolerates
+-1). All garnish — sim untouched, no bench needed. Items:
+clouds (8 sprites, drift+wrap, night-tinted) · moon disc (in the sun-glow) ·
+shooting stars (one recycled sprite) · rain lightning (hemi double-flash +
+shake, lvHemiBase restore) · alpine snowfall (360 pts) · crow flocks (11
+instanced flapping quads circling keep↔gate swing; day only) · campfire
+flames (braziers at ground smokeSources y≤1) · night windows (34 additive
+sprites on houses + 3 keep windows, HDR warm) · camera breath (±0.005 pitch
+/ ±0.4% dist sine in render()) · cavalry charge dust (chargeT>0 companies,
+0.1s tick) · wall-collapse dust (segVis crumbling transition, lvCrumbled
+set) · boulder dust trails · arrow ground-impact puffs (prevActive diff,
+ty≤1, cap 10/frame) — all via existing spawnDust pool.
+main.ts: battle CHRONICLE feed (#evFeed, .evMsg ribbons, 0.4s scan: gate
+torn/wall breach via CASTLE dead counts, banners-reach-keep at capture>0.02,
+garrison breaking / host wavers at >34%% routing) + haptics (vibrate on
+breach/win where supported) · double-tap a unit card → camera flies to the
+arm · battle-report flavour line (duration + weather; battleStartAt/
+currentWeather) · title-screen golden embers (canvas overlay, runs only
+while #titleScreen shown) · #pausedTag watermark (reset in newGame).
+Verified headless: noon fight (dust, crows, clouds), night (windows/moon/
+stars/campfires — beautiful), rain, feed fired "The gate is torn open!" at
+103s with screenshot.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

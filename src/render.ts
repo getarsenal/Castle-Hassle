@@ -192,6 +192,15 @@ export class Renderer {
   private shockMesh?: THREE.InstancedMesh; private shocks: { x: number; y: number; z: number; life: number; max: number; scale: number }[] = []; private shockHead = 0;
   private sunGlow?: THREE.Sprite;
   // drifting battlefield haze — big soft sheets on the wind
+  private hemi!: THREE.HemisphereLight;
+  // ---- the LIVING WORLD: clouds, crows, snowfall, lightning, the moon ----
+  private lvClouds: THREE.Sprite[] = [];
+  private lvStar?: THREE.Sprite; private lvStarT = 8; private lvStarLife = 0; private lvStarV = new THREE.Vector3();
+  private lvBoltT = 12; private lvFlashT = 0; private lvHemiBase = 1;
+  private lvSnow?: THREE.Points;
+  private lvCrows?: THREE.InstancedMesh; private lvCrowN = 0;
+  private lvDustT = 0; private lvCrumbled = new Set<number>();
+  private lvPrevProj?: Uint8Array;
   private hazeMesh?: THREE.InstancedMesh; private haze: { x: number; y: number; z: number; s: number }[] = [];
   private rainMesh?: THREE.InstancedMesh; private rain: { x: number; y: number; z: number; v: number }[] = [];
   private pennantMesh?: THREE.InstancedMesh; // one small standard per company, above its bearer
@@ -304,7 +313,8 @@ export class Renderer {
 
     // Warm raking key light (the sun at this siege's hour) + sky fill so shadows stay alive.
     const T = this.todCfg;
-    this.scene.add(new THREE.HemisphereLight(B.hemiSky, B.hemiGround, T.hemiInt));
+    this.hemi = new THREE.HemisphereLight(B.hemiSky, B.hemiGround, T.hemiInt);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(B.sun, B.sunInt * T.sunInt * (this.weather === 'rain' ? 0.72 : 1)); sun.position.set(...T.sunPos);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1536, 1536); // frozen + re-baked rarely, so 1536 stays crisp on the big static structures at a fraction of 2048's memory/bake cost
@@ -338,6 +348,7 @@ export class Renderer {
     this.buildEffects();
     this.buildMotes();
     this.buildAssaultWorks();
+    this.buildLiving();
     this.buildAtmosphere();
     this.buildComposer();
 
@@ -2171,8 +2182,11 @@ export class Renderer {
   }
 
   updateCamera() {
-    const cp = Math.cos(this.camPitch), sp = Math.sin(this.camPitch), cy = Math.cos(this.camYaw), sy = Math.sin(this.camYaw);
-    this.camera.position.copy(this.camTarget).add(this._v2.set(sy * cp, sp, cy * cp).multiplyScalar(this.camDist));
+    // the camera BREATHES — a barely-there sway, so even a still frame is alive
+    const bPit = this.camPitch + Math.sin(this.time * 0.47) * 0.005;
+    const bDist = this.camDist * (1 + Math.sin(this.time * 0.31) * 0.004);
+    const cp = Math.cos(bPit), sp = Math.sin(bPit), cy = Math.cos(this.camYaw), sy = Math.sin(this.camYaw);
+    this.camera.position.copy(this.camTarget).add(this._v2.set(sy * cp, sp, cy * cp).multiplyScalar(bDist));
     this.camera.lookAt(this.camTarget);
     if (this.shakeAmt > 0.002) { // jolt the camera on impacts (scaled to zoom so it reads at any distance)
       const s = this.shakeAmt * this.camDist * 0.012;
@@ -2298,6 +2312,185 @@ export class Renderer {
     }
     this.dustMesh.instanceMatrix.needsUpdate = true;
     this.stepSmoke(dt);
+    this.stepLiving(dt);
+  }
+
+  // ---- THE LIVING WORLD ----
+  // Everything here is garnish: clouds on the wind, crows over the fighting,
+  // snowfall in the Alps, lightning under rain, lit windows and campfires at
+  // night, dust where hooves and boulders tear the earth. None of it touches
+  // the sim — it reads sim state and breathes life back over it.
+  private buildLiving() {
+    const night = !!this.todCfg.stars;
+    // clouds: a few soft sheets riding the same wind as everything else
+    const cc = document.createElement('canvas'); cc.width = 128; cc.height = 64;
+    const cx2 = cc.getContext('2d')!;
+    for (let k = 0; k < 8; k++) {
+      const gx = 20 + Math.random() * 88, gy = 22 + Math.random() * 20, gr = 12 + Math.random() * 16;
+      const g = cx2.createRadialGradient(gx, gy, 2, gx, gy, gr);
+      g.addColorStop(0, 'rgba(255,255,255,0.34)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      cx2.fillStyle = g; cx2.fillRect(0, 0, 128, 64);
+    }
+    const ctex = new THREE.CanvasTexture(cc); ctex.colorSpace = THREE.SRGBColorSpace;
+    for (let i = 0; i < 8; i++) {
+      const m = new THREE.SpriteMaterial({ map: ctex, transparent: true, depthWrite: false, opacity: night ? 0.14 : 0.42 });
+      m.color.set(night ? '#8fa0c8' : '#ffffff');
+      const sp = new THREE.Sprite(m);
+      sp.position.set(-460 + Math.random() * 920, 175 + Math.random() * 85, -420 + Math.random() * 840);
+      sp.scale.set(120 + Math.random() * 90, 34 + Math.random() * 22, 1);
+      this.scene.add(sp); this.lvClouds.push(sp);
+    }
+    if (night) {
+      // the moon: a crisp disc seated inside the sun-glow bloom
+      const mc = document.createElement('canvas'); mc.width = mc.height = 64;
+      const mx = mc.getContext('2d')!;
+      const mg = mx.createRadialGradient(32, 32, 20, 32, 32, 27);
+      mg.addColorStop(0, 'rgba(236,240,248,1)'); mg.addColorStop(0.85, 'rgba(226,232,244,0.9)'); mg.addColorStop(1, 'rgba(226,232,244,0)');
+      mx.fillStyle = mg; mx.beginPath(); mx.arc(32, 32, 27, 0, 7); mx.fill();
+      const mtex = new THREE.CanvasTexture(mc); mtex.colorSpace = THREE.SRGBColorSpace;
+      const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: mtex, transparent: true, depthWrite: false, fog: false }));
+      moon.position.copy(this.sun.position.clone().normalize().multiplyScalar(548));
+      moon.scale.set(26, 26, 1); this.scene.add(moon);
+      // one shooting star, recycled across the night
+      const st = new THREE.Sprite(new THREE.SpriteMaterial({ color: '#eef2ff', transparent: true, opacity: 0, depthWrite: false, fog: false }));
+      st.scale.set(9, 0.5, 1); this.scene.add(st); this.lvStar = st;
+    }
+    if (this.biomeCfg.snow && this.weather !== 'rain') {
+      // alpine snowfall — a quiet volume of drifting flakes over the field
+      const N = 360, pos = new Float32Array(N * 3);
+      for (let i = 0; i < N; i++) { pos[i * 3] = -190 + Math.random() * 380; pos[i * 3 + 1] = Math.random() * 85; pos[i * 3 + 2] = -170 + Math.random() * 400; }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const m = new THREE.PointsMaterial({ color: '#f2f5f8', size: 1.25, sizeAttenuation: false, transparent: true, opacity: 0.8, fog: false });
+      this.lvSnow = new THREE.Points(g, m); this.lvSnow.frustumCulled = false; this.scene.add(this.lvSnow);
+    }
+    if (!night) {
+      // crows wheeling over the siege — the oldest omen there is
+      this.lvCrowN = 11;
+      const crow = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.7, 0.42), new THREE.MeshBasicMaterial({ color: '#171310', side: THREE.DoubleSide }), this.lvCrowN);
+      crow.frustumCulled = false; this.scene.add(crow); this.lvCrows = crow;
+    }
+    // campfires: real flames on the ground fires the camp already smokes from
+    let fires = 0;
+    for (const src of this.smokeSources) {
+      if (src.y <= 1.0 && fires < 8) { fires++; this.braziers.push({ x: src.x, y: 1.1, z: src.z, ph: Math.random() * 6.28, seg: -1 }); }
+    }
+    if (night) {
+      // warm lit windows — the town glows faintly behind its walls after dark
+      const wtex = (() => {
+        const wc = document.createElement('canvas'); wc.width = wc.height = 32; const wx = wc.getContext('2d')!;
+        const wg = wx.createRadialGradient(16, 16, 2, 16, 16, 15);
+        wg.addColorStop(0, 'rgba(255,196,110,1)'); wg.addColorStop(1, 'rgba(255,170,80,0)');
+        wx.fillStyle = wg; wx.fillRect(0, 0, 32, 32);
+        const t = new THREE.CanvasTexture(wc); t.colorSpace = THREE.SRGBColorSpace; return t;
+      })();
+      const wmat = new THREE.SpriteMaterial({ map: wtex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+      wmat.color.setRGB(1.9, 1.05, 0.42);
+      let lit = 0;
+      for (const h of this.houses) {
+        if (lit >= 34 || Math.random() > 0.42) continue;
+        lit++;
+        const w = new THREE.Sprite(wmat);
+        w.position.set(h.x + (Math.random() - 0.5) * 2.4, Math.max(1.6, h.h * 0.55), h.z + (Math.random() - 0.5) * 2.4);
+        w.scale.set(1.5, 1.9, 1); this.scene.add(w);
+      }
+      for (let k = 0; k < 3; k++) { // and the lord's high windows in the keep
+        const w = new THREE.Sprite(wmat);
+        w.position.set(this.sim.keepX + (k - 1) * 3.2, 10 + k * 2.4, this.sim.keepZ + (k % 2 ? 2.5 : -2.5));
+        w.scale.set(1.7, 2.2, 1); this.scene.add(w);
+      }
+    }
+    this.lvHemiBase = this.hemi.intensity;
+  }
+  private stepLiving(dt: number) {
+    const sim = this.sim;
+    // clouds ride the wind and wrap
+    for (let i = 0; i < this.lvClouds.length; i++) {
+      const c = this.lvClouds[i]; c.position.x += (3.2 + (i % 3)) * dt;
+      if (c.position.x > 540) c.position.x = -540;
+    }
+    // a shooting star now and then
+    if (this.lvStar) {
+      if (this.lvStarLife > 0) {
+        this.lvStarLife -= dt;
+        this.lvStar.position.addScaledVector(this.lvStarV, dt);
+        this.lvStar.material.opacity = Math.max(0, Math.min(1, this.lvStarLife / 0.5)) * 0.9;
+      } else {
+        this.lvStarT -= dt;
+        if (this.lvStarT <= 0) {
+          this.lvStarT = 11 + Math.random() * 24; this.lvStarLife = 0.7;
+          const az = Math.random() * Math.PI * 2, el = 0.55 + Math.random() * 0.5, r = 1250;
+          this.lvStar.position.set(Math.cos(az) * Math.cos(el) * r, Math.sin(el) * r, Math.sin(az) * Math.cos(el) * r);
+          this.lvStarV.set(Math.sin(az) * 500, -420, -Math.cos(az) * 500);
+        }
+      }
+    }
+    // lightning under rain: a double-flash and a body-thump of thunder
+    if (this.weather === 'rain') {
+      this.lvBoltT -= dt;
+      if (this.lvBoltT <= 0) { this.lvBoltT = 15 + Math.random() * 26; this.lvFlashT = 0.22; this.shakeAmt = Math.max(this.shakeAmt, 0.35); }
+      if (this.lvFlashT > 0) {
+        this.lvFlashT -= dt;
+        const k = Math.max(0, this.lvFlashT / 0.22);
+        const pulse = (k > 0.55 || k < 0.3) ? k : k * 0.25; // the double-strike
+        this.hemi.intensity = this.lvHemiBase + pulse * 5.5;
+      } else this.hemi.intensity = this.lvHemiBase;
+    }
+    // snowfall
+    if (this.lvSnow) {
+      const a = this.lvSnow.geometry.attributes.position.array as Float32Array;
+      for (let i = 0; i < a.length; i += 3) {
+        a[i + 1] -= (5 + (i % 5)) * dt; a[i] += Math.sin(this.time * 0.7 + i) * dt * 2 + dt * 1.4;
+        if (a[i + 1] < 0) { a[i + 1] = 80 + Math.random() * 8; a[i] = -190 + Math.random() * 380; a[i + 2] = -170 + Math.random() * 400; }
+      }
+      this.lvSnow.geometry.attributes.position.needsUpdate = true;
+    }
+    // crows circle between keep and gate, flapping — drawn a little tighter
+    // over whichever half of the castle the fighting is in
+    if (this.lvCrows) {
+      const swing = Math.sin(this.time * 0.07);
+      const cx = sim.keepX + (LAYOUT.gate.x - sim.keepX) * (0.5 + swing * 0.5);
+      const cz = sim.keepZ + (LAYOUT.D - sim.keepZ) * (0.5 + swing * 0.5);
+      for (let i = 0; i < this.lvCrowN; i++) {
+        const ang = this.time * (0.42 + (i % 4) * 0.07) + i * 2.39;
+        const r = 24 + (i % 5) * 7, y = 30 + (i % 4) * 5 + Math.sin(this.time * 0.9 + i) * 3.5;
+        this.dummy.position.set(cx + Math.cos(ang) * r, y, cz + Math.sin(ang) * r);
+        this.dummy.quaternion.copy(this.billboard);
+        const flap = 0.45 + Math.abs(Math.sin(this.time * 6.5 + i * 1.7)) * 0.9;
+        this.dummy.scale.set(1, flap, 1); this.dummy.updateMatrix();
+        this.lvCrows.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.lvCrows.instanceMatrix.needsUpdate = true;
+    }
+    // dust: charging cavalry kick up the field; boulders drag a grey tail
+    this.lvDustT -= dt;
+    const doDust = this.lvDustT <= 0;
+    if (doDust) this.lvDustT = 0.1;
+    if (doDust) {
+      for (const u of sim.units) {
+        if (u.type !== 3 || u.chargeT <= 0 || u.alive <= 0) continue;
+        this.spawnDust(u.cx + (Math.random() - 0.5) * 6, 0.5, u.cz + (Math.random() - 0.5) * 6, 2.4, 2);
+      }
+      for (const pr of sim.projectiles) if (pr.active && pr.big) this.spawnDust(pr.x, pr.y, pr.z, 0.9, 1);
+    }
+    // a wall coming down buries its foot in a rolling dust billow
+    for (let sg = 0; sg < this.segVis.length; sg++) {
+      const v = this.segVis[sg];
+      if (v && v.crumbling > 0 && !this.lvCrumbled.has(sg)) {
+        this.lvCrumbled.add(sg);
+        const b = CASTLE[sg]; if (!b) continue;
+        const mx = (b.x0 + b.x1) / 2, mz = (b.z0 + b.z1) / 2;
+        for (let k = 0; k < 3; k++) this.spawnDust(mx + (Math.random() - 0.5) * (b.x1 - b.x0), 1.2, mz + (Math.random() - 0.5) * (b.z1 - b.z0), 5.5, 4);
+      }
+    }
+    // arrows that find only earth kick a little of it up — massed volleys READ
+    const prj = sim.projectiles;
+    if (!this.lvPrevProj || this.lvPrevProj.length < prj.length) this.lvPrevProj = new Uint8Array(Math.max(64, prj.length));
+    let hits = 0;
+    for (let i = 0; i < prj.length; i++) {
+      const was = this.lvPrevProj[i], is = prj[i].active ? 1 : 0;
+      if (was && !is && !prj[i].big && prj[i].ty <= 1 && hits < 10) { hits++; this.spawnDust(prj[i].tx, 0.35, prj[i].tz, 0.55, 1); }
+      this.lvPrevProj[i] = is;
+    }
   }
 
   // Smoke: fire sources emit puffs that rise, drift on the wind, swell, and dissolve
