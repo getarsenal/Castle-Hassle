@@ -335,6 +335,28 @@ under the rim. Replaced wholesale in render.ts:
 Verified headless: night low/mid/graze (the complaint views), noon low/mid,
 dusk (desert castle), dawn+mist. Sim untouched — no bench needed.
 
+### Round 2 (user screenshots: day rim still stark, slopes washed out)
+- FOG APRON: unlit RGBA-vertex annulus (r330→436, alpha 0→1 smoothstep,
+  fog:false, depthWrite:false, y=0.35, name 'rimapron') laid over the field
+  rim. The ground's vertex-colour dissolve can NEVER reach the fog colour
+  (vertexColour × grass texture × lighting) — the apron can, nothing
+  multiplies it. This is what finally kills the stark disc edge.
+- `this.fogC` = EFFECTIVE fog colour (biome × TOD × weather) set in the
+  constructor; vista haze, sky band, ground dissolve, skirt, apron and smoke
+  fade all key off it (mist's #cfd3cd wall now matches the horizon kit).
+- Scene fog OFF for vista rings in clear/wind (their haze falloff is baked
+  from the same pigment; scene fog was re-washing the far side to 70-100%
+  white — the "washed out slopes"). Mist/rain keep fog:true so the murk
+  still swallows the ranges.
+- Contrast/size up: shade() s = 0.52/0.66/0.80, amps 0.9×/2.2×/3.6× hillH.
+- Weather chip #wxChip (index.dev.html #topLeft column under #perf, set in
+  main.ts newGame): ☀︎ Clear skies / 🌧 Rain — wet strings, slick earth /
+  🌫 Mist — bows see short / 🍃 Crosswind — shafts drift. Non-interactive,
+  pointer-events:none.
+- Weather pass verified headless: all four weathers battle-tested (chip on,
+  sim ticking, rain streaks + closer fog, mist murk, wind drift note),
+  night + portrait regressions clean.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

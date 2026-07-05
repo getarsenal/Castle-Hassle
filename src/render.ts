@@ -238,7 +238,11 @@ export class Renderer {
   private dummy = new THREE.Object3D();
   private billboard = new THREE.Quaternion(); // dust + projectiles still billboard on the CPU
   private _col = new THREE.Color();
-  private _up = new THREE.Vector3(0, 1, 0); private _v1 = new THREE.Vector3(); private _v2 = new THREE.Vector3(); private _fogCol: THREE.Color | null = null;
+  private _up = new THREE.Vector3(0, 1, 0); private _v1 = new THREE.Vector3(); private _v2 = new THREE.Vector3();
+  // the EFFECTIVE fog colour (biome × time-of-day × weather) — every horizon
+  // element (vista, sky band, skirt, rim apron, smoke fade) keys off this one
+  // pigment so they can never disagree about what "the distance" looks like
+  private fogC = new THREE.Color('#cccccc');
   private corpse?: Uint8Array;                 // which units have been laid down as bodies
   private colorDirty = [false, false, false, false];
   private moveMarker?: THREE.Group;
@@ -295,6 +299,7 @@ export class Renderer {
     if (this.weather === 'mist') { fogNear = 90; fogFar = 420; fogCol = '#cfd3cd'; }       // the field swims in murk
     else if (this.weather === 'rain') { fogNear = B.fogNear * 0.6; fogFar = B.fogFar * 0.7; }
     this.scene.fog = new THREE.Fog(fogCol, fogNear, fogFar);
+    this.fogC.set(fogCol);
     this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 1, 2800); // far covers the enlarged sky dome at full zoom-out
 
     // Warm raking key light (the sun at this siege's hour) + sky fill so shadows stay alive.
@@ -444,7 +449,7 @@ export class Renderer {
     const R = 1500;
     const geo = new THREE.SphereGeometry(R, 24, 20);
     const top = new THREE.Color(this.biomeCfg.skyTop), bot = new THREE.Color(this.biomeCfg.skyBot);
-    const hz = new THREE.Color(this.biomeCfg.fog);
+    const hz = this.fogC.clone();
     const colors: number[] = []; const pos = geo.attributes.position; const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i);
@@ -508,7 +513,7 @@ export class Renderer {
     }
     { // the outer skirt of the field dissolves into the horizon haze — the old
       // hard fold line read as a bright hoop at night
-      const hz = new THREE.Color(this.biomeCfg.fog), cc = new THREE.Color();
+      const hz = this.fogC.clone(), cc = new THREE.Color();
       const pp2 = g.attributes.position;
       for (let i = 0; i < pp2.count; i++) {
         const rr2 = Math.hypot(pp2.getX(i), pp2.getZ(i));
@@ -526,6 +531,36 @@ export class Renderer {
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping; groundTex.repeat.set(40, 40); groundTex.needsUpdate = true;
     const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: groundTex, vertexColors: true }));
     ground.name = 'ground'; ground.position.y = -0.02; ground.receiveShadow = true; this.scene.add(ground);
+    { // the FOG APRON — an unlit, untextured wash laid over the field's outer rim,
+      // fading from clear to EXACTLY the fog pigment at the world edge. The vertex-
+      // colour dissolve above can't finish the job on its own: the ground's colour is
+      // vertexColour × grass texture × lighting, so its rim can never actually REACH
+      // the fog colour — which is why the disc edge still read as a stark curve
+      // against the haze. This apron can, because nothing multiplies it.
+      const AR0 = 330, AR1 = 436, RINGS = 12, SEG = 96;
+      const apos: number[] = [], acol: number[] = [], aidx: number[] = [];
+      for (let ri = 0; ri <= RINGS; ri++) {
+        const t = ri / RINGS, rad = AR0 + (AR1 - AR0) * t, a = t * t * (3 - 2 * t);
+        for (let si = 0; si <= SEG; si++) {
+          const ang = (si / SEG) * Math.PI * 2;
+          apos.push(Math.sin(ang) * rad, 0, Math.cos(ang) * rad);
+          acol.push(this.fogC.r, this.fogC.g, this.fogC.b, a);
+        }
+      }
+      for (let ri = 0; ri < RINGS; ri++) for (let si = 0; si < SEG; si++) {
+        const a = ri * (SEG + 1) + si, b = a + 1, cI = a + (SEG + 1), d = cI + 1;
+        aidx.push(a, cI, b, b, cI, d);
+      }
+      const ag = new THREE.BufferGeometry();
+      ag.setAttribute('position', new THREE.Float32BufferAttribute(apos, 3));
+      ag.setAttribute('color', new THREE.Float32BufferAttribute(acol, 4));
+      ag.setIndex(aidx);
+      const apronFog = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, fog: false, depthWrite: false,
+      }));
+      apronFog.name = 'rimapron'; apronFog.position.y = 0.35; apronFog.renderOrder = 2;
+      this.scene.add(apronFog);
+    }
 
     // One packed-earth texture drives the road and the castle courtyard so the bare
     // ground reads as trodden earth, not flat tan card. (Generated once — no per-frame cost.)
@@ -621,13 +656,18 @@ export class Renderer {
       for (let i = 1; i < n.length; i += 3) n[i] = 1;
       g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
     }
-    const mat = lit ? new THREE.MeshLambertMaterial({ vertexColors: true }) : new THREE.MeshBasicMaterial({ vertexColors: true });
+    // In clear air the rings carry their OWN baked haze falloff (from the same fog
+    // pigment) and skip scene fog — otherwise the far side of every range sits at
+    // 70-100% scene fog from any camera and the day ranges wash out to nothing.
+    // In mist/rain the murk is the point: let the weather swallow them.
+    const sceneFog = this.weather === 'mist' || this.weather === 'rain';
+    const mat = lit ? new THREE.MeshLambertMaterial({ vertexColors: true, fog: sceneFog }) : new THREE.MeshBasicMaterial({ vertexColors: true, fog: sceneFog });
     const mesh = new THREE.Mesh(g, mat); mesh.name = 'vista' + r0;
     this.scene.add(mesh);
   }
   private buildHorizon() {
     const B = this.biomeCfg;
-    const haze = new THREE.Color(B.fog), hillHue = new THREE.Color(B.hill), snow = new THREE.Color('#eef2f4');
+    const haze = this.fogC.clone(), hillHue = new THREE.Color(B.hill), snow = new THREE.Color('#eef2f4');
     const tmp = new THREE.Color();
     // Each ridge tone takes the hill's HUE but is pinned to a fixed luminance step
     // BELOW the fog colour — silhouettes darker than the sky in every light, by
@@ -643,23 +683,23 @@ export class Renderer {
     // the fog colour at its rim, so these feet continue FROM the haze, not from the
     // day palette — a lit/untextured ring can never match the textured field in
     // every light (at night it glowed). The deepest tonal step of the three.
-    const ridge1 = shade(0.38, 0.74);
-    this.vistaRing(385, 640, B.hillH * 0.55, [1.3, 4.1, 2.0], (t, f) => {
-      tmp.copy(haze).lerp(ridge1, Math.min(1, f * 1.6 + 0.15)); // low ground melts into the fog rim
+    const ridge1 = shade(0.5, 0.52);
+    this.vistaRing(385, 640, B.hillH * 0.9, [1.3, 4.1, 2.0], (t, f) => {
+      tmp.copy(haze).lerp(ridge1, Math.min(1, f * 2.2 + 0.2)); // low ground melts into the fog rim
       if (B.snow && f > 0.5) tmp.lerp(snow, (f - 0.5) * 0.9);
-      tmp.lerp(haze, t * t * 0.7); // and the ring's far side hands off to the ridges
+      tmp.lerp(haze, t * t * 0.85); // and the ring's far side hands off to the ridges
       return tmp;
     }, false);
     // L2 — middle ridges: UNLIT haze-toned silhouettes (a shade deeper than the sky)
-    const ridge2 = shade(0.22, 0.84);
-    this.vistaRing(560, 900, B.hillH * 1.7, [3.9, 0.7, 5.1], (t) => {
-      tmp.copy(ridge2).lerp(haze, 0.25 + t * 0.75);
+    const ridge2 = shade(0.26, 0.66);
+    this.vistaRing(560, 900, B.hillH * 2.2, [3.9, 0.7, 5.1], (t) => {
+      tmp.copy(ridge2).lerp(haze, 0.05 + t * 0.95);
       return tmp;
     }, false, 0.06, 0.3);
     // L3 — far peaks: barely a breath darker than the sky, snow tips in the Alps
-    const ridge3 = shade(0.1, 0.93);
-    this.vistaRing(820, 1240, B.hillH * 3.0, [0.4, 2.9, 4.4], (t, f) => {
-      tmp.copy(ridge3).lerp(haze, 0.45 + t * 0.55);
+    const ridge3 = shade(0.14, 0.8);
+    this.vistaRing(820, 1240, B.hillH * 3.6, [0.4, 2.9, 4.4], (t, f) => {
+      tmp.copy(ridge3).lerp(haze, 0.18 + t * 0.82);
       if (B.snow && f > 0.55) tmp.lerp(snow, (f - 0.55) * 0.8 * (1 - t));
       return tmp;
     }, false, 0.1, 0.4);
@@ -2266,7 +2306,7 @@ export class Renderer {
   private _smokeCol = new THREE.Color();
   private stepSmoke(dt: number) {
     if (!this.smokeMesh) return;
-    const fog = this._fogCol ?? (this._fogCol = new THREE.Color(this.biomeCfg.fog)); const wind = 1.6;
+    const fog = this.fogC; const wind = 1.6;
     for (const src of this.smokeSources) {
       if (src.seg !== undefined && ((this.segVis[src.seg]?.crumbling ?? 0) > 0 || CASTLE[src.seg]?.dead)) continue; // its wall fell — the fire is out
       src.t -= dt;

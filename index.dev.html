@@ -141,6 +141,12 @@
       padding: 3px 6px; pointer-events: auto; letter-spacing: 0.2px;
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
     #perf.hidden { display: none; }
+    /* the weather note — a light, non-blocking whisper under the top-left cluster */
+    #wxChip { display: none; font: 600 10.5px/1.2 Georgia, 'Times New Roman', serif;
+      color: #e6d8b4; background: rgba(22,17,10,0.48); border-radius: 6px;
+      padding: 3px 8px; pointer-events: none; letter-spacing: 0.3px; opacity: 0.88;
+      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+    #wxChip.on { display: block; }
     #pauseBtn, #retreatBtn, #speedBtn { pointer-events: auto; width: 44px; height: 44px; padding: 0;
       align-items: center; justify-content: center; flex-shrink: 0;
       border: 1px solid rgba(255,225,160,0.26); background: linear-gradient(180deg, rgba(64,46,24,0.92), rgba(30,21,11,0.92)); color: var(--gold-soft);
@@ -580,6 +586,7 @@
           <button id="helpBtn" title="How to play">?</button>
         </div>
         <div id="perf" title="Tap to hide">– fps</div>
+        <div id="wxChip"></div>
       </div>
       <div id="topRight">
         <button id="pushBtn" title="The General's Push: once per battle, the whole host finds its blood">⚔ Push</button>

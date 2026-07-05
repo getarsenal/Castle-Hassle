@@ -210,6 +210,17 @@ function newGame() {
   let tod = TODS[(currentSeed >>> 3) % 8] as (typeof TODS)[number];
   try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod, weather });
+  { // the light weather note under the top-left cluster — what the sky is doing
+    // and what it means for the fight, in six words or fewer
+    const wxChip = document.getElementById('wxChip');
+    if (wxChip) {
+      const WXL: Record<string, string> = {
+        clear: '\u2600\uFE0E Clear skies', rain: '\uD83C\uDF27 Rain \u2014 wet strings, slick earth',
+        mist: '\uD83C\uDF2B Mist \u2014 bows see short', wind: '\uD83C\uDF43 Crosswind \u2014 shafts drift',
+      };
+      wxChip.textContent = WXL[weather]; wxChip.classList.add('on');
+    }
+  }
   bindInput();
   selected = -1; showRange = true; paused = false; gameSpeed = 1; applySpeed();
   if (pauseBtn) { pauseBtn.classList.remove('on'); pauseBtn.title = 'Pause'; }
