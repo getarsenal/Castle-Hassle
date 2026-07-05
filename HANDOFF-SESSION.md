@@ -380,6 +380,12 @@ one assault order at t=0, never re-issued → 64 rout→rally cycles on seed
 13319 and ZERO order-reverted frames (script pattern in git history as
 scripts/_orders.mjs).
 
+## Workshop scale references (July 2026)
+editor.ts draw(): dashed "battlefield edge" frame = WORLD extents centred on
+the wall-bbox centre (the sim recentres docs, so the frame follows the
+drawing); dashed "typical stronghold" box 160×140; adaptive scale bar
+(10/20/40/80/160 paces) bottom-left. All drawn under the walls, bar on top.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

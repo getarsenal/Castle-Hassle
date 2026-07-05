@@ -212,6 +212,26 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
     // south marker — attackers come from here
     ctx2.fillStyle = 'rgba(200,90,60,0.5)'; ctx2.font = '600 12px Georgia';
     ctx2.fillText('⚔ attackers march from the BOTTOM ⚔', r.width / 2 - 105, r.height - 8);
+    // ---- scale reference: the actual battle theatre + a typical stronghold ----
+    // The sim recentres a design on its wall-bbox centre, so both frames follow
+    // the drawing — judge your castle against the ground it will really defend.
+    {
+      let mnx = 1e9, mxx = -1e9, mnz = 1e9, mxz = -1e9;
+      for (const wl of doc.walls) for (const p of wl.pts) { mnx = Math.min(mnx, p[0]); mxx = Math.max(mxx, p[0]); mnz = Math.min(mnz, p[1]); mxz = Math.max(mxz, p[1]); }
+      const cx = mxx > mnx ? (mnx + mxx) / 2 : 0, cz = mxz > mnz ? (mnz + mxz) / 2 : 0;
+      // the battlefield (WORLD in sim.ts): x ±224, z -160..+296 around the castle
+      const [bx0, bz0] = S([cx - 224, cz - 160]), [bx1, bz1] = S([cx + 224, cz + 296]);
+      ctx2.strokeStyle = 'rgba(205,95,60,0.45)'; ctx2.lineWidth = 2; ctx2.setLineDash([10, 7]);
+      ctx2.strokeRect(bx0, bz0, bx1 - bx0, bz1 - bz0); ctx2.setLineDash([]);
+      ctx2.fillStyle = 'rgba(205,95,60,0.6)'; ctx2.font = '600 11px Georgia';
+      ctx2.fillText('battlefield edge', bx0 + 8, bz0 + 16);
+      // a mid-sized campaign stronghold (~160×140 paces) for proportion
+      const [tx0, tz0] = S([cx - 80, cz - 70]), [tx1, tz1] = S([cx + 80, cz + 70]);
+      ctx2.strokeStyle = 'rgba(130,200,130,0.32)'; ctx2.lineWidth = 1.5; ctx2.setLineDash([5, 6]);
+      ctx2.strokeRect(tx0, tz0, tx1 - tx0, tz1 - tz0); ctx2.setLineDash([]);
+      ctx2.fillStyle = 'rgba(130,200,130,0.5)';
+      ctx2.fillText('typical stronghold', tx0 + 6, tz1 - 6);
+    }
     // earthworks
     const works = doc.works;
     if (works && works.length > 1) {
@@ -260,6 +280,17 @@ export function openEditor(onTest: (doc: CastleDoc, cfg: TestCfg) => void) {
     for (const [i, t] of doc.trees.entries()) {
       const [sx, sz] = S(t); ctx2.fillStyle = sel?.kind === 'tree' && sel.i === i ? '#ffe27a' : '#5d7842';
       ctx2.beginPath(); ctx2.arc(sx, sz, 4 + cam.s * 0.7, 0, 7); ctx2.fill();
+    }
+    // scale bar — world units read as paces
+    {
+      const nice = [10, 20, 40, 80, 160];
+      let len = nice[0]; for (const n of nice) if (n * cam.s <= 130) len = n;
+      const px = len * cam.s, x0 = 12, y0 = r.height - 28;
+      ctx2.strokeStyle = 'rgba(232,216,180,0.85)'; ctx2.lineWidth = 2;
+      ctx2.beginPath(); ctx2.moveTo(x0, y0); ctx2.lineTo(x0 + px, y0);
+      ctx2.moveTo(x0, y0 - 4); ctx2.lineTo(x0, y0 + 4); ctx2.moveTo(x0 + px, y0 - 4); ctx2.lineTo(x0 + px, y0 + 4); ctx2.stroke();
+      ctx2.fillStyle = 'rgba(232,216,180,0.85)'; ctx2.font = '600 11px Georgia';
+      ctx2.fillText(`${len} paces`, x0 + 4, y0 - 7);
     }
     updateCtx();
   }
