@@ -16,7 +16,7 @@ import { openMuster } from './muster';
 import { UNIT_ART } from './uniticons';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
-import { startTutorial, startCampaignTour, beginBattleCoach, tickBattleCoach, endBattleCoach, CoachSnap, tutorialSeen, resetOnboarding } from './tutorial';
+import { startTutorial, startCampaignTour, beginBattleCoach, tickBattleCoach, endBattleCoach, CoachSnap, resetOnboarding } from './tutorial';
 import { initDevPanel, DevConfig, DiagAction } from './devpanel';
 import { LOGO } from './logodata';
 import { TRUMPET } from './trumpetdata';
@@ -223,9 +223,11 @@ $('musterBtn').addEventListener('click', () => {
   // guided walkthrough AND the reactive coach, ONCE. A returning player (seen it
   // before, or with any conquests) gets a clean battle. This is what keeps the
   // onboarding from firing "for everyone every time they open the game".
-  const newPlayer = !!activeCastle && progress.completed.length === 0 && !tutorialSeen();
-  firstSiegeCoach = newPlayer;
-  if (newPlayer || devForceIntro) { devForceIntro = false; startTutorial(true); }
+  // The guided first siege + reactive coach belong to the ONE-TIME opening run and
+  // nothing else. The moment they fire, the intro is sealed for good — it never
+  // returns, on any later campaign or siege.
+  if (openingRun && !!activeCastle) { openingRun = false; markIntroSeen(); firstSiegeCoach = true; startTutorial(true); }
+  else firstSiegeCoach = false;
 });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
@@ -236,7 +238,14 @@ const gname = () => progress?.name || 'the Crusader';
 let campaignRival = ''; // the baron whose insult began the crusade (shown in the welcome letter)
 let currentWeather = 'clear'; // for the battle-report flavour line
 let firstSiegeCoach = false, coachStarted = false; // the reactive battle mentor runs on the very first siege
-let devForceIntro = false; // dev menu: force the full onboarding on the next siege
+// The ENTIRE opening sequence — welcome letter, guided first siege, battle coach —
+// is one thing, shown ONCE EVER, the first time a player hits New Campaign. This
+// single flag is its memory; `openingRun` carries the intent from that button
+// through the letter into the first siege within the session.
+const INTRO_KEY = 'castlehassle.introseen.v1';
+function introSeen(): boolean { try { return localStorage.getItem(INTRO_KEY) === '1'; } catch { return false; } }
+function markIntroSeen() { try { localStorage.setItem(INTRO_KEY, '1'); } catch { /* private mode */ } }
+let openingRun = false; // the player is inside their one-time opening sequence right now
 let coachSnap: CoachSnap | null = null;
 let battleSecs = 0; // accumulated real BATTLE time (skips pause + overlays) for the report
 // battle EVENT FEED trackers — reset each newGame
@@ -890,8 +899,9 @@ function showMainMenu() {
       if (isNew) {
         progress.started = Date.now();
         askGeneralName((nm) => {
-          progress.name = nm; progress.welcomed = true; saveProgress(progress);
-          showWelcomeLetter(nm, () => openMap()); // once per new crusade
+          progress.name = nm; saveProgress(progress);
+          if (!introSeen()) { openingRun = true; showWelcomeLetter(nm, () => openMap()); } // the one-time opening
+          else openMap(); // seen it before — a new crusade just opens the map
         });
         return;
       }
@@ -1172,7 +1182,7 @@ function devTelemetry(): [string, string][] {
     ['phase', sim ? sim.phase : '-'],
     ['tod / weather', `${(() => { try { return localStorage.getItem('castlehassle.tod') || 'auto'; } catch { return '?'; } })()} / ${currentWeather}`],
     ['coach', firstSiegeCoach ? (coachStarted ? 'active' : 'armed') : 'off'],
-    ['onboarded', tutorialSeen() ? 'yes' : 'NEW'],
+    ['intro seen', introSeen() ? 'yes' : 'NO (new)'],
     ['fps', telFps.toFixed(0)],
     ['frame ms', (telSimMs + telGfxMs).toFixed(1)],
     ['sim ms', telSimMs.toFixed(1)],
@@ -1364,16 +1374,17 @@ const devDiag: DiagAction[] = [
   { label: '\u25B6 Play full new-player intro', tone: 'gold', run: () => {
       // reset every onboarding flag, then run the whole arc: welcome letter →
       // first-siege muster → deploy tutorial → reactive battle coach
-      resetOnboarding(); progress.welcomed = false; saveProgress(progress);
-      devForceIntro = true;
+      try { localStorage.removeItem(INTRO_KEY); } catch { /* ignore */ }
+      resetOnboarding();
+      openingRun = true;
       devPanel.close();
       const nm = progress.name || (progress.name = rollGeneralName());
       showWelcomeLetter(nm, () => { try { stopMenuMusic(); document.querySelectorAll('.show').forEach(e => e.classList.remove('show')); enterCastle(castles[0]); } catch (e) { console.error(e); } });
     } },
   { label: 'Welcome letter', run: () => { devPanel.close(); showWelcomeLetter(progress.name || 'the Crusader', () => {}); } },
-  { label: 'Deploy tutorial (in a siege)', run: () => { devPanel.close(); if (sim && sim.phase === 'deploy') startTutorial(true); else { devForceIntro = true; try { document.querySelectorAll('.show').forEach(e => e.classList.remove('show')); enterCastle(castles[0]); } catch (e) { console.error(e); } } } },
-  { label: 'Arm battle coach (next siege)', run: () => { devForceIntro = true; } },
-  { label: 'Reset new-player state', tone: 'danger', run: () => { resetOnboarding(); progress.welcomed = false; saveProgress(progress); }, note: () => `onboarding — battle tour: <b>${devReadFlag('castlehassle.tutorial.v1')}</b> · map tour: <b>${devReadFlag('castlehassle.maptour.v1')}</b> · welcomed: <b>${progress.welcomed ? 'yes' : 'no'}</b>` },
+  { label: 'Deploy tutorial (in a siege)', run: () => { devPanel.close(); if (sim && sim.phase === 'deploy') startTutorial(true); else { openingRun = true; try { document.querySelectorAll('.show').forEach(e => e.classList.remove('show')); enterCastle(castles[0]); } catch (e) { console.error(e); } } } },
+  { label: 'Arm opening intro (next siege)', run: () => { openingRun = true; } },
+  { label: 'Reset new-player state', tone: 'danger', run: () => { try { localStorage.removeItem(INTRO_KEY); } catch { /* */ } resetOnboarding(); }, note: () => `intro sequence: <b>${introSeen() ? 'SEEN (won\u2019t show)' : 'unseen (will show on New Campaign)'}</b>` },
   { label: 'Weather \u21BB', run: () => { const w = devCycle('castlehassle.weather', ['clear', 'rain', 'mist', 'wind']); (window as any).__diagWx = w; }, note: () => { let w = ''; try { w = localStorage.getItem('castlehassle.weather') || ''; } catch { /* */ } return `forced weather: <b>${w || 'auto (per-seed)'}</b> — restart a siege to apply`; } },
   { label: 'Time of day \u21BB', run: () => { devCycle('castlehassle.tod', ['dawn', 'noon', 'dusk', 'night']); }, note: () => { let t = ''; try { t = localStorage.getItem('castlehassle.tod') || ''; } catch { /* */ } return `forced time: <b>${t || 'auto (per-seed)'}</b> — restart a siege to apply`; } },
   { label: 'Director mode \u21BB', run: () => { (window as any).__director?.setDirectorEnabled?.(!document.getElementById('dirChip')); }, note: () => `director: <b>${document.getElementById('dirChip') || document.getElementById('dirHot') ? 'on' : 'off'}</b>` },
