@@ -470,6 +470,28 @@ Bench 3/3 unchanged. Full new-campaign flow verified headless (name dialog
 + reroll, forced tutorial, named muster, resume-to-map, conquered ash),
 zero console errors.
 
+## The teaching layer — spotlight tour + reactive battle coach (July 2026)
+tutorial.ts rewritten around a COACH-MARK engine: paint(mark, ctrl) dims the
+screen with four panels leaving a LIVE hole over a real control, rings it,
+and floats a captioned bubble whose diamond arrow (--ax offset) points at the
+target; above/below auto-chosen by target Y; hidden target → centred card
+over a light click-through dim (field stays tappable).
+- Deploy tour (DEPLOY_STEPS): spotlights #cards ("Your arms"), move/break-in
+  concepts (centred), #helpBtn ("Guidance"), #startbtn ("Sound the advance").
+  Forced on the first siege, replayable from ❓. Runs in deploy phase (no
+  combat ticking). "Field manual" tag, progress dots, Skip.
+- Battle COACH (BEATS, first siege only): tickBattleCoach(dt, CoachSnap)
+  driven from main.ts's 0.4s chronicle scan; beginBattleCoach(setPaused) /
+  endBattleCoach(). Fires the first un-shown beat whose condition has HELD
+  ~0.9s, PAUSES via setPaused (field still tappable so the player acts at
+  once), 4.5s cooldown between beats, each once. Beats: controls (spotlight
+  #topRight), advance, trebs (spotlight #cards), breach, keep, push (spotlight
+  #pushBtn). "Your captain advises" tag, Got-it resumes. CoachSnap built from
+  CASTLE dead counts + sim.insideCount (new getter) + captureProgress/pushUsed.
+main.ts: firstSiegeCoach/coachStarted/coachSnap; reset in newGame; ends on
+phase over. Verified headless (430×932): all 5 deploy spotlights + 3 reactive
+beats fired, each paused, arrows/rings correct.
+
 ## Headless verification recipe
 puppeteer-core + chrome-headless-shell (SwiftShader flags), tiny http server on
 repo root — see git history of `scripts/_map3.mjs` for the full template (temp

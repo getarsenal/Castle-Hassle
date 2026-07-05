@@ -1093,6 +1093,7 @@ export class Sim {
   ladders: Ladder[] = [];
   private ladderMinPy: number[] = []; // lowest occupied height per ladder (single-file gating)
   private attInsideCount = 0;         // attackers standing inside the walls
+  get insideCount(): number { return this.attInsideCount; } // read-only, for the battle coach
   // Per-wall-section escalade state, rebuilt each tick (indexed by CASTLE segment):
   //   wallAtt = attackers climbing/atop it, wallDef = defenders holding it.
   // Drives the foothold fight (attackers hold & clear a section before descending)

@@ -16,7 +16,7 @@ import { openMuster } from './muster';
 import { UNIT_ART } from './uniticons';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
-import { startTutorial, startCampaignTour } from './tutorial';
+import { startTutorial, startCampaignTour, beginBattleCoach, tickBattleCoach, endBattleCoach, CoachSnap } from './tutorial';
 import { initDevPanel, DevConfig } from './devpanel';
 import { LOGO } from './logodata';
 import { TRUMPET } from './trumpetdata';
@@ -217,7 +217,8 @@ $('musterBtn').addEventListener('click', () => {
   battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame();
   // the FIRST siege of a campaign always walks its commander through the craft,
   // even for a player who once skipped the tour in another mode
-  if (activeCastle && progress.completed.length === 0) startTutorial(true); else startTutorial();
+  firstSiegeCoach = !!activeCastle && progress.completed.length === 0;
+  if (firstSiegeCoach) startTutorial(true); else startTutorial();
 });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
@@ -226,6 +227,8 @@ let currentSeed = (Date.now() & 0xffff) >>> 0;
 let pendingDoc: CastleDoc | undefined; // a Workshop playtest layout, consumed by the next newGame()
 const gname = () => progress?.name || 'the Crusader';
 let currentWeather = 'clear'; // for the battle-report flavour line
+let firstSiegeCoach = false, coachStarted = false; // the reactive battle mentor runs on the very first siege
+let coachSnap: CoachSnap | null = null;
 let battleSecs = 0; // accumulated real BATTLE time (skips pause + overlays) for the report
 // battle EVENT FEED trackers — reset each newGame
 const evSt = { walls: 0, gates: 0, keep: false, defBreak: false, attWaver: false, t: 0 };
@@ -275,6 +278,7 @@ function newGame() {
   try { const o = localStorage.getItem('castlehassle.tod'); if (o && (TODS as readonly string[]).includes(o)) tod = o as typeof tod; } catch { /* private mode */ }
   renderer = new Renderer(sim, app, { biome: currentBiome, coastal: currentCoastal, tod, weather });
   currentWeather = weather; battleSecs = 0;
+  coachStarted = false; endBattleCoach();
   // the sky you fight under is the sky you hear — but only in a REAL battle
   // (the boot-time backdrop sim must not create an AudioContext or hiss under menus)
   if (activeCastle || activeRaid || workshopTest) battleAudio.wxAmbience(weather);
@@ -1406,8 +1410,15 @@ function frame(now: number) {
       }
       if (!evSt.defBreak && dTot > 3 && dRout / dTot > 0.34) { evSt.defBreak = true; battleEvent('The garrison is breaking!'); }
       if (!evSt.attWaver && aTot > 3 && aRout / aTot > 0.34) { evSt.attWaver = true; battleEvent('Your host wavers — rally them!'); }
+      // feed the reactive battle coach off the same 0.4s scan (first siege only)
+      if (firstSiegeCoach) {
+        if (!coachStarted) { coachStarted = true; beginBattleCoach((b) => { paused = b; pauseBtn?.classList.toggle('on', b); document.getElementById('pausedTag')?.classList.toggle('show', b); }); }
+        coachSnap = { t: battleSecs, hasSiege: comp.siege > 0, wallsDown: walls, gatesDown: gates, inside: sim.insideCount, capture: sim.captureProgress, pushUsed: sim.pushUsed };
+      }
     }
   }
+  if (firstSiegeCoach && coachStarted && sim.phase === 'battle' && coachSnap) tickBattleCoach(dt, coachSnap);
+  if (sim.phase === 'over') endBattleCoach();
   if (sim.phase === 'over' && !ended) { ended = true; showEnd(); }
   if (sim.phase !== 'over') ended = false;
   requestAnimationFrame(frame);
