@@ -168,6 +168,12 @@ const GENERAL_EPITHET = ['the Bold', 'of the March', 'Ironhand', 'the Pious', 't
 export function rollGeneralName(): string {
   return `${GENERAL_FIRST[Math.floor(Math.random() * GENERAL_FIRST.length)]} ${GENERAL_EPITHET[Math.floor(Math.random() * GENERAL_EPITHET.length)]}`;
 }
+// the rival whose slander sets the whole crusade in motion — named at campaign start
+const RIVAL_FIRST = ['Guy', 'Reynald', 'Amaury', 'Gilbert', 'Warin', 'Osbert', 'Rufus', 'Drogo', 'Aldous', 'Ivo'];
+const RIVAL_HOLD = ['de Mortain', 'of Ashford', 'de Nogent', 'of Blackmoor', 'de Craon', 'of Thornbury', 'de Lusignan', 'of Greywater', 'de Rançon', 'of Coldharbour'];
+export function rollRivalName(): string {
+  return `${RIVAL_FIRST[Math.floor(Math.random() * RIVAL_FIRST.length)]} ${RIVAL_HOLD[Math.floor(Math.random() * RIVAL_HOLD.length)]}`;
+}
 export function freshProgress(): Progress { return { unlocked: 0, completed: [], gold: STARTING_GOLD, upg: {}, army: { ...STARTING_ARMY }, vet: freshVet() }; }
 // bring any saved blob up to the current shape (army/vet added over the campaign)
 function normalize(p: any): Progress | null {

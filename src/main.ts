@@ -1,7 +1,7 @@
 import { Sim, Faction, UType, TYPE_NAME, ArmyComp, DEFAULT_COMP, AtkBuff, NO_BUFF, CASTLE } from './sim';
 import './fonts.css';
 import { Renderer } from './render';
-import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars, rollGeneralName } from './campaign';
+import { generateCastles, loadProgress, saveProgress, CampaignCastle, Progress, goldReward, ArmyKey, ARMY_KEYS, recruitPrice, LEVY_LIGHT, generateRaids, Raid, currentCountry, countryBoons, countryJustConquered, biomeFor, isCoastal, Biome, vetRank, vetMultiplier, RANK_TITLES, battleXP, STARTING_GOLD, STARTING_ARMY, freshVet, RANK_XP, castleDifficulty, setActiveSlot, freshProgress, setDifficultyScalars, rollGeneralName, rollRivalName } from './campaign';
 import { loadProfile, saveProfile, recordBattle, DIFFICULTY, ACHIEVEMENTS } from './profile';
 import { openMainMenu, openSettings, openAchievements, openGameMenu } from './menu';
 import { playConquest } from './conquest';
@@ -230,6 +230,7 @@ document.getElementById('musterBack')?.addEventListener('click', () => { $('must
 let currentSeed = (Date.now() & 0xffff) >>> 0;
 let pendingDoc: CastleDoc | undefined; // a Workshop playtest layout, consumed by the next newGame()
 const gname = () => progress?.name || 'the Crusader';
+let campaignRival = ''; // the baron whose insult began the crusade (shown in the welcome letter)
 let currentWeather = 'clear'; // for the battle-report flavour line
 let firstSiegeCoach = false, coachStarted = false; // the reactive battle mentor runs on the very first siege
 let coachSnap: CoachSnap | null = null;
@@ -797,6 +798,62 @@ const castles = generateCastles();
 const raids = generateRaids();
 let progress: Progress = loadProgress();
 let profile = loadProfile();
+// A full-page illuminated letter that opens a fresh crusade: who you are, the
+// insult that set you marching, and what lies ahead. Shown once, at campaign start.
+function showWelcomeLetter(name: string, done: () => void) {
+  if (!document.getElementById('welStyle')) {
+    const st = document.createElement('style'); st.id = 'welStyle';
+    st.textContent = `
+    #welcome{position:fixed;inset:0;z-index:140;display:none;align-items:center;justify-content:center;
+      padding:max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));
+      background:radial-gradient(120% 120% at 50% 0%,rgba(28,20,10,0.85),rgba(6,5,3,0.94));overflow:auto}
+    #welcome.show{display:flex;animation:welFade .5s ease}
+    @keyframes welFade{from{opacity:0}to{opacity:1}}
+    .welSheet{position:relative;width:min(560px,94vw);margin:auto;color:#3a2a15;
+      background:linear-gradient(180deg,#f3e6c6,#e6d3a8);border-radius:8px;
+      padding:30px 30px 26px;box-shadow:0 24px 70px rgba(0,0,0,0.7),inset 0 0 0 2px rgba(122,90,40,0.4),inset 0 0 60px rgba(120,80,26,0.18);
+      font-family:'Spectral',Georgia,serif;animation:welRise .55s cubic-bezier(.2,.9,.25,1)}
+    @keyframes welRise{from{opacity:0;transform:translateY(18px) rotate(-.4deg)}to{opacity:1;transform:none}}
+    .welSheet::before,.welSheet::after{content:'';position:absolute;left:14px;right:14px;height:1px;background:rgba(122,90,40,0.28)}
+    .welSheet::before{top:12px}.welSheet::after{bottom:12px}
+    .welHead{text-align:center;font-family:'Cinzel',Georgia,serif;letter-spacing:2px;font-size:12px;color:#8a5a24;text-transform:uppercase;margin-bottom:14px}
+    .welBody{font-size:15.5px;line-height:1.72;color:#3f2e18}
+    .welBody p{margin:0 0 13px}
+    .welBody .drop{float:left;font-family:'Cinzel',Georgia,serif;font-size:52px;line-height:.82;padding:4px 10px 2px 0;color:#7a2b18}
+    .welName{font-weight:700;color:#6a3d12}
+    .welSign{margin-top:16px;text-align:right;font-style:italic;color:#5a4326}
+    .welSeal{display:block;width:64px;height:64px;margin:2px auto 16px;border-radius:50%;
+      background:radial-gradient(circle at 38% 34%,#c0503a,#7e2a1c 68%,#5c1c12);
+      box-shadow:inset 0 3px 8px rgba(255,180,150,0.4),inset 0 -5px 10px rgba(0,0,0,0.4),0 4px 10px rgba(0,0,0,0.4);
+      display:flex;align-items:center;justify-content:center;color:#f3d9c0;font-family:'Cinzel',serif;font-weight:800;font-size:24px;transform:rotate(-6deg)}
+    .welBtn{display:block;width:100%;margin-top:20px;border:none;cursor:pointer;
+      background:linear-gradient(180deg,#ffd95e,#eaa93a);color:#3a2306;
+      font:800 15px 'Cinzel',Georgia,serif;letter-spacing:.6px;padding:13px;border-radius:11px;
+      box-shadow:0 6px 16px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,245,210,0.6)}
+    .welBtn:active{transform:translateY(1px)}`;
+    document.head.appendChild(st);
+  }
+  let el = document.getElementById('welcome');
+  if (!el) { el = document.createElement('div'); el.id = 'welcome'; document.body.appendChild(el); }
+  campaignRival = rollRivalName();
+  const first = castles[0]?.name || 'the first stronghold';
+  const initial = (name.trim()[0] || 'A').toUpperCase();
+  const rest = name.trim().slice(1) || 'crusader';
+  el.innerHTML = `<div class="welSheet">
+    <div class="welHead">A Letter, sealed in haste</div>
+    <span class="welSeal">✝</span>
+    <div class="welBody">
+      <p><span class="drop">${initial}</span>t the Candlemas feast, before the assembled barons, <span class="welName">${campaignRival}</span> made sport of your lady wife's honour — and laughed as he said it. You did not answer with words, ${initial}${rest}. You answered by taking the cross.</p>
+      <p>Now your host gathers on the marches. From here the road runs east — castle by castle, siege by siege — to the very walls of Jerusalem. Your first lies before you at <span class="welName">${first}</span>.</p>
+      <p>Raid the weak for silver. Muster your host with the coin. Throw down the gates of every lord who bars your road, and return so garlanded in glory that no man dares speak your name but in reverence — nor your lady's but in praise.</p>
+      <div class="welSign">— set it down, and let them remember why they should have held their tongues.</div>
+    </div>
+    <button class="welBtn">Raise the Banner</button>
+  </div>`;
+  el.classList.add('show');
+  const close = () => { el!.classList.remove('show'); done(); };
+  el.querySelector('.welBtn')!.addEventListener('click', close);
+}
 // Name the commander of a fresh crusade: a rolled name, a reroll die, an input.
 function askGeneralName(done: (name: string) => void) {
   let el = document.getElementById('gname') as HTMLElement | null;
@@ -827,7 +884,10 @@ function showMainMenu() {
       progress = isNew ? freshProgress() : loadProgress();
       if (isNew) {
         progress.started = Date.now();
-        askGeneralName((nm) => { progress.name = nm; saveProgress(progress); openMap(); });
+        askGeneralName((nm) => {
+          progress.name = nm; saveProgress(progress);
+          showWelcomeLetter(nm, () => openMap());
+        });
         return;
       }
       openMap();
