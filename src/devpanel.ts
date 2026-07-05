@@ -55,7 +55,9 @@ export interface DevHooks {
   exportText: () => string;
   campaign?: DevCampaign; // optional — present when the campaign save is available
   balance?: DevBalance;   // optional — the force-ratio curve across the campaign
+  diag?: DiagAction[];    // optional — onboarding + feature diagnostics (buttons)
 }
+export interface DiagAction { label: string; tone?: 'gold' | 'danger'; run: () => void; note?: () => string; }
 
 const css = `
 #devPanel{position:fixed;inset:0;z-index:200;display:none;flex-direction:column;
@@ -121,6 +123,7 @@ const PRESETS: { name: string; army: DevConfig['army']; diff: number }[] = [
 ];
 
 export function initDevPanel(hooks: DevHooks) {
+  let diagRepaint: (() => void) | null = null;
   const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
   const el = document.createElement('div'); el.id = 'devPanel';
 
@@ -133,6 +136,7 @@ export function initDevPanel(hooks: DevHooks) {
   el.innerHTML = `
     <div class="dpHead"><h2>DEV — Battle Lab</h2><div style="display:flex;gap:8px"><button class="dpClose" id="dpCopy" style="border-color:#7fe0a0;color:#9ff0bb">Copy</button><button class="dpClose" id="dpClose">Close</button></div></div>
     <div class="dpSec"><h3>Live Telemetry <span id="dpCopied" style="color:#7fe0a0;font-weight:400;font-size:11px"></span></h3><div id="devTel"></div></div>
+    <div class="dpSec" id="dpDiag" style="display:none"><h3>Diagnostics &amp; Onboarding</h3><div class="dpBtns" id="dpDiagBtns"></div><div class="hint" id="dpDiagNote"></div></div>
     <div class="dpSec" id="dpCampaign" style="display:none"></div>
     <div class="dpSec" id="dpBalance" style="display:none"></div>
     <div class="dpSec"><h3>Presets</h3><div class="presets" id="dpPresets">${PRESETS.map((p, i) => `<div class="preset" data-i="${i}">${p.name}</div>`).join('')}</div></div>
@@ -276,6 +280,21 @@ export function initDevPanel(hooks: DevHooks) {
     raf = requestAnimationFrame(tick);
   };
 
-  const open = () => { el.classList.add('show'); if (hooks.campaign) renderCampaign(); if (hooks.balance) renderBalance(); if (!raf) tick(); };
+  const open = () => { el.classList.add('show'); if (hooks.campaign) renderCampaign(); if (hooks.balance) renderBalance(); diagRepaint?.(); if (!raf) tick(); };
+  // ---- Diagnostics & Onboarding buttons ----
+  if (hooks.diag && hooks.diag.length) {
+    const sec = $('dpDiag'), btns = $('dpDiagBtns'), note = $('dpDiagNote');
+    sec.style.display = '';
+    const paintNotes = () => { note.innerHTML = hooks.diag!.filter(d => d.note).map(d => `<div>${d.note!()}</div>`).join(''); };
+    hooks.diag.forEach((d, i) => {
+      const b = document.createElement('button');
+      b.className = 'preset' + (d.tone ? ' ' + d.tone : '');
+      b.textContent = d.label; b.dataset.di = String(i);
+      b.addEventListener('click', () => { d.run(); paintNotes(); });
+      btns.appendChild(b);
+    });
+    paintNotes();
+    diagRepaint = paintNotes; // let open() refresh the notes
+  }
   return { open, close, toggle: () => (el.classList.contains('show') ? close() : open()) };
 }

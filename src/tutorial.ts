@@ -134,6 +134,9 @@ const MAP_STEPS: Step[] = [
 ];
 
 export function tutorialSeen(): boolean { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } }
+// wipe the "already onboarded" flags so a fresh crusade replays the full intro —
+// the battle + map tours (the welcome-letter's `welcomed` flag lives on Progress)
+export function resetOnboarding() { try { localStorage.removeItem(KEY); localStorage.removeItem(MAP_KEY); } catch { /* private mode */ } }
 function markSeen(key: string) { try { localStorage.setItem(key, '1'); } catch { /* private mode */ } }
 
 let tourSteps: Step[] = [], tourKey = KEY, tourEnd = 'To battle', tourStep = 0, tourDone: (() => void) | null = null;

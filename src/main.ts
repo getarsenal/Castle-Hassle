@@ -16,8 +16,8 @@ import { openMuster } from './muster';
 import { UNIT_ART } from './uniticons';
 import { battleAudio } from './audio';
 import { feedback, installFeedback } from './feedback';
-import { startTutorial, startCampaignTour, beginBattleCoach, tickBattleCoach, endBattleCoach, CoachSnap } from './tutorial';
-import { initDevPanel, DevConfig } from './devpanel';
+import { startTutorial, startCampaignTour, beginBattleCoach, tickBattleCoach, endBattleCoach, CoachSnap, tutorialSeen, resetOnboarding } from './tutorial';
+import { initDevPanel, DevConfig, DiagAction } from './devpanel';
 import { LOGO } from './logodata';
 import { TRUMPET } from './trumpetdata';
 import { initDirector } from './director';
@@ -219,10 +219,13 @@ $('musterBtn').addEventListener('click', () => {
   const worksCost = currentTowers * 250 + (currentRam ? 300 : 0);
   if (worksCost > 0) { progress.gold -= worksCost; saveProgress(progress); }
   battleAudio.ensure(); stopMenuMusic(); $('muster').classList.remove('show'); newGame();
-  // the FIRST siege of a campaign always walks its commander through the craft,
-  // even for a player who once skipped the tour in another mode
-  firstSiegeCoach = !!activeCastle && progress.completed.length === 0;
-  if (firstSiegeCoach) startTutorial(true); else startTutorial();
+  // A GENUINELY NEW player — their first siege, tutorial never yet seen — gets the
+  // guided walkthrough AND the reactive coach, ONCE. A returning player (seen it
+  // before, or with any conquests) gets a clean battle. This is what keeps the
+  // onboarding from firing "for everyone every time they open the game".
+  const newPlayer = !!activeCastle && progress.completed.length === 0 && !tutorialSeen();
+  firstSiegeCoach = newPlayer;
+  if (newPlayer || devForceIntro) { devForceIntro = false; startTutorial(true); }
 });
 document.getElementById('musterBack')?.addEventListener('click', () => { $('muster').classList.remove('show'); openMap(); });
 
@@ -233,6 +236,7 @@ const gname = () => progress?.name || 'the Crusader';
 let campaignRival = ''; // the baron whose insult began the crusade (shown in the welcome letter)
 let currentWeather = 'clear'; // for the battle-report flavour line
 let firstSiegeCoach = false, coachStarted = false; // the reactive battle mentor runs on the very first siege
+let devForceIntro = false; // dev menu: force the full onboarding on the next siege
 let coachSnap: CoachSnap | null = null;
 let battleSecs = 0; // accumulated real BATTLE time (skips pause + overlays) for the report
 // battle EVENT FEED trackers — reset each newGame
@@ -850,6 +854,7 @@ function showWelcomeLetter(name: string, done: () => void) {
     </div>
     <button class="welBtn">Raise the Banner</button>
   </div>`;
+  stopMenuMusic(); // the letter reads in silence — no theme playing over it
   el.classList.add('show');
   const close = () => { el!.classList.remove('show'); done(); };
   el.querySelector('.welBtn')!.addEventListener('click', close);
@@ -885,8 +890,8 @@ function showMainMenu() {
       if (isNew) {
         progress.started = Date.now();
         askGeneralName((nm) => {
-          progress.name = nm; saveProgress(progress);
-          showWelcomeLetter(nm, () => openMap());
+          progress.name = nm; progress.welcomed = true; saveProgress(progress);
+          showWelcomeLetter(nm, () => openMap()); // once per new crusade
         });
         return;
       }
@@ -1098,7 +1103,11 @@ warTrumpet.preload = 'auto'; warTrumpet.load();
 function soundWarTrumpets() {
   try { warTrumpet.volume = 0.95; warTrumpet.muted = audioMuted; warTrumpet.currentTime = 0; warTrumpet.play().catch(() => { /* autoplay denied */ }); } catch { /* ignore */ }
 }
-$('startGameBtn')?.addEventListener('click', () => { soundWarTrumpets(); playStudioSting(() => showMainMenu()); }, { once: true });
+$('startGameBtn')?.addEventListener('click', () => {
+  soundWarTrumpets();               // the fanfare blasts on the tap…
+  const gate = document.getElementById('startGameBtn'); if (gate) (gate as HTMLElement).style.pointerEvents = 'none';
+  window.setTimeout(() => playStudioSting(() => showMainMenu()), 1500); // …then the studio sting, after it has had its moment
+}, { once: true });
 function playStudioSting(then: () => void) {
   battleAudio.unlock?.();
   const vid = document.getElementById('introVideo') as HTMLVideoElement | null;
@@ -1160,6 +1169,10 @@ function devTelemetry(): [string, string][] {
   const pf = sim ? sim.profSnapshot() : null;
   return [
     ['build', typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev'],
+    ['phase', sim ? sim.phase : '-'],
+    ['tod / weather', `${(() => { try { return localStorage.getItem('castlehassle.tod') || 'auto'; } catch { return '?'; } })()} / ${currentWeather}`],
+    ['coach', firstSiegeCoach ? (coachStarted ? 'active' : 'armed') : 'off'],
+    ['onboarded', tutorialSeen() ? 'yes' : 'NEW'],
     ['fps', telFps.toFixed(0)],
     ['frame ms', (telSimMs + telGfxMs).toFixed(1)],
     ['sim ms', telSimMs.toFixed(1)],
@@ -1339,7 +1352,33 @@ const devBalance = {
 (window as any).__surveyCastle = surveyCastle; (window as any).__castles = castles; // QA: card garrison vs real siege
 (window as any).__balance = devBalance; // QA: campaign force-ratio curve
 (window as any).__raids = raids; // QA: raid economy analysis
-const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign, balance: devBalance });
+// ---- Dev diagnostics & onboarding: fire the intro on demand, inspect state ----
+function devReadFlag(k: string): string { try { return localStorage.getItem(k) === '1' ? 'seen' : 'new'; } catch { return '?'; } }
+function devCycle(key: string, vals: string[]): string {
+  let cur = ''; try { cur = localStorage.getItem(key) || ''; } catch { /* ignore */ }
+  const nxt = vals[(vals.indexOf(cur) + 1) % vals.length];
+  try { if (nxt) localStorage.setItem(key, nxt); else localStorage.removeItem(key); } catch { /* ignore */ }
+  return nxt || 'auto';
+}
+const devDiag: DiagAction[] = [
+  { label: '\u25B6 Play full new-player intro', tone: 'gold', run: () => {
+      // reset every onboarding flag, then run the whole arc: welcome letter →
+      // first-siege muster → deploy tutorial → reactive battle coach
+      resetOnboarding(); progress.welcomed = false; saveProgress(progress);
+      devForceIntro = true;
+      devPanel.close();
+      const nm = progress.name || (progress.name = rollGeneralName());
+      showWelcomeLetter(nm, () => { try { stopMenuMusic(); document.querySelectorAll('.show').forEach(e => e.classList.remove('show')); enterCastle(castles[0]); } catch (e) { console.error(e); } });
+    } },
+  { label: 'Welcome letter', run: () => { devPanel.close(); showWelcomeLetter(progress.name || 'the Crusader', () => {}); } },
+  { label: 'Deploy tutorial (in a siege)', run: () => { devPanel.close(); if (sim && sim.phase === 'deploy') startTutorial(true); else { devForceIntro = true; try { document.querySelectorAll('.show').forEach(e => e.classList.remove('show')); enterCastle(castles[0]); } catch (e) { console.error(e); } } } },
+  { label: 'Arm battle coach (next siege)', run: () => { devForceIntro = true; } },
+  { label: 'Reset new-player state', tone: 'danger', run: () => { resetOnboarding(); progress.welcomed = false; saveProgress(progress); }, note: () => `onboarding — battle tour: <b>${devReadFlag('castlehassle.tutorial.v1')}</b> · map tour: <b>${devReadFlag('castlehassle.maptour.v1')}</b> · welcomed: <b>${progress.welcomed ? 'yes' : 'no'}</b>` },
+  { label: 'Weather \u21BB', run: () => { const w = devCycle('castlehassle.weather', ['clear', 'rain', 'mist', 'wind']); (window as any).__diagWx = w; }, note: () => { let w = ''; try { w = localStorage.getItem('castlehassle.weather') || ''; } catch { /* */ } return `forced weather: <b>${w || 'auto (per-seed)'}</b> — restart a siege to apply`; } },
+  { label: 'Time of day \u21BB', run: () => { devCycle('castlehassle.tod', ['dawn', 'noon', 'dusk', 'night']); }, note: () => { let t = ''; try { t = localStorage.getItem('castlehassle.tod') || ''; } catch { /* */ } return `forced time: <b>${t || 'auto (per-seed)'}</b> — restart a siege to apply`; } },
+  { label: 'Director mode \u21BB', run: () => { (window as any).__director?.setDirectorEnabled?.(!document.getElementById('dirChip')); }, note: () => `director: <b>${document.getElementById('dirChip') || document.getElementById('dirHot') ? 'on' : 'off'}</b>` },
+];
+const devPanel = initDevPanel({ getTelemetry: devTelemetry, launch: startCustomBattle, exportText: devDiagText, campaign: devCampaign, balance: devBalance, diag: devDiag });
 let perfTaps = 0, perfTapT = 0;
 perfEl?.addEventListener('click', () => {
   const now = performance.now();

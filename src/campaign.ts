@@ -152,7 +152,7 @@ export function battleXP(opts: { engaged: boolean; kills: number; survivalRate: 
   return Math.round(10 + opts.kills + (opts.won ? 25 : 0) + opts.survivalRate * 15);
 }
 
-export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; started?: number; name?: string; }
+export interface Progress { unlocked: number; completed: number[]; gold: number; upg: Record<string, number>; army: Army; vet: VetRoll; started?: number; name?: string; welcomed?: boolean; }
 
 // ---- save slots: several independent campaigns, plus the single lifetime profile ----
 export const NUM_SLOTS = 3;
@@ -180,7 +180,7 @@ function normalize(p: any): Progress | null {
   if (!p || typeof p.unlocked !== 'number') return null;
   return {
     unlocked: p.unlocked, completed: p.completed || [], gold: typeof p.gold === 'number' ? p.gold : STARTING_GOLD,
-    upg: p.upg || {}, army: { ...STARTING_ARMY, ...(p.army || {}) }, vet: { ...freshVet(), ...(p.vet || {}) }, started: p.started, name: typeof p.name === 'string' ? p.name : undefined,
+    upg: p.upg || {}, army: { ...STARTING_ARMY, ...(p.army || {}) }, vet: { ...freshVet(), ...(p.vet || {}) }, started: p.started, name: typeof p.name === 'string' ? p.name : undefined, welcomed: !!p.welcomed,
   };
 }
 function rawSlot(n: number): Progress | null {
