@@ -233,6 +233,9 @@ export class Renderer {
   private sun!: THREE.DirectionalLight;
   private composer!: EffectComposer; private gradePass!: ShaderPass; private bloomPass!: UnrealBloomPass;
   private debrisMesh!: THREE.InstancedMesh; private debris: Debris[] = []; private debrisHead = 0;
+  // ricocheting boulders — a rock that strikes stone bounces off it (fed by sim.drainBoulderStrikes)
+  private bounceMesh!: THREE.InstancedMesh; private bounceHead = 0;
+  private bounces: { x: number; y: number; z: number; vx: number; vy: number; vz: number; rx: number; ry: number; rz: number; vr: number; life: number; max: number }[] = [];
   private dustMesh!: THREE.InstancedMesh; private dust: Dust[] = []; private dustHead = 0;
   private smokeMesh!: THREE.InstancedMesh; private smoke: { x: number; y: number; z: number; s: number; life: number; max: number }[] = []; private smokeHead = 0;
   private smokeSources: { x: number; y: number; z: number; s: number; rate: number; dark: number; t: number; seg?: number }[] = []; // castle fires + camp fires (seg-linked ones die with their wall)
@@ -1474,6 +1477,10 @@ export class Renderer {
     this.debrisMesh = new THREE.InstancedMesh(rock, new THREE.MeshLambertMaterial({ color: '#b3a685', flatShading: true }), 240);
     this.debrisMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.debrisMesh.frustumCulled = false; this.scene.add(this.debrisMesh);
     for (let i = 0; i < 240; i++) this.debris.push({ x: 0, y: -1000, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, vr: 0, active: false });
+    const brock = new THREE.IcosahedronGeometry(1.15, 0);
+    this.bounceMesh = new THREE.InstancedMesh(brock, new THREE.MeshLambertMaterial({ color: '#9a8f79', flatShading: true }), 20);
+    this.bounceMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.bounceMesh.frustumCulled = false; this.bounceMesh.castShadow = true; this.scene.add(this.bounceMesh);
+    for (let i = 0; i < 20; i++) this.bounces.push({ x: 0, y: -1000, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, vr: 0, life: 0, max: 1 });
 
     const c = document.createElement('canvas'); c.width = c.height = 64; const ctx = c.getContext('2d')!;
     const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30); g.addColorStop(0, 'rgba(228,218,196,0.92)'); g.addColorStop(1, 'rgba(228,218,196,0)');
@@ -2296,6 +2303,32 @@ export class Renderer {
   }
 
   private updateEffects(dt: number) {
+    // ---- boulder ricochets: a rock that struck stone bounces off it ----
+    const strikes = this.sim.drainBoulderStrikes();
+    for (let k = 0; k + 4 < strikes.length; k += 5) {
+      const x = strikes[k], y = strikes[k + 1], z = strikes[k + 2], dx = strikes[k + 3], dz = strikes[k + 4];
+      const b = this.bounces[this.bounceHead]; this.bounceHead = (this.bounceHead + 1) % this.bounces.length;
+      const out = 9 + Math.random() * 9;
+      b.x = x; b.y = y; b.z = z;
+      b.vx = dx * out + (Math.random() - 0.5) * 5; b.vz = dz * out + (Math.random() - 0.5) * 5; b.vy = 7 + Math.random() * 8;
+      b.rx = Math.random() * 6; b.ry = Math.random() * 6; b.rz = Math.random() * 6; b.vr = 6 + Math.random() * 8;
+      b.max = 1.6 + Math.random() * 0.5; b.life = b.max;
+      this.spawnDust(x, y, z, 4.5, 3);          // a puff of pulverised stone at the point of impact
+      this.spawnDebris(x, y, z, 6);             // chips fly off the face
+      this.spawnShock(x, z, 1.1); this.shake(0.35);
+    }
+    for (let i = 0; i < this.bounces.length; i++) {
+      const b = this.bounces[i];
+      if (b.life <= 0) { if (b.y > -900) { b.y = -1000; this.dummy.position.set(0, -1000, 0); this.dummy.scale.setScalar(0.0001); this.dummy.updateMatrix(); this.bounceMesh.setMatrixAt(i, this.dummy.matrix); } continue; }
+      b.life -= dt;
+      b.vy -= 26 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+      b.rx += b.vr * dt; b.ry += b.vr * 0.6 * dt;
+      if (b.y < 0.6 && b.vy < 0) { b.y = 0.6; b.vy = -b.vy * 0.32; b.vx *= 0.5; b.vz *= 0.5; b.vr *= 0.6; if (Math.abs(b.vy) < 1.5) b.life = Math.min(b.life, 0.25); } // tumble to rest
+      const sc = Math.max(0.2, Math.min(1, b.life / 0.4)); // shrink away in the last beat
+      this.dummy.position.set(b.x, b.y, b.z); this.dummy.rotation.set(b.rx, b.ry, b.rz); this.dummy.scale.setScalar(sc); this.dummy.updateMatrix();
+      this.bounceMesh.setMatrixAt(i, this.dummy.matrix); this.dummy.rotation.set(0, 0, 0);
+    }
+    this.bounceMesh.instanceMatrix.needsUpdate = true;
     // debris physics → settle into rubble
     for (let i = 0; i < this.debris.length; i++) {
       const d = this.debris[i];

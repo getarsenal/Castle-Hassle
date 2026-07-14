@@ -1111,6 +1111,17 @@ export class Sim {
   fireLands: number[] = [];  // where flaming arrows came down (igniting thatch)
   drainClashes() { const c = this.clashes; this.clashes = []; return c; }
   drainFireLands() { const f = this.fireLands; this.fireLands = []; return f; }
+  // stone ricochets: flat [x,y,z,dirx,dirz] per boulder that struck a structure,
+  // drained by the renderer to bounce a rock + throw chips off the wall face
+  boulderStrikes: number[] = [];
+  drainBoulderStrikes() { const b = this.boulderStrikes; this.boulderStrikes = []; return b; }
+  private recordBounce(px: number, pz: number, vx: number, vz: number, segIdx: number) {
+    if (this.boulderStrikes.length >= 150) return;
+    const b = CASTLE[segIdx];
+    const y = b ? Math.max(2, b.h * (0.42 + this.rnd() * 0.42)) : 3; // strike the wall FACE, not the ground
+    const l = Math.hypot(vx, vz) || 1;
+    this.boulderStrikes.push(px, y, pz, -vx / l, -vz / l); // bounces back the way it came
+  }
   keepX = 0; keepZ = 0; private captureR = 20;
   n = 0;
   units: Unit[] = [];
@@ -1602,7 +1613,7 @@ export class Sim {
 
   // ---- trebuchet target selection ----
   // Nearest still-standing wall/gate section to a tapped point (or -1).
-  wallSegAt(x: number, z: number, maxDist = 14): number {
+  wallSegAt(x: number, z: number, maxDist = 18): number {
     let best = -1, bd = maxDist * maxDist;
     for (let s = 0; s < CASTLE.length; s++) {
       const seg = CASTLE[s];
@@ -3069,17 +3080,29 @@ export class Sim {
           if ((e.x - p.x) ** 2 + (e.z - p.z) ** 2 < 2.6 * 2.6) { e.hp -= p.dmg * (p.fire ? 3 : 1) * (p.bolt ? 1.2 : 0.5); break; }
         }
         if (p.wall >= 0) {
-          // Boulder: damage whatever solid section it actually comes down on —
-          // walls AND towers are real objects, so a shot scattered onto a tower
-          // breaks the tower instead of passing through to the wall behind it. If
-          // it lands in open ground, count it against the ordered wall.
+          // A wall-battering boulder: damage whatever solid section it comes down on
+          // (a scatter onto a tower breaks the tower), and if it skips onto open
+          // ground, still count it against the ordered section so battering never
+          // silently whiffs. It ricochets off the stone it strikes.
           let hit = structureAt(p.x, p.z);
+          const onStone = hit >= 0;
           if (hit < 0) hit = p.wall;
           const seg = CASTLE[hit];
-          if (seg && !seg.dead) { this.sfx.hits++; seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(hit); }
-          if (p.splash > 0) this.artySplash(p.x, p.z, p.fac, p.dmg * 0.5, p.splash); // also scatters troops at the wall
+          if (seg && !seg.dead) { this.sfx.hits++; seg.hp -= p.dmg; if (seg.hp <= 0) this.breach(hit); this.recordBounce(p.x, p.z, p.vx, p.vz, hit); }
+          if (p.splash > 0) this.artySplash(p.x, p.z, p.fac, p.dmg * (onStone ? 0.5 : 1), p.splash); // debris scatters the men at the wall
+        } else if (p.big) {
+          // A BOMBARDMENT boulder is still a rock — if it comes down on stone it
+          // batters it and bounces off; on open ground it pulps the men it lands on.
+          const hit = structureAt(p.x, p.z);
+          const seg = hit >= 0 ? CASTLE[hit] : null;
+          if (seg && !seg.dead) {
+            this.sfx.hits++; seg.hp -= p.dmg / HP_SCALE; // un-scale: anti-personnel dmg is HP_SCALE× — walls take the raw wall amount
+            if (seg.hp <= 0) this.breach(hit);
+            this.recordBounce(p.x, p.z, p.vx, p.vz, hit);
+            this.artySplash(p.x, p.z, p.fac, p.dmg * 0.35, p.splash);
+          } else this.artySplash(p.x, p.z, p.fac, p.dmg, p.splash);
         } else if (p.splash > 0) {
-          // ballista bolt / anti-personnel shot: kill the man it strikes, little spill
+          // ballista bolt / small anti-personnel shot: kill the man it strikes, little spill
           this.artySplash(p.x, p.z, p.fac, p.dmg, p.splash);
         } else {
           // arrow: damage nearest enemy to the (scattered) impact point — tighter
